@@ -40,7 +40,6 @@
 #include <rte_fbk_hash.h>
 #include <rte_string_fns.h>
 #include <rte_hash.h>
-#include <rte_jhash.h>
 #include <rte_cpuflags.h>
 #include <rte_memcpy.h>
 #include <rte_kni.h>
@@ -79,13 +78,22 @@
 #define TCP_FLAG_MASK       0x3F
 #define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
 
+/* Hash function used if none is specified */
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+#include <rte_hash_crc.h>
+#define DEFAULT_HASH_FUNC       rte_hash_crc
+#else
+#include <rte_jhash.h>
+#define DEFAULT_HASH_FUNC       rte_jhash
+#endif
+
 /* Parameters used for hash table in unit test functions. Name set later. */
 static struct rte_hash_parameters ut_params = {
 	.name               = HASH_NAME,
 	.entries            = MAX_FLOWS,
 	.bucket_entries     = HASH_BUCKETS,
 	.key_len            = sizeof(struct flow_key), /* 13 */
-	.hash_func          = rte_hash_crc,
+	.hash_func          = DEFAULT_HASH_FUNC, /* rte_hash_crc is only declared when SSE4.2 is enabled */
 	.hash_func_init_val = 0,
 	.socket_id          = SOCKET0,
 };
@@ -585,6 +593,7 @@ static void
 flow_table_init(void)
 {
 	/* Check if hardware-accelerated hashing supported */
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
 	if (ut_params.hash_func == rte_hash_crc &&
 			!rte_cpu_get_flag_enabled(RTE_CPUFLAG_SSE4_2)) {
 		RTE_LOG(WARNING, HASH, "CRC32 instruction requires SSE4.2, "
@@ -592,6 +601,7 @@ flow_table_init(void)
 				               "Falling back to software hash.\n");
 		ut_params.hash_func = rte_jhash;
 	}
+#endif /* This check does not compile if SSE4_2 is not enabled for build */
 
 	handle = rte_hash_create(&ut_params);
 	if (handle == NULL) {
