@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira Networks.
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -80,6 +81,7 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_tap_class);
         netdev_vport_register();
 #endif
+        netdev_register_provider(&netdev_dpdk_class);
     }
 }
 

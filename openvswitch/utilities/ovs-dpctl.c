@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,8 +51,14 @@
 
 VLOG_DEFINE_THIS_MODULE(dpctl);
 
-/* -s, --statistics: Print port statistics? */
+/* -s, --statistics: Print port/flow statistics? */
 static bool print_statistics;
+
+/* --clear: Reset existing statistics to zero when modifying a flow? */
+static bool zero_statistics;
+
+/* --may-create: Allow mod-flows command to create a new flow? */
+static bool may_create;
 
 /* -m, --more: Output verbosity.
  *
@@ -64,9 +71,20 @@ static const struct command all_commands[];
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
 
+extern int rte_eal_init(int argc, char **argv);
+
 int
 main(int argc, char *argv[])
 {
+    int retval;
+
+    if ((retval = rte_eal_init(argc, argv)) < 0)
+    {
+        return 0;
+    }
+    argc -= retval;
+    argv += retval;
+
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);
@@ -78,11 +96,14 @@ static void
 parse_options(int argc, char *argv[])
 {
     enum {
-        OPT_DUMMY = UCHAR_MAX + 1,
+        OPT_CLEAR = UCHAR_MAX + 1,
+        OPT_MAY_CREATE,
         VLOG_OPTION_ENUMS
     };
-    static struct option long_options[] = {
+    static const struct option long_options[] = {
         {"statistics", no_argument, NULL, 's'},
+        {"clear", no_argument, NULL, OPT_CLEAR},
+        {"may-create", no_argument, NULL, OPT_MAY_CREATE},
         {"more", no_argument, NULL, 'm'},
         {"timeout", required_argument, NULL, 't'},
         {"help", no_argument, NULL, 'h'},
@@ -104,6 +125,14 @@ parse_options(int argc, char *argv[])
         switch (c) {
         case 's':
             print_statistics = true;
+            break;
+
+        case OPT_CLEAR:
+            zero_statistics = true;
+            break;
+
+        case OPT_MAY_CREATE:
+            may_create = true;
             break;
 
         case 'm':
@@ -153,13 +182,22 @@ usage(void)
            "  show                     show basic info on all datapaths\n"
            "  show DP...               show basic info on each DP\n"
            "  dump-flows DP            display flows in DP\n"
+           "  add-flow DP FLOW ACTIONS add FLOW with ACTIONS to DP\n"
+           "  mod-flow DP FLOW ACTIONS change FLOW actions to ACTIONS in DP\n"
+           "  get-flow DP FLOW         get FLOW actions from DP\n"
+           "  del-flow DP FLOW         delete FLOW from DP\n"
            "  del-flows DP             delete all flows from DP\n"
            "Each IFACE on add-dp, add-if, and set-if may be followed by\n"
            "comma-separated options.  See ovs-dpctl(8) for syntax, or the\n"
            "Interface table in ovs-vswitchd.conf.db(5) for an options list.\n",
            program_name, program_name);
     vlog_usage();
-    printf("\nOther options:\n"
+    printf("\nOptions for show and mod-flow:\n"
+           "  -s,  --statistics           print statistics for port or flow\n"
+           "\nOptions for mod-flow:\n"
+           "  --may-create                create flow if it doesn't exist\n"
+           "  --clear                     reset existing stats to zero\n"
+           "\nOther options:\n"
            "  -t, --timeout=SECS          give up after SECS seconds\n"
            "  -h, --help                  display this help message\n"
            "  -V, --version               display version information\n");
@@ -673,8 +711,11 @@ do_dump_flows(int argc OVS_UNUSED, char *argv[])
     struct dpif *dpif;
     size_t key_len;
     struct ds ds;
+    char *name;
 
-    run(parsed_dpif_open(argv[1], false, &dpif), "opening datapath");
+    name = xstrdup(argv[1]);
+    run(parsed_dpif_open(name, false, &dpif), "opening datapath");
+    free(name);
 
     ds_init(&ds);
     dpif_flow_dump_start(&dump, dpif);
@@ -694,12 +735,168 @@ do_dump_flows(int argc OVS_UNUSED, char *argv[])
 }
 
 static void
+do_put_flow(int argc, char *argv[], enum dpif_flow_put_flags flags)
+{
+    const char *key_s = argv[argc - 2];
+    const char *actions_s = argv[argc - 1];
+    struct dpif_flow_stats stats;
+    struct ofpbuf actions;
+    struct ofpbuf key;
+    struct dpif *dpif;
+    char *dp_name;
+
+    ofpbuf_init(&key, 0);
+    run(odp_flow_key_from_string(key_s, NULL, &key), "parsing flow key");
+
+    ofpbuf_init(&actions, 0);
+    run(odp_actions_from_string(actions_s, NULL, &actions), "parsing actions");
+
+    dp_name = xstrdup(argv[1]);
+    run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
+    free(dp_name);
+
+    run(dpif_flow_put(dpif, flags,
+                      key.data, key.size,
+                      actions.data, actions.size,
+                      print_statistics ? &stats : NULL),
+        "updating flow table");
+
+    ofpbuf_uninit(&key);
+    ofpbuf_uninit(&actions);
+
+    if (print_statistics) {
+        struct ds s;
+
+        ds_init(&s);
+        dpif_flow_stats_format(&stats, &s);
+        puts(ds_cstr(&s));
+        ds_destroy(&s);
+    }
+
+    dpif_close(dpif);
+}
+
+static void
+do_add_flow(int argc OVS_UNUSED, char *argv[])
+{
+    do_put_flow(argc, argv, DPIF_FP_CREATE);
+}
+
+static void
+do_mod_flow(int argc OVS_UNUSED, char *argv[])
+{
+    enum dpif_flow_put_flags flags;
+
+    flags = DPIF_FP_MODIFY;
+    if (may_create) {
+        flags |= DPIF_FP_CREATE;
+    }
+    if (zero_statistics) {
+        flags |= DPIF_FP_ZERO_STATS;
+    }
+
+    do_put_flow(argc, argv, flags);
+}
+
+static void
+do_del_flow(int argc OVS_UNUSED, char *argv[])
+{
+    const char *key_s = argv[argc - 1];
+    struct dpif_flow_stats stats;
+    struct ofpbuf key;
+    struct dpif *dpif;
+    char *dp_name;
+
+    ofpbuf_init(&key, 0);
+    run(odp_flow_key_from_string(key_s, NULL, &key), "parsing flow key");
+
+    dp_name = xstrdup(argv[1]);
+    run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
+    free(dp_name);
+
+    if (dpif == NULL) {
+        printf("Unable to get datapath\n");
+        return;
+    }
+
+    run(dpif_flow_del(dpif,
+                      key.data, key.size,
+                      print_statistics ? &stats : NULL), "deleting flow");
+
+    ofpbuf_uninit(&key);
+
+    if (print_statistics) {
+        struct ds s;
+
+        ds_init(&s);
+        dpif_flow_stats_format(&stats, &s);
+        puts(ds_cstr(&s));
+        ds_destroy(&s);
+    }
+
+    dpif_close(dpif);
+}
+
+static void
+do_get_flow(int argc OVS_UNUSED, char *argv[])
+{
+    const char *key_s = argv[argc - 1];
+    struct dpif_flow_stats stats;
+    struct ofpbuf actions;
+    struct ofpbuf *actionsp = &actions;
+    struct ofpbuf key;
+    struct dpif *dpif;
+    struct ds ds;
+    char *dp_name;
+
+    ofpbuf_init(&key, 0);
+    run(odp_flow_key_from_string(key_s, NULL, &key), "parsing flow key");
+
+    dp_name = xstrdup(argv[1]);
+    run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
+    free(dp_name);
+
+    if (dpif == NULL) {
+        printf("Unable to get datapath\n");
+        return;
+    }
+
+    ofpbuf_init(actionsp, 0);
+    run(dpif_flow_get(dpif,
+                      key.data, key.size,
+                      &actionsp,
+                      &stats), "getting flow");
+
+    if (actionsp == NULL) {
+        printf("Unable to get actions\n");
+        return;
+    }
+
+    ds_init(&ds);
+    dpif_flow_stats_format(&stats, &ds);
+    ds_put_cstr(&ds, ", actions:");
+    format_odp_actions(&ds, actionsp->data, actionsp->size);
+    printf("%s\n", ds_cstr(&ds));
+    ds_destroy(&ds);
+
+    ofpbuf_uninit(actionsp);
+    ofpbuf_uninit(&key);
+
+    dpif_close(dpif);
+}
+
+static void
 do_del_flows(int argc OVS_UNUSED, char *argv[])
 {
     struct dpif *dpif;
+    char *name;
 
-    run(parsed_dpif_open(argv[1], false, &dpif), "opening datapath");
+    name = xstrdup(argv[1]);
+    run(parsed_dpif_open(name, false, &dpif), "opening datapath");
+    free(name);
+
     run(dpif_flow_flush(dpif), "deleting all flows");
+
     dpif_close(dpif);
 }
 
@@ -938,6 +1135,10 @@ static const struct command all_commands[] = {
     { "dump-dps", 0, 0, do_dump_dps },
     { "show", 0, INT_MAX, do_show },
     { "dump-flows", 1, 1, do_dump_flows },
+    { "add-flow", 3, 3, do_add_flow },
+    { "mod-flow", 3, 3, do_mod_flow },
+    { "del-flow", 2, 2, do_del_flow },
+    { "get-flow", 2, 2, do_get_flow },
     { "del-flows", 1, 1, do_del_flows },
     { "help", 0, INT_MAX, do_help },
 

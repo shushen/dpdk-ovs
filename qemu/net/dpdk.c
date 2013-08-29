@@ -28,6 +28,7 @@
 #include "qemu-common.h"
 #include "dpdk_link.h"
 #include "qemu/timer.h"
+#include "clients.h"
 
 #define RTE_LOGTYPE_APP        RTE_LOGTYPE_USER1
 #define DPDK_TX_TO_QEMU_ENABLE 1

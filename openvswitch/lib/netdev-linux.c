@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -2311,12 +2312,14 @@ const struct netdev_class netdev_tap_class =
         netdev_pseudo_get_stats,
         NULL);                  /* set_stats */
 
+/* TODO: Temporary comment in order to avoid warnings in the daemon.
 const struct netdev_class netdev_internal_class =
     NETDEV_LINUX_CLASS(
         "internal",
         netdev_linux_create,
         netdev_pseudo_get_stats,
         netdev_vport_set_stats);
+*/
 
 /* HTB traffic control class. */
 

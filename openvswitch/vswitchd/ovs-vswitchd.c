@@ -1,4 +1,5 @@
 /* Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +59,9 @@ static unixctl_cb_func ovs_vswitchd_exit;
 static char *parse_options(int argc, char *argv[]);
 static void usage(void) NO_RETURN;
 
+extern int
+rte_eal_init(int argc, char **argv);
+
 int
 main(int argc, char *argv[])
 {
@@ -66,6 +70,11 @@ main(int argc, char *argv[])
     char *remote;
     bool exiting;
     int retval;
+
+    if ((retval = rte_eal_init(argc, argv)) < 0)
+        return -1;
+    argc -= retval;
+    argv += retval;
 
     proctitle_init(argc, argv);
     set_program_name(argv[0]);

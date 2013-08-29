@@ -32,31 +32,41 @@
  *
  */
 
+
 #include <string.h>
 #include <rte_string_fns.h>
 #include <rte_malloc.h>
 #include <rte_memzone.h>
-#include "kni.h"
-#include <exec-env/rte_kni_common.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
-#include <rte_kni.h>
+#include "kni.h"
 #include "common.h"
 #include "init_drivers.h"
 #include "args.h"
 #include "init.h"
 #include "main.h"
 
+/* These are used to dimension the overall size of the mbuf mempool. They
+ * are arbitrary values that have been determined by tuning */
 #define MBUFS_PER_CLIENT  3072
 #define MBUFS_PER_PORT    3072
 #define MBUFS_PER_KNI     3072
-#define MBUF_CACHE_SIZE   32
+#define MBUFS_PER_DAEMON  2048
+
+#define MBUF_CACHE_SIZE 32
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define RX_MBUF_DATA_SIZE 2048
 #define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
-#define RTE_MP_RX_DESC_DEFAULT 512
-#define RTE_MP_TX_DESC_DEFAULT 512
-#define CLIENT_QUEUE_RINGSIZE  256
+
+/* Ethernet port TX/RX ring sizes */
+#define RTE_MP_RX_DESC_DEFAULT    512
+#define RTE_MP_TX_DESC_DEFAULT    512
+
+/* Ring size for communication with clients */
+#define CLIENT_QUEUE_RINGSIZE     4096
+
+/* Ring size for communication with daemon */
+#define DAEMON_PKT_QUEUE_RINGSIZE 2048
 
 /*
  * RX and TX Prefetch, Host, and Write-back threshold values should be
@@ -99,25 +109,27 @@ struct rte_mempool *pktmbuf_pool;
 
 /* array of info/queues for clients */
 struct client *clients = NULL;
-struct port_queue *port_queues = NULL;
+
+/* ring to receive packets with vswitchd */
+struct rte_ring *vswitch_packet_ring = NULL;
 
 /* the port details */
 struct port_info *ports;
+struct port_queue *port_queues = NULL;
 
 /* the flow table details */
 struct flow_table *flow_table;
 
-
 /**
- * Initialise the mbuf pool for packet reception for the NIC, and any other
- * buffer pools needed by the app - currently none.
+ * Initialise the mbuf pool
  */
 static int
 init_mbuf_pools(void)
 {
-	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT) \
-			+ (ports->num_ports * MBUFS_PER_PORT) \
-			+ (num_kni * MBUFS_PER_KNI);
+	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT)
+			+ (ports->num_ports * MBUFS_PER_PORT)
+			+ (num_kni * MBUFS_PER_KNI)
+			+ MBUFS_PER_DAEMON;
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
 	 * seems faster to use a cache instead */
@@ -129,7 +141,6 @@ init_mbuf_pools(void)
 			NULL, rte_pktmbuf_init, NULL, SOCKET0, NO_FLAGS );
 
 	return (pktmbuf_pool == NULL); /* 0  on success */
-
 }
 
 /**
@@ -191,10 +202,10 @@ init_port(uint8_t port_num)
 		       (uint32_t) link.link_speed,
 		       (link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
 		       ("full-duplex") : ("half-duplex\n"));
-	}
-	else{
+	} else {
 		printf(" Link Down\n");
 	}
+
 	return 0;
 }
 
@@ -225,13 +236,13 @@ init_shm_rings(void)
 				ringsize, SOCKET0,
 				NO_FLAGS); /* multi producer multi consumer*/
 		if (clients[i].rx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create rx ring queue for client %u\n", i);
+			rte_exit(EXIT_FAILURE, "Cannot create rx ring for client %u\n", i);
 
 		clients[i].tx_q = rte_ring_create(get_tx_queue_name(i),
 				ringsize, SOCKET0,
 				NO_FLAGS); /* multi producer multi consumer*/
 		if (clients[i].tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring queue for client %u\n", i);
+			rte_exit(EXIT_FAILURE, "Cannot create tx ring for client %u\n", i);
 	}
 
 	for (i = 0; i < ports->num_ports; i++) {
@@ -240,8 +251,14 @@ init_shm_rings(void)
 				ringsize, SOCKET0,
 				RING_F_SC_DEQ); /* multi producer single consumer*/
 		if (port_queues[i].tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring queue for port %u\n", i);
+			rte_exit(EXIT_FAILURE, "Cannot create tx ring for port %u\n", i);
 	}
+
+	vswitch_packet_ring = rte_ring_create(PACKET_RING_NAME,
+			         DAEMON_PKT_QUEUE_RINGSIZE, SOCKET0, NO_FLAGS);
+	if (vswitch_packet_ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create packet ring for vswitchd");
+
 	return 0;
 }
 
@@ -307,7 +324,6 @@ init(int argc, char *argv[])
 	retval = init_mbuf_pools();
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "Cannot create needed mbuf pools\n");
-
 
 	/* now initialise the ports we will use */
 	for (i = 0; i < ports->num_ports; i++) {

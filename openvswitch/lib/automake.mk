@@ -1,4 +1,5 @@
 # Copyright (C) 2009, 2010, 2011 Nicira Networks, Inc.
+# Copyright 2012-2013 Intel Corporation All Rights Reserved.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -223,6 +224,15 @@ lib_libopenvswitch_a_SOURCES += \
 	lib/rtnetlink-link.h \
 	lib/route-table.c \
 	lib/route-table.h
+endif
+
+
+if DPDK_ENABLE
+lib_libopenvswitch_a_SOURCES += \
+	lib/dpdk-link.c \
+	lib/dpif-dpdk.c \
+	lib/dpif-dpdk.h \
+	lib/netdev-dpdk.c
 endif
 
 if HAVE_OPENSSL

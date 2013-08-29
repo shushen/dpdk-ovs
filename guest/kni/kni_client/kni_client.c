@@ -357,7 +357,7 @@ main(int argc, char *argv[])
 				 * before rtnetlink times out we will still be able to ifup
 				 * and change mtu
 				 */
-				sleep(2);
+				sleep(1);
 				rte_kni_handle_request(&kni_list[port]);
 			}
 		}

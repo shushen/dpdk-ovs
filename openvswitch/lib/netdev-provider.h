@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2009, 2010, 2011, 2012 Nicira Networks.
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -590,6 +591,7 @@ const struct netdev_class *netdev_lookup_provider(const char *type);
 extern const struct netdev_class netdev_linux_class;
 extern const struct netdev_class netdev_internal_class;
 extern const struct netdev_class netdev_tap_class;
+extern const struct netdev_class netdev_dpdk_class;
 
 #ifdef  __cplusplus
 }

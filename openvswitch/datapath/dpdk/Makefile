@@ -59,7 +59,7 @@ CFLAGS += -O3 -g
 CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
 CFLAGS += -Wno-error
 
-LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch
+LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch -lrt
 
 # for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
 # and so the next line can be removed in those cases.

@@ -39,7 +39,7 @@
 /*
  * Statistics structure, used by both clients and kni ports
  * to record traffic information
- */ 
+ */
 struct statistics {
 	volatile uint64_t rx;
 	volatile uint64_t tx;
@@ -68,6 +68,7 @@ struct port_queue {
 };
 
 extern struct client *clients;
+extern struct rte_ring *vswitch_packet_ring;
 extern struct port_queue *port_queues;
 
 extern struct port_info *ports;
@@ -78,7 +79,7 @@ extern uint8_t num_clients;
 extern uint8_t num_kni;
 extern unsigned num_sockets;
 
-extern unsigned stats;
+extern unsigned stats_display_interval;
 extern unsigned vswitchd_core;
 extern unsigned client_switching_core;
 

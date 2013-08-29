@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright 2012-2013 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,9 +59,11 @@ COVERAGE_DEFINE(dpif_purge);
 
 static const struct dpif_class *base_dpif_classes[] = {
 #ifdef HAVE_NETLINK
-    &dpif_linux_class,
+    /* TODO-moscow-2013-07-05: temporary comment in order to avoid warnings in the daemon. */
+    //&dpif_linux_class,
 #endif
     &dpif_netdev_class,
+    &dpif_dpdk_class,
 };
 
 struct registered_dpif_class {

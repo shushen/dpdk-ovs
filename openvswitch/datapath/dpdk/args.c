@@ -53,7 +53,7 @@
 /* global var for number of clients - extern in header */
 uint8_t num_clients            = 0;
 uint8_t num_kni                = 0;
-unsigned stats                 = 0;
+unsigned stats_display_interval= 0; /* in seconds, set to 0 to disable update */
 unsigned vswitchd_core         = 0;
 unsigned client_switching_core = 0;
 
@@ -111,8 +111,8 @@ parse_portmask(uint8_t max_ports, const char *portmask)
 		return -1;
 
 	/* loop through bits of the mask and mark ports */
-	while (pm != 0){
-		if (pm & 0x01){ /* bit is set in mask, use port */
+	while (pm != 0) {
+		if (pm & 0x01) { /* bit is set in mask, use port */
 			if (count >= max_ports)
 				printf("WARNING: requested port %u not present"
 				" - ignoring\n", (unsigned)count);
@@ -177,7 +177,7 @@ parse_config(const char *q_arg)
 		rte_snprintf(s, sizeof(s), "%.*s", size, p);
 		if (rte_strsplit(s, sizeof(s), str_fld, _NUM_FLD, ',') != _NUM_FLD)
 			return -1;
-		for (i = 0; i < _NUM_FLD; i++){
+		for (i = 0; i < _NUM_FLD; i++) {
 			errno = 0;
 			int_fld[i] = strtoul(str_fld[i], &end, 0);
 			if (errno != 0 || end == str_fld[i] || int_fld[i] > 255)
@@ -225,10 +225,10 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 	progname = argv[0];
 
 	while ((opt = getopt_long(argc, argvopt, "n:p:k:", lgopts,
-		&option_index)) != EOF){
-		switch (opt){
+		&option_index)) != EOF) {
+		switch (opt) {
 			case 'p':
-				if (parse_portmask(max_ports, optarg) != 0){
+				if (parse_portmask(max_ports, optarg) != 0) {
 					usage();
 					return -1;
 				}
@@ -256,16 +256,11 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 						printf("invalid config\n");
 					}
 				}
-				if (strncmp(lgopts[option_index].name, PARAM_STATS, 5) == 0)
-				{
-					stats = atoi(optarg);
-				}
-				else if (strncmp(lgopts[option_index].name, PARAM_VSWITCHD, 8) == 0)
-				{
+				if (strncmp(lgopts[option_index].name, PARAM_STATS, 5) == 0) {
+					stats_display_interval = atoi(optarg);
+				} else if (strncmp(lgopts[option_index].name, PARAM_VSWITCHD, 8) == 0) {
 					vswitchd_core = atoi(optarg);
-				}
-				else if (strncmp(lgopts[option_index].name, PARAM_CSC, 16) == 0)
-				{
+				} else if (strncmp(lgopts[option_index].name, PARAM_CSC, 16) == 0) {
 					client_switching_core = atoi(optarg);
 				}
 				break;
@@ -276,14 +271,14 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		}
 	}
 
-	if (num_clients == 0){
-                printf ("Ports and clients must be greater than 0\n");
+	if (num_clients == 0) {
+        printf ("Ports and clients must be greater than 0\n");
 		usage();
 		return -1;
 	}
 
-	if (num_kni == 0){
-                printf ("KNI ports must be greater than 0\n");
+	if (num_kni == 0) {
+        printf ("KNI ports must be greater than 0\n");
 		usage();
 		return -1;
 	}

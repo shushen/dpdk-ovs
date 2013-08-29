@@ -50,17 +50,10 @@
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 #define BASE_10 10
-#define BASE_16 16
-
-typedef enum {IP_ADDRESS_DEST, IP_ADDRESS_SRC} ip_address_t;
-
-void mangle_ip_addresses(struct rte_mbuf *pkts[], unsigned num_pkts);
 
 /* our client id number - tells us which rx queue to read, and tx 
  * queue to write to. */
 static uint8_t client_id = 0;
-static uint32_t src_ip   = 0;
-static uint32_t dest_ip  = 0;
 
 /*
  * Given the rx queue name template above, get the queue name
@@ -96,11 +89,7 @@ get_tx_queue_name(unsigned id)
 static void
 usage(const char *progname)
 {
-	printf("\nUsage: %s [EAL args] -- -n <client_id> -s <src_ip> -d <dest_ip>\n"
-	       "\t\t ** or ** \t\t\n"
-	       "Usage: %s [EAL args] -- -n <client_id> --src_ip <src_ip> --dest_ip <dest_ip>\n"
-	       "IP addresses should be in hex format, e.g. 0x01010101 (1.1.1.1)\n\n", 
-	       progname, progname);
+	printf("\nUsage: %s [EAL args] -- -n <client_id>\n", progname);
 }
 
 /*
@@ -125,35 +114,6 @@ parse_client_num(const char *client)
 	return 0;
 }
 
-static int 
-parse_ip_addr(const char *ip_str, ip_address_t type)
-{
-	char *end = NULL;
-	unsigned long ip_addr = 0;
-
-	ip_addr = strtoul(ip_str, &end, BASE_16);
-	/* If valid string argument is provided, terminating '/0' character
-	 * is stored in 'end' */
-	if (end == NULL || *end != '\0') {
-		printf("Invalid address format supplied\n");
-		return -1;
-	}
-
-	switch(type) {
-	case IP_ADDRESS_DEST:
-		dest_ip = (uint32_t)ip_addr;
-		break;
-	case IP_ADDRESS_SRC:
-		src_ip = (uint32_t)ip_addr;
-		break;
-	default:
-		printf("Invalid IP address type supplied\n");
-		break;
-	}
-
-	return 0;	
-}
-
 /*
  * Parse the application arguments to the client app.
  */
@@ -164,8 +124,6 @@ parse_app_args(int argc, char *argv[])
 	char **argvopt = argv;
 	const char *progname = NULL;
 	static struct option lgopts[] = { 
-		{"src_ip",  required_argument, 0, 's'},
-		{"dest_ip", required_argument, 0, 'd'},
 		{NULL, 0, 0, 0 }
 	};
 	progname = argv[0];
@@ -179,57 +137,13 @@ parse_app_args(int argc, char *argv[])
 					return -1;
 				}
 				break;
-			case 's':
-				if (parse_ip_addr(optarg, IP_ADDRESS_SRC) != 0) {
-					usage(progname);
-					return -1;
-				}
-				break;
-			case 'd':
-				if (parse_ip_addr(optarg, IP_ADDRESS_DEST) != 0) {
-					usage(progname);
-					return -1;
-				}
-				break;
 			default:
 				usage(progname);
 				return -1;
 		}
 	}
 
-	/* If source or destination IP address command line parameters
-	 * not suplpied, then exit. 
-	 * */
-	if (src_ip == 0 || dest_ip == 0) {
-		usage(progname);
-		return -1;
-	}
-	
 	return 0;
-}
-
-/*
- * For 'num_pkts' in 'pkts', modify the source and destination IP addresses to
- * those specified by the command line parameters supplied to the application.
- */ 
-void mangle_ip_addresses(struct rte_mbuf *pkts[], unsigned num_pkts)
-{
-	struct ipv4_hdr *ipv4_hdr = NULL;
-	struct rte_mbuf *m = NULL;
-	unsigned i = 0;
-
-	for (i = 0; i < num_pkts; i++) {
-		m = pkts[i];
-		ipv4_hdr = (struct ipv4_hdr *)(rte_pktmbuf_mtod(m, unsigned char *) +
-					sizeof(struct ether_hdr));
-
-		/* Update the source and destination IP address to the values 
-		 * distilled from the command line arguments
-		 */
-		ipv4_hdr->src_addr = rte_cpu_to_be_32(src_ip);
-		ipv4_hdr->dst_addr = rte_cpu_to_be_32(dest_ip);
-	}
-
 }
 
 /*
@@ -243,6 +157,7 @@ main(int argc, char *argv[])
 	struct rte_ring *tx_ring = NULL;
 	int retval = 0;
 	void *pkts[PKT_READ_SIZE];
+	int rslt = 0;
 
 	if ((retval = rte_eal_init(argc, argv)) < 0)
 		return -1;
@@ -275,8 +190,9 @@ main(int argc, char *argv[])
 				unlikely(rte_ring_dequeue_bulk(rx_ring, pkts, rx_pkts) != 0))
 			rx_pkts = (uint16_t)RTE_MIN(rte_ring_count(rx_ring), PKT_READ_SIZE);
 
-		mangle_ip_addresses((struct rte_mbuf **)pkts, rx_pkts);
-
-		rte_ring_enqueue_bulk(tx_ring, pkts, rx_pkts);
+		/* blocking enqueue */
+		do {
+			rslt = rte_ring_enqueue_bulk(tx_ring, pkts, rx_pkts);
+		} while (rslt == -ENOBUFS);
 	}
 }

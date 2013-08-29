@@ -1,3 +1,37 @@
+/*
+ *   BSD LICENSE
+ *
+ *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   All rights reserved.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in
+ *       the documentation and/or other materials provided with the
+ *       distribution.
+ *     * Neither the name of Intel Corporation nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
+
 #include <rte_string_fns.h>
 #include <rte_malloc.h>
 #include <rte_memzone.h>
@@ -13,10 +47,8 @@
 
 #define OBJNAMSIZ 32
 
-static void
-kni_fifo_init(struct rte_kni_fifo *fifo, unsigned size);
-static int
-create_kni_fifos(uint8_t kni_port_id);
+static void kni_fifo_init(struct rte_kni_fifo *fifo, unsigned size);
+static int create_kni_fifos(uint8_t kni_port_id);
 
 /**
  * Create memzones and fifos for a KNI port.
@@ -28,7 +60,7 @@ create_kni_fifos(uint8_t kni_port_id)
 	char obj_name[OBJNAMSIZ];
 	rte_kni_list[kni_port_id].pktmbuf_pool = pktmbuf_pool;
 
-	if(kni_port_id >= MAX_KNI_PORTS) {
+	if (kni_port_id >= MAX_KNI_PORTS) {
 		RTE_LOG(ERR, APP, "Port id %u greater than MAX_KNI_PORTS %u",
 		        kni_port_id, MAX_KNI_PORTS);
 		return -EINVAL;
