@@ -827,8 +827,8 @@ dpif_dpdk_flow_key_from_flow(struct dpif_dpdk_flow_key *key,
 
     memset(key, 0, sizeof(*key));
     key->in_port = flow->in_port;
-    memcpy(&key->ether_dst.addr_bytes, &flow->dl_dst, ETHER_ADDR_LEN);
-    memcpy(&key->ether_src.addr_bytes, &flow->dl_src, ETHER_ADDR_LEN);
+    memcpy(key->ether_dst.addr_bytes, flow->dl_dst, ETHER_ADDR_LEN);
+    memcpy(key->ether_src.addr_bytes, flow->dl_src, ETHER_ADDR_LEN);
     key->ether_type = rte_be_to_cpu_16(flow->dl_type);
     vlan_tci = rte_be_to_cpu_16(flow->vlan_tci);
     key->vlan_id = vlan_tci & VLAN_ID_MASK;
@@ -851,8 +851,8 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
 {
     memset(flow, 0, sizeof(*flow));
     flow->in_port = key->in_port;
-    memcpy(&flow->dl_dst, &key->ether_dst.addr_bytes, ETHER_ADDR_LEN);
-    memcpy(&flow->dl_src, &key->ether_src.addr_bytes, ETHER_ADDR_LEN);
+    memcpy(flow->dl_dst, key->ether_dst.addr_bytes, ETHER_ADDR_LEN);
+    memcpy(flow->dl_src, key->ether_src.addr_bytes, ETHER_ADDR_LEN);
     flow->dl_type = rte_cpu_to_be_16(key->ether_type);
     flow->vlan_tci = rte_cpu_to_be_16(key->vlan_prio) << VLAN_PRIO_SHIFT | rte_cpu_to_be_16(key->vlan_id);
     if (flow->vlan_tci != 0)

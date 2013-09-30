@@ -29,14 +29,19 @@
 
 #define PKT_BURST_SIZE 256
 
+#define PKTMBUF_POOL_NAME          "MProc_pktmbuf_pool"
+#define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
+#define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
+#define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+
 #ifdef PG_DEBUG
 #define DPDK_DEBUG() printf("DPDK-LINK.c %s Line %d\n", __FUNCTION__, __LINE__);
 #else
 #define DPDK_DEBUG()
 #endif
 
-static struct rte_ring *rx_ring = NULL;
-static struct rte_ring *tx_ring = NULL;
+static struct rte_ring *message_ring = NULL;
+static struct rte_ring *reply_ring = NULL;
 static struct rte_ring *packet_ring = NULL;
 static struct rte_mempool *mp = NULL;
 
@@ -96,7 +101,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
         }
     }
 
-    ret = rte_ring_sp_enqueue_bulk(tx_ring, (void * const *)mbufs, num_pkts);
+    ret = rte_ring_sp_enqueue_bulk(message_ring, (void * const *)mbufs, num_pkts);
     if (ret == -ENOBUFS) {
         for (i = 0; i < num_pkts; i++) {
             rte_pktmbuf_free(mbufs[i]);
@@ -119,7 +124,7 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 
     DPDK_DEBUG()
 
-    while (rte_ring_sc_dequeue(rx_ring, (void **)&mbuf) != 0);
+    while (rte_ring_sc_dequeue(reply_ring, (void **)&mbuf) != 0);
 
     ctrlmbuf_data = (void *)rte_ctrlmbuf_data(mbuf);
     ctrlmbuf_len = rte_ctrlmbuf_len(mbuf);
@@ -165,20 +170,20 @@ dpdk_link_init(void)
 {
     DPDK_DEBUG()
 
-    rx_ring = rte_ring_lookup(get_rx_queue_name(DATAPATH_RING_ID));
-    if (rx_ring == NULL) {
-        rte_exit(EXIT_FAILURE, "Cannot get RX ring - is datapath running?\n");
+    reply_ring = rte_ring_lookup(VSWITCHD_REPLY_RING_NAME);
+    if (reply_ring == NULL) {
+        rte_exit(EXIT_FAILURE, "Cannot get reply ring - is datapath running?\n");
     }
 
-    tx_ring = rte_ring_lookup(get_tx_queue_name(DATAPATH_RING_ID));
-    if (tx_ring == NULL) {
-        rte_exit(EXIT_FAILURE, "Cannot get TX ring - is datapath running?\n");
+    message_ring = rte_ring_lookup(VSWITCHD_MESSAGE_RING_NAME);
+    if (message_ring == NULL) {
+        rte_exit(EXIT_FAILURE, "Cannot get message ring - is datapath running?\n");
     }
 
-    packet_ring = rte_ring_lookup(PACKET_RING_NAME);
+    packet_ring = rte_ring_lookup(VSWITCHD_PACKET_RING_NAME);
     if (packet_ring == NULL) {
         rte_exit(EXIT_FAILURE,
-                     "Cannot get packet RX ring - is datapath running?\n");
+                     "Cannot get packet packet ring - is datapath running?\n");
     }
 
     mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);

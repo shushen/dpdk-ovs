@@ -37,6 +37,7 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
+
 # Default target, can be overriden by command line or environment
 RTE_TARGET ?= x86_64-default-linuxapp-gcc
 
@@ -47,11 +48,12 @@ $(error This application can only operate in a linuxapp environment, \
 please change the definition of the RTE_TARGET environment variable)
 endif
 
+ifeq ($(UT),)
 # binary name
 APP = ovs_dpdk
 
 # all source are stored in SRCS-y
-SRCS-y := main.c init.c args.c kni.c
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c stats.c
 
 INC := $(wildcard *.h)
 
@@ -60,6 +62,22 @@ CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DI
 CFLAGS += -Wno-error
 
 LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch -lrt
+else
+# binary name
+APP = ut_ovs_dpdk
+
+# all source are stored in SRCS-y
+SRCS-y := vport_stub.c action.c flow.c ut.c
+
+INC := $(wildcard *.h)
+
+CFLAGS += -O0 -g
+CFLAGS += -Wno-error
+endif
+
+
+
+
 
 # for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
 # and so the next line can be removed in those cases.
@@ -71,6 +89,12 @@ EMPTY_AUTOMAKE_TARGETS = dvi pdf ps info html tags ctags
 .PHONY: $(EMPTY_AUTOMAKE_TARGETS)
 $(EMPTY_AUTOMAKE_TARGETS):
 
+ifeq ($(UT),)
 clean:
 	rm -rf $(OVS_DIR)/datapath/dpdk/build
+
+else
+clean:
+	rm -rf build
+endif
 distclean: clean

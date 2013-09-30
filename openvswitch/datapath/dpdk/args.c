@@ -33,6 +33,7 @@
  */
 
 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -44,18 +45,12 @@
 #include <rte_memory.h>
 #include <rte_string_fns.h>
 
-#include "common.h"
 #include "args.h"
 #include "init.h"
+#include "vport.h"
 
 #define PORT_OFFSET 0x10
-
-/* global var for number of clients - extern in header */
-uint8_t num_clients            = 0;
-uint8_t num_kni                = 0;
-unsigned stats_display_interval= 0; /* in seconds, set to 0 to disable update */
-unsigned vswitchd_core         = 0;
-unsigned client_switching_core = 0;
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 struct cfg_params cfg_params_array[MAX_CFG_PARAMS];
 struct cfg_params cfg_params_array_default[] = {
@@ -117,7 +112,7 @@ parse_portmask(uint8_t max_ports, const char *portmask)
 				printf("WARNING: requested port %u not present"
 				" - ignoring\n", (unsigned)count);
 			else
-			    ports->id[ports->num_ports++] = count;
+			    port_cfg.id[port_cfg.num_ports++] = count;
 		}
 		pm = (pm >> 1);
 		count++;

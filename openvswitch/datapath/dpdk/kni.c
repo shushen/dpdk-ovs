@@ -38,7 +38,6 @@
 #include <rte_ether.h>
 #include <rte_ethdev.h>
 
-#include "common.h"
 #include "init_drivers.h"
 #include "args.h"
 #include "init.h"
@@ -46,6 +45,8 @@
 #include "kni.h"
 
 #define OBJNAMSIZ 32
+
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 static void kni_fifo_init(struct rte_kni_fifo *fifo, unsigned size);
 static int create_kni_fifos(uint8_t kni_port_id);

@@ -32,30 +32,25 @@
  *
  */
 
+#ifndef __ACTION_H_
+#define __ACTION_H_
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#include <stdint.h>
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
+#include <rte_mbuf.h>
+
+/* Set of all supported actions */
+enum action_type {
+	ACTION_NULL,    /* Empty action */
+	ACTION_OUTPUT,  /* Output packet to port */
+	ACTION_MAX      /* Maximum number of supported actions */
 };
 
-struct port_queue *port_queues;
+struct action_output {
+	uint32_t port;    /* Output port */
+};
+
+int action_execute(enum action_type type, void *action, struct rte_mbuf *mbuf);
+#endif /* __ACTION_H_ */
 
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
-
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
-
-struct statistics *vport_stats;
-
-int init(int argc, char *argv[]);
-
-#endif /* ifndef _INIT_H_ */

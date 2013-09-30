@@ -32,30 +32,30 @@
  *
  */
 
+#ifndef __STATS_H_
+#define __STATS_H_
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#include <stdint.h>
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
+/*
+ * Statistics structure, used by both clients and kni ports
+ * to record traffic information
+ */
+struct statistics {
+	volatile uint64_t rx;
+	volatile uint64_t tx;
+	volatile uint64_t rx_drop;
+	volatile uint64_t tx_drop;
 };
 
-struct port_queue *port_queues;
-
-
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
-
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
 
 struct statistics *vport_stats;
+int switch_rx_drop;
+int switch_tx_drop;
+int overruns;
 
-int init(int argc, char *argv[]);
+void clear_stats(void);
+void do_stats_display(void);
 
-#endif /* ifndef _INIT_H_ */
+#endif /* __STATS_H_ */
+

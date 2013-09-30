@@ -32,30 +32,52 @@
  *
  */
 
+#include <stdio.h>
+#include "action.h"
+#include "vport.h"
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
-};
+#define CHECK_NULL(ptr)   do { \
+                             if ((ptr) == NULL) return -1; \
+                         } while (0)
 
-struct port_queue *port_queues;
+static action_output(struct rte_mbuf *mbuf, struct action_output *action);
 
+/*
+ * Do 'action' of action_type 'type' on 'mbuf'
+ */
+int action_execute(enum action_type type, void *action, struct rte_mbuf *mbuf)
+{
+	CHECK_NULL(action);
+	CHECK_NULL(mbuf);
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
+	switch (type) {
+	case ACTION_OUTPUT:
+		action_output(mbuf, action);
+		break;
+	default:
+		printf("action_execute(): action not currently implemented\n");
+		return -1;
+	}
 
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
+	return 0;
 
-struct statistics *vport_stats;
+}
 
-int init(int argc, char *argv[]);
+/*
+ * Excutes the output action on 'mbuf'
+ */
+static action_output(struct rte_mbuf *mbuf, struct action_output *action)
+{
+	uint8_t vport = 0;
 
-#endif /* ifndef _INIT_H_ */
+	vport = action->port;
+
+	if (IS_PHY_PORT(vport))         /* Physical port */
+		send_to_port(vport, mbuf);
+	else if (IS_KNI_PORT(vport))    /* KNI FIFO */
+		send_to_kni(vport, mbuf);
+	else                            /* Client ring */
+		send_to_client(vport, mbuf);
+}
