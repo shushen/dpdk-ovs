@@ -39,6 +39,11 @@
 
 #include <rte_mbuf.h>
 
+#define action_output_build(action_struct, vport)   do { \
+                             (action_struct)->type = ACTION_OUTPUT; \
+                             (action_struct)->data.output.port = (vport);\
+                         } while (0)
+
 /* Set of all supported actions */
 enum action_type {
 	ACTION_NULL,    /* Empty action */
@@ -50,7 +55,16 @@ struct action_output {
 	uint32_t port;    /* Output port */
 };
 
-int action_execute(enum action_type type, void *action, struct rte_mbuf *mbuf);
+struct action {
+	enum action_type type;
+	union { /* union of difference action types */
+		struct action_output output;
+		/* add other action structs here */
+	} data;
+};
+
+int action_execute(const struct action *action, struct rte_mbuf *mbuf);
+
 #endif /* __ACTION_H_ */
 
 

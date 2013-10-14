@@ -71,31 +71,31 @@ struct flow_key {
 } __attribute__((__packed__));
 
 struct flow_stats {
-	rte_spinlock_t lock;    /* Lock for values below. */
-	uint64_t packet_count;  /* Number of packets matched. */
-	uint64_t byte_count;    /* Number of bytes matched. */
-	uint64_t used;          /* Last used time (in hpet cycles). */
-	uint8_t tcp_flags;      /* Union of seen TCP flags. */
+	rte_spinlock_t lock;	/* Lock for values below. */
+	uint64_t packet_count;	/* Number of packets matched. */
+	uint64_t byte_count;	/* Number of bytes matched. */
+	uint64_t used;			/* Last used time (in hpet cycles). */
+	uint8_t tcp_flags;		/* Union of seen TCP flags. */
 };
 
 void flow_table_init(void);
-int flow_table_lookup(struct flow_key *key);
-void flow_key_extract(struct rte_mbuf *pkt, uint8_t in_port,
+int flow_table_lookup(const struct flow_key *key);
+void flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
                       struct flow_key *key);
-int flow_table_del_flow(struct flow_key *key);
+int flow_table_del_flow(const struct flow_key *key);
 void flow_table_del_all(void);
-int flow_table_add_flow(struct flow_key *key, enum action_type type,
-                        void *action);
-int flow_table_mod_flow(struct flow_key *key, enum action_type type,
-                        void *action, bool clear_stats);
-int flow_table_get_flow(struct flow_key *key, enum action_type *type,
-                   void *action, struct flow_stats *stats);
-int flow_table_get_first_flow(struct flow_key *first_key, enum action_type *type,
-                   void *action, struct flow_stats *stats);
-int flow_table_get_next_flow(struct flow_key *key, struct flow_key *next_key,
-                   enum action_type *type, void *action, struct flow_stats *stats);
-int flow_table_update_stats(struct flow_key *key, struct rte_mbuf *pkt);
-int flow_table_clear_stats(struct flow_key *key);
+int flow_table_add_flow(const struct flow_key *key, const struct action *action);
+int flow_table_mod_flow(const struct flow_key *key, const struct action *action,
+                        bool clear_stats);
+int flow_table_get_flow(struct flow_key *key,
+             struct action *action, struct flow_stats *stats);
+int flow_table_get_first_flow(struct flow_key *first_key,
+             struct action *action, struct flow_stats *stats);
+int flow_table_get_next_flow(const struct flow_key *key,
+             struct flow_key *next_key, struct action *action,
+             struct flow_stats *stats);
+int flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt);
+int flow_table_clear_stats(const struct flow_key *key);
 
 #endif /* __FLOW_H_ */
 

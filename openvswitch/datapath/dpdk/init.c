@@ -59,7 +59,6 @@
 #define MBUFS_PER_KNI     3072
 #define MBUFS_PER_DAEMON  2048
 
-#define MZ_STATS_INFO "MProc_stats_info"
 #define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
 
 #define MBUF_CACHE_SIZE 32
@@ -67,7 +66,6 @@
 #define RX_MBUF_DATA_SIZE 2048
 #define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
 
-#define VPORT_STATS_SIZE sizeof(struct statistics) * MAX_VPORTS
 
 
 /**
@@ -118,14 +116,6 @@ init(int argc, char *argv[])
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "Cannot initialise drivers\n");
 
-	/* set up array for statistics */
-	mz = rte_memzone_reserve(MZ_STATS_INFO, VPORT_STATS_SIZE, rte_socket_id(), NO_FLAGS);
-	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for statistics\n");
-	memset(mz->addr, 0, VPORT_STATS_SIZE);
-	vport_stats = mz->addr;
-
-
 	/* get total number of ports */
 	total_ports = rte_eth_dev_count();
 
@@ -142,6 +132,7 @@ init(int argc, char *argv[])
 	flow_table_init();
 	datapath_init();
 	vport_init();
+	stats_init();
 
 	return 0;
 }

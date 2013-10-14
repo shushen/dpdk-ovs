@@ -35,32 +35,186 @@
 #include <stdio.h>
 #include <rte_string_fns.h>
 #include <rte_ether.h>
+#include <rte_memzone.h>
 
 #include "stats.h"
-#include "vport.h"
 #include "init.h"
+#include "vport.h" /* for MAX_VPORTS */
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define NUM_BYTES_MAC_ADDR  6
 #define MAC_ADDR_STR_INT_L  3
 #define NEWLINE_CHAR_OFFSET 1
+#define NO_FLAGS            0
+#define MZ_STATS_INFO "MProc_stats_info"
+#define VPORT_STATS_SIZE (sizeof(struct vport_statistics) * MAX_VPORTS +  \
+                          sizeof(struct vswitch_statistics))
+//#define STATS_DISABLE
+
+/*
+ * vport statistics structure, used by both clients and kni ports
+ * to record traffic information
+ */
+struct vport_statistics {
+	volatile uint64_t rx;
+	volatile uint64_t tx;
+	volatile uint64_t rx_drop;
+	volatile uint64_t tx_drop;
+	volatile uint64_t overrun;
+};
+
+struct vswitch_statistics {
+	uint64_t tx_drop;
+	uint64_t rx_drop;
+};
+
+static struct vport_statistics *vport_stats[MAX_VPORTS] = {NULL};
+static struct vswitch_statistics *vswitch_stats = NULL;
 
 static const char *get_printable_mac_addr(uint8_t port);
+
+void
+stats_clear(void)
+{
+	stats_vswitch_clear();
+	stats_vport_clear_all();
+}
+
 /*
- * Function to set all the client statistic values to zero.
- * Called at program startup.
+ * Function to set vswitch statistic values to zero.
  */
 void
-clear_stats(void)
+stats_vswitch_clear(void)
 {
-	unsigned i = 0;
+	vswitch_stats->rx_drop = 0;
+	vswitch_stats->tx_drop = 0;
+}
 
-	for (i = 0; i < MAX_VPORTS; i++) {
-		vport_stats[i].rx = 0;
-		vport_stats[i].rx_drop = 0;
-		vport_stats[i].tx = 0;
-		vport_stats[i].tx_drop = 0;
+/*
+ * Function to set vport statistic values to zero.
+ */
+void
+stats_vport_clear(unsigned vportid)
+{
+	vport_stats[vportid]->rx = 0;
+	vport_stats[vportid]->rx_drop = 0;
+	vport_stats[vportid]->tx = 0;
+	vport_stats[vportid]->tx_drop = 0;
+	vport_stats[vportid]->overrun = 0;
+}
+
+/*
+ * Function to set all vport statistics to zero
+ */
+void stats_vport_clear_all(void)
+{
+	unsigned vportid = 0;
+
+	for (vportid = 0; vportid < MAX_VPORTS; vportid++) {
+		stats_vport_clear(vportid);
 	}
+}
+
+#ifdef STATS_DISABLE
+void stats_vport_rx_increment(unsigned vportid, int inc)
+{
+}
+
+void stats_vport_rx_drop_increment(unsigned vportid, int inc)
+{
+}
+
+void stats_vport_tx_increment(unsigned vportid, int inc)
+{
+}
+
+void stats_vport_tx_drop_increment(unsigned vportid, int inc)
+{
+}
+
+void stats_vport_overrun_increment(unsigned vportid, int inc)
+{
+}
+
+void stats_vswitch_rx_drop_increment(int inc)
+{
+}
+
+void stats_vswitch_tx_drop_increment(int inc)
+{
+}
+
+#else /* STATS_DISABLE */
+void stats_vport_rx_increment(unsigned vportid, int inc)
+{
+	vport_stats[vportid]->rx += inc;
+}
+
+void stats_vport_rx_drop_increment(unsigned vportid, int inc)
+{
+	vport_stats[vportid]->rx_drop += inc;
+}
+
+void stats_vport_tx_increment(unsigned vportid, int inc)
+{
+	vport_stats[vportid]->tx += inc;
+}
+
+void stats_vport_tx_drop_increment(unsigned vportid, int inc)
+{
+	vport_stats[vportid]->tx_drop += inc;
+}
+
+void stats_vport_overrun_increment(unsigned vportid, int inc)
+{
+	vport_stats[vportid]->overrun += inc;
+}
+
+void stats_vswitch_rx_drop_increment(int inc)
+{
+	vswitch_stats->rx_drop += inc;
+}
+
+void stats_vswitch_tx_drop_increment(int inc)
+{
+	vswitch_stats->tx_drop += inc;
+}
+
+#endif /* STATS_DISABLE */
+
+uint64_t stats_vport_rx_get(unsigned vportid)
+{
+	return vport_stats[vportid]->rx;
+}
+
+uint64_t stats_vport_rx_drop_get(unsigned vportid)
+{
+	return vport_stats[vportid]->rx_drop;
+}
+
+uint64_t stats_vport_tx_get(unsigned vportid)
+{
+	return vport_stats[vportid]->tx;
+}
+
+uint64_t stats_vport_tx_drop_get(unsigned vportid)
+{
+	return vport_stats[vportid]->tx_drop;
+}
+
+uint64_t stats_vport_overrun_get(unsigned vportid)
+{
+	return vport_stats[vportid]->overrun;
+}
+
+uint64_t stats_vswitch_rx_drop_get(void)
+{
+	return vswitch_stats->rx_drop;
+}
+
+uint64_t stats_vswitch_tx_drop_get(void)
+{
+	return vswitch_stats->tx_drop;
 }
 
 /*
@@ -105,7 +259,7 @@ get_printable_mac_addr(uint8_t port)
  * than one lcore enabled.
  */
 void
-do_stats_display(void)
+stats_display(void)
 {
 	unsigned i = 0;
 	unsigned j = 0;
@@ -114,6 +268,7 @@ do_stats_display(void)
 	const char clr[] = {27, '[', '2', 'J', '\0'};
 	/* H = Home position for cursor*/
 	const char topLeft[] = {27, '[', '1', ';', '1', 'H','\0'};
+	uint64_t overruns = 0;
 
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
@@ -130,7 +285,6 @@ do_stats_display(void)
 		     "Interface      rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		const volatile struct statistics vstats = vport_stats[i];
 		if (i == 0) {
 			printf("vswitchd   ");
 		} else if (i <= PORT_MASK) {
@@ -141,18 +295,40 @@ do_stats_display(void)
 			printf("KNI Port %2u", i & KNI_MASK);
 		}
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
-					vstats.rx,
-					vstats.rx_drop,
-					vstats.tx,
-					vstats.tx_drop);
+		       stats_vport_rx_get(i),
+		       stats_vport_rx_drop_get(i),
+		       stats_vport_tx_get(i),
+		       stats_vport_tx_drop_get(i));
+
+		overruns += stats_vport_overrun_get(i);
 	}
 	printf("============   ============  ============  ============  ============\n");
 
-	printf("\n Switch rx dropped %d\n", switch_rx_drop);
-	printf("\n Switch tx dropped %d\n", switch_tx_drop);
+	printf("\n Switch rx dropped %d\n", stats_vswitch_rx_drop_get());
+	printf("\n Switch tx dropped %d\n", stats_vswitch_tx_drop_get());
 	printf("\n Queue overruns   %d\n",  overruns);
 	printf("\n Mempool count    %9u\n", rte_mempool_count(pktmbuf_pool));
 	printf("\n");
+}
+
+void
+stats_init(void)
+{
+	const struct rte_memzone *mz = NULL;
+	unsigned vportid = 0;
+	/* set up array for statistics */
+	mz = rte_memzone_reserve(MZ_STATS_INFO, VPORT_STATS_SIZE, rte_socket_id(), NO_FLAGS);
+	if (mz == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for statistics\n");
+	memset(mz->addr, 0, VPORT_STATS_SIZE);
+
+	for (vportid = 0; vportid < MAX_VPORTS; vportid++) {
+		vport_stats[vportid] = (void *)((char *)mz->addr +
+				vportid * sizeof(struct vport_statistics));
+	}
+
+	vswitch_stats = (void *)((char *)mz->addr +
+				MAX_VPORTS * sizeof(struct vport_statistics));
 }
 
 

@@ -67,7 +67,7 @@ else
 APP = ut_ovs_dpdk
 
 # all source are stored in SRCS-y
-SRCS-y := vport_stub.c action.c flow.c ut.c
+SRCS-y := vport_stub.c action.c flow.c stats.c ut.c
 
 INC := $(wildcard *.h)
 

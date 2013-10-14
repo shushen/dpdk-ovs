@@ -42,7 +42,6 @@
 #include "stats.h"
 #include "args.h"
 #include "kni.h"
-#include "datapath.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define NO_FLAGS        0
@@ -302,23 +301,21 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 {
 	struct client *cl = NULL;
 	int rslt = 0;
-	struct statistics *s = NULL;
 
 	cl = &clients[client];
-	s = &vport_stats[client];
 
 	rslt = rte_ring_mp_enqueue(cl->rx_q, (void *)buf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
 			rte_pktmbuf_free(buf);
-			switch_tx_drop++;
-			s->rx_drop++;
+			stats_vswitch_tx_drop_increment(INC_BY_1);
+			stats_vport_rx_drop_increment(client, INC_BY_1);
 		} else {
-			overruns++;
-			s->rx++;
+			stats_vport_rx_increment(client, INC_BY_1);
+			stats_vport_overrun_increment(client, INC_BY_1);
 		}
 	} else {
-		s->rx++;
+		stats_vport_rx_increment(client, INC_BY_1);
 	}
 
 	return 0;
@@ -331,9 +328,12 @@ int
 send_to_port(uint8_t vportid, struct rte_mbuf *buf)
 {
 	struct port_queue *pq = &port_queues[vportid & PORT_MASK];
+	int rslt = rte_ring_mp_enqueue(pq->tx_q, (void *)buf);
 
-	if (rte_ring_mp_enqueue(pq->tx_q, (void *)buf) < 0) {
-		rte_pktmbuf_free(buf);
+	if (rslt < 0) {
+		if (rslt == -ENOBUFS) {
+			rte_pktmbuf_free(buf);
+		}
 	}
 
 	return 0;
@@ -348,18 +348,15 @@ send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
 	int i = 0;
 	int rslt = 0;
 	struct kni_port *kp = NULL;
-	struct statistics *s = NULL;
-
-	s = &vport_stats[vportid];
 
 	rslt = rte_kni_tx_burst(&rte_kni_list[vportid & KNI_MASK], &buf, 1);
 	/* FIFO is full */
 	if (rslt == 0) {
 		rte_pktmbuf_free(buf);
-		s->rx_drop++;
-		switch_tx_drop++;
+		stats_vport_rx_drop_increment(vportid, INC_BY_1);
+		stats_vswitch_tx_drop_increment(INC_BY_1);
 	} else {
-		s->rx++;
+		stats_vport_rx_increment(vportid, INC_BY_1);
 	}
 
 	return 0;
@@ -375,12 +372,10 @@ receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs)
 	int rslt = 0;
 	struct statistics *s = NULL;
 
-	s = &vport_stats[vportid];
-
 	rslt = rte_kni_rx_burst(&rte_kni_list[vportid & KNI_MASK], bufs, PKT_BURST_SIZE);
 
 	if (rslt != 0)
-		s->tx += rslt;
+		stats_vport_tx_increment(vportid, rslt);
 
 	return rslt;
 }
@@ -394,10 +389,8 @@ receive_from_client(uint8_t client, struct rte_mbuf **bufs)
 	int j = 0;
 	uint16_t dq_pkt = PKT_BURST_SIZE;
 	struct client *cl = NULL;
-	struct statistics *s = NULL;
 
 	cl = &clients[client];
-	s = &vport_stats[client];
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
 	while (dq_pkt > 0 &&
@@ -407,7 +400,7 @@ receive_from_client(uint8_t client, struct rte_mbuf **bufs)
 				rte_ring_count(cl->tx_q), PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by client */
-	s->tx += dq_pkt;
+	stats_vport_tx_increment(client, dq_pkt);
 
 	return dq_pkt;
 }
@@ -426,10 +419,9 @@ receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
 	rx_count = rte_eth_rx_burst(ports->id[vportid & PORT_MASK], 0, \
 			bufs, PKT_BURST_SIZE);
 	/* Now process the NIC packets read */
-	if (likely(rx_count > 0)) {
+	if (likely(rx_count > 0))
+		stats_vport_rx_increment(vportid, rx_count);
 
-		vport_stats[vportid].rx += rx_count;
-	}
 
 	return rx_count;
 }

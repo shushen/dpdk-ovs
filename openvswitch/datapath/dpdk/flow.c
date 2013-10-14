@@ -35,15 +35,25 @@
 #include <rte_fbk_hash.h>
 #include <rte_memzone.h>
 #include <rte_hash.h>
-#include <rte_jhash.h>
 #include <rte_cpuflags.h>
 #include <rte_tcp.h>
 #include <rte_ip.h>
 #include <rte_udp.h>
 #include <rte_byteorder.h>
+#include <rte_rwlock.h>
+
+/* Hash function used if none is specified */
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+#include <rte_hash_crc.h>
+#include <rte_jhash.h>
+#else
+#include <rte_jhash.h>
+#endif
+
 
 #include "flow.h"
 #include "action.h"
+
 
 #define CHECK_POS(pos) do {\
                              if ((pos) >= MAX_FLOWS || (pos) < 0) return -1; \
@@ -51,10 +61,6 @@
 
 #define CHECK_NULL(ptr)   do { \
                              if ((ptr) == NULL) return -1; \
-                         } while (0)
-
-#define CHECK_TYPE(type)   do { \
-                             if ((type) == ACTION_NULL) return -1; \
                          } while (0)
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
@@ -74,31 +80,31 @@
 #define IP_ARGS(ip) ((ip >> 24) & 0xFF), ((ip >> 16) & 0xFF), ((ip >> 8) & 0xFF), (ip & 0xFF)
 
 struct flow_table_entry {
-	struct flow_key key;      /* Flow key. */
+	rte_rwlock_t lock;   /* Lock to allow multiple readers and one writer */
+	struct flow_key key;     /* Flow key. */
 	struct flow_stats stats; /* Flow statistics. */
 	bool used;               /* Flow is used */
-	enum action_type type;   /* Type of action */
-	union {                  /* Union of different action types */
-		struct action_output output;
-	} action;
+	struct action action;    /* Type of action */
 };
 
-/* Parameters used for hash table in unit test functions. Name set later. */
-static struct rte_hash_parameters ut_params = {
+/* Parameters used for hash table */
+static struct rte_hash_parameters hash_table_params = {
 	.name               = HASH_NAME,
 	.entries            = MAX_FLOWS,
 	.bucket_entries     = HASH_BUCKETS,
 	.key_len            = sizeof(struct flow_key),
-	.hash_func          = rte_hash_crc,
+	.hash_func          = rte_jhash,
 	.hash_func_init_val = 0,
 	.socket_id          = SOCKET0,
 };
 
-static struct flow_table_entry *flow_table[MAX_FLOWS];
+static struct flow_table_entry *flow_table = NULL;
 static struct rte_hash *handle = NULL;
 
 static uint64_t ovs_flow_used_time(uint64_t flow_tsc);
-static void flow_key_print(volatile struct flow_key *key);
+static int flow_key_print(volatile struct flow_key *key);
+static int copy_entry_from_table(int pos, struct flow_key *key,
+            struct action *action, struct flow_stats *stats);
 
 /* Initialize the flow table  */
 void
@@ -111,27 +117,29 @@ flow_table_init(void)
 	mz = rte_memzone_reserve(MZ_FLOW_TABLE, flow_table_size,
 	                         rte_socket_id(), NO_FLAGS);
 	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for port "
-		                       "information\n");
+		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for flow"
+		                       "table \n");
 	memset(mz->addr, 0, flow_table_size);
-	for (pos = 0; pos < MAX_FLOWS; pos++)
-		flow_table[pos] = (struct flow_table_entry *)
-		    ((char *)mz->addr + (sizeof(struct flow_table_entry) * pos));
+	flow_table = mz->addr;
+	for (pos = 0; pos < MAX_FLOWS; pos++) {
+		rte_rwlock_init(&flow_table[pos].lock);
+	}
 
-
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+	hash_table_params.hash_func = rte_hash_crc;
 	/* Check if hardware-accelerated hashing supported */
-	if (ut_params.hash_func == rte_hash_crc &&
-			!rte_cpu_get_flag_enabled(RTE_CPUFLAG_SSE4_2)) {
+	if (!rte_cpu_get_flag_enabled(RTE_CPUFLAG_SSE4_2)) {
 		RTE_LOG(WARNING, HASH, "CRC32 instruction requires SSE4.2, "
 		              "which is not supported on this system. "
 		              "Falling back to software hash.\n");
-		ut_params.hash_func = rte_jhash;
+		hash_table_params.hash_func = rte_jhash;
 	}
+	RTE_LOG(WARNING, HASH, "Enabling CRC32 instruction for hashing\n");
+#endif /* This check does not compile if SSE4_2 is not enabled for build */
 
-	handle = rte_hash_create(&ut_params);
+	handle = rte_hash_create(&hash_table_params);
 	if (handle == NULL) {
-		RTE_LOG(WARNING, APP, "Failed to create hash table\n");
-		exit(EXIT_FAILURE);
+		rte_exit(EXIT_FAILURE, "Failed to create hash table\n");
 	}
 }
 
@@ -139,33 +147,32 @@ flow_table_init(void)
  * Clear flow table statistics for 'key'
  */
 int
-flow_table_clear_stats(struct flow_key *key)
+flow_table_clear_stats(const struct flow_key *key)
 {
 	int pos = 0;
 	CHECK_NULL(key);
 	pos = flow_table_lookup(key);
 	CHECK_POS(pos);
 
-	rte_spinlock_init((rte_spinlock_t *)&(flow_table[pos]->stats.lock));
+	rte_spinlock_init((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 
-	flow_table[pos]->stats.used = 0;
-	flow_table[pos]->stats.tcp_flags = 0;
-	flow_table[pos]->stats.packet_count = 0;
-	flow_table[pos]->stats.byte_count = 0;
+	flow_table[pos].stats.used = 0;
+	flow_table[pos].stats.tcp_flags = 0;
+	flow_table[pos].stats.packet_count = 0;
+	flow_table[pos].stats.byte_count = 0;
 
 	return 0;
 }
 
 /*
- * Add 'key' to flow table
+ * Add 'key' and corresponding 'action' to flow table
  */
 int
-flow_table_add_flow(struct flow_key *key, enum action_type type, void *action)
+flow_table_add_flow(const struct flow_key *key, const struct action *action)
 {
 	int pos = 0;
 	CHECK_NULL(key);
 	CHECK_NULL(action);
-	CHECK_TYPE(type);
 
 	pos = flow_table_lookup(key);
 	/* already exists */
@@ -173,94 +180,127 @@ flow_table_add_flow(struct flow_key *key, enum action_type type, void *action)
 		return -1;
 	}
 
+
 	pos = rte_hash_add_key(handle, key);
 	CHECK_POS(pos);
 
-	flow_table[pos]->key = *key;
-	flow_table[pos]->type = type;
-	flow_table[pos]->used = true;
-	memcpy(&(flow_table[pos]->action), action,
-	                 sizeof(flow_table[pos]->action));
+	/* As we are writing to the table, acquire write lock */
+	rte_rwlock_write_lock(&flow_table[pos].lock);
+
+	flow_table[pos].key = *key;
+	flow_table[pos].used = true;
+	memcpy(&(flow_table[pos].action), action,
+	                 sizeof(flow_table[pos].action));
+
+	/* release lock as table has been written */
+	rte_rwlock_write_unlock(&flow_table[pos].lock);
+
+	/* dont care about locking stats */
 	flow_table_clear_stats(key);
 	return pos;
 }
 
 /*
- * Modify flow table entry referenced by 'key'. 'clear_stats' clears stastics
+ * Modify flow table entry referenced by 'key'. 'clear_stats' clears statistics
  * for that entry
  */
 int
-flow_table_mod_flow(struct flow_key *key, enum action_type type, void *action,
+flow_table_mod_flow(const struct flow_key *key, const struct action *action,
                     bool clear_stats)
 {
-	int rc = -1;
+	int ret = -1;
 	int pos = 0;
 	CHECK_NULL(key);
 	CHECK_NULL(action);
-	CHECK_TYPE(type);
 
 	pos = flow_table_lookup(key);
 	CHECK_POS(pos);
 
-	if (flow_table[pos]->used) {
-		if (action) {
-			if (clear_stats) {
-				flow_table_clear_stats(key);
-			}
-			memcpy(&(flow_table[pos]->action), action,
-			                sizeof(flow_table[pos]->action));
-			flow_table[pos]->type = type;
-			rc = pos;
-		}
+	/* As we are writing to the table, acquire write lock */
+	rte_rwlock_write_lock(&flow_table[pos].lock);
+
+	if (clear_stats) {
+		flow_table_clear_stats(key);
 	}
 
-	return rc;
+	if (action) {
+		memcpy(&(flow_table[pos].action), action,
+				sizeof(flow_table[pos].action));
+	}
+
+	ret = pos;
+	flow_table[pos].used = true;
+
+	/* release lock as table has been written */
+	rte_rwlock_write_unlock(&flow_table[pos].lock);
+
+	return ret;
 }
+
+static int
+copy_entry_from_table(int pos, struct flow_key *key, struct action *action,
+                        struct flow_stats *stats)
+{
+	int ret = 0;
+
+	if (flow_table[pos].used) {
+		if (key) {
+			*key = flow_table[pos].key;
+		}
+		if (action) {
+			memcpy(action, &flow_table[pos].action,
+			       sizeof(flow_table[pos].action));
+		}
+		if (stats) {
+			*stats = flow_table[pos].stats;
+			/* vswitchd needs linux monotonic time (not TSC cycles) */
+			stats->used = flow_table[pos].stats.used ? ovs_flow_used_time(flow_table[pos].stats.used) : 0;
+		}
+
+		ret = pos;
+	} else {
+		ret = -1;
+	}
+
+	return ret;
+}
+
 
 /*
  * Return flow entry from flow table using 'key' as index.
  *
  * All data is copied
  */
-int flow_table_get_flow(struct flow_key *key, enum action_type *type,
-                        void *action, struct flow_stats *stats)
+int flow_table_get_flow(struct flow_key *key, struct action *action,
+                        struct flow_stats *stats)
 {
 	int pos = 0;
-	int rc = -1;
+	int ret = -1;
 	CHECK_NULL(key);
 	pos = flow_table_lookup(key);
 	CHECK_POS(pos);
 
-	if (flow_table[pos]->used) {
-		if (key) {
-			*key = flow_table[pos]->key;
-		}
-		if (action) {
-			memcpy(action, &flow_table[pos]->action,
-			       sizeof(flow_table[pos]->action));
-		}
-		if (type) {
-			*type = flow_table[pos]->type;
-		}
-		if (stats) {
-			*stats = flow_table[pos]->stats;
-		}
-		rc = 0;
-	}
+	/* As we are reading from the table, acquire read lock */
+	rte_rwlock_read_lock(&flow_table[pos].lock);
 
-	return rc;
+	ret = copy_entry_from_table(pos, NULL, action, stats);
+
+	/* release lock as we have everything we need */
+	rte_rwlock_read_unlock(&flow_table[pos].lock);
+
+	return ret;
 }
 
 /*
- * Will return the next flow entry after 'key' in 'next_key'
+ * Will return the next flow entry after 'key' and corresponding data.
  *
  * All data is copied
  */
-int flow_table_get_next_flow(struct flow_key *key,
-              struct flow_key *next_key, enum action_type *type, void *action, struct flow_stats *stats)
+int flow_table_get_next_flow(const struct flow_key *key,
+     struct flow_key *next_key, struct action *action, struct flow_stats *stats)
 {
 	int pos = 0;
-	int rc = -1;
+	int ret = -1;
 	CHECK_NULL(key);
 
 	pos = flow_table_lookup(key);
@@ -268,30 +308,17 @@ int flow_table_get_next_flow(struct flow_key *key,
 	pos++;
 
 	for (; pos < MAX_FLOWS; pos++) {
-		if (flow_table[pos]->used) {
-			if (next_key) {
-				*next_key = flow_table[pos]->key;
-			}
-			if (action) {
-				memcpy(action, &flow_table[pos]->action,
-				       sizeof(flow_table[pos]->action));
-			}
-			if (type) {
-				*type = flow_table[pos]->type;
-			}
-			if (stats) {
-				*stats = flow_table[pos]->stats;
-			}
-			rc = 0;
+		/* dont lock as only writer should call this */
+		ret = copy_entry_from_table(pos, next_key, action, stats);
+		if (ret == pos) {
 			break;
 		}
-
 	}
 
 	if (pos == MAX_FLOWS)
-		rc = -1;
+		ret = -1;
 
-	return rc;
+	return ret;
 }
 
 /*
@@ -299,28 +326,16 @@ int flow_table_get_next_flow(struct flow_key *key,
  *
  * All data is copied
  */
-int flow_table_get_first_flow(struct flow_key *first_key,
-              enum action_type *type, void *action, struct flow_stats *stats)
+int flow_table_get_first_flow(struct flow_key *first_key, struct action *action,
+                              struct flow_stats *stats)
 {
 	int pos = 0;
-	int rc = -1;
+	int ret = -1;
 
 	for (pos = 0; pos < MAX_FLOWS; pos++) {
-		if (flow_table[pos]->used) {
-			if (first_key) {
-				*first_key = flow_table[pos]->key;
-			}
-			if (action) {
-				memcpy(action, &flow_table[pos]->action,
-			               sizeof(flow_table[pos]->action));
-			}
-			if (type) {
-				*type = flow_table[pos]->type;
-			}
-			if (stats) {
-				*stats = flow_table[pos]->stats;
-			}
-			rc = 0;
+		/* dont lock as only writer should call this */
+		ret = copy_entry_from_table(pos, first_key, action, stats);
+		if (ret == pos) {
 			break;
 		}
 
@@ -329,27 +344,34 @@ int flow_table_get_first_flow(struct flow_key *first_key,
 	if (pos == MAX_FLOWS)
 		return -1;
 
-	return rc;
+	return ret;
 }
 
 /*
  * Delete flow table entry at 'key'
  */
 int
-flow_table_del_flow(struct flow_key *key)
+flow_table_del_flow(const struct flow_key *key)
 {
 	int pos = 0;
 	CHECK_NULL(key);
 	pos = rte_hash_del_key(handle, key);
 	CHECK_POS(pos);
 
-	memset((void *)&flow_table[pos]->key, 0,
-	       sizeof(flow_table[pos]->action));
-	memset((void *)&flow_table[pos]->action, 0,
-	       sizeof(flow_table[pos]->action));
+	/* As we are writing to the table, acquire write lock */
+	rte_rwlock_write_lock(&flow_table[pos].lock);
+
+	memset((void *)&flow_table[pos].key, 0,
+	       sizeof(flow_table[pos].key));
+	memset((void *)&flow_table[pos].action, 0,
+	       sizeof(flow_table[pos].action));
+	flow_table[pos].used = false;
+
+	/* release lock as table has been written */
+	rte_rwlock_write_unlock(&flow_table[pos].lock);
+
+	/* dont care about locking stats */
 	flow_table_clear_stats(key);
-	flow_table[pos]->type = ACTION_NULL;
-	flow_table[pos]->used = false;
 	return pos;
 }
 
@@ -363,45 +385,51 @@ flow_table_del_all(void)
 	struct flow_key *key = NULL;
 
 	for (pos = 0; pos < MAX_FLOWS; pos++) {
-		key = &(flow_table[pos]->key);
+		key = &(flow_table[pos].key);
 		flow_table_clear_stats(key);
 		rte_hash_del_key(handle, key);
-		memset(key, 0, sizeof(struct flow_key));
 
-		memset(key, 0, sizeof(flow_table[pos]->action));
-		memset((void *)&flow_table[pos]->action, 0,
-		       sizeof(flow_table[pos]->action));
-		flow_table[pos]->type = ACTION_NULL;
-		flow_table[pos]->used = false;
+		/* As we are writing to the table, acquire write lock */
+		rte_rwlock_write_lock(&flow_table[pos].lock);
+
+		memset(key, 0, sizeof(struct flow_key));
+		memset((void *)&flow_table[pos].action, 0,
+		       sizeof(flow_table[pos].action));
+		flow_table[pos].used = false;
+
+		/* release lock as table has been written */
+		rte_rwlock_write_unlock(&flow_table[pos].lock);
+
 	}
 
 }
 
-
 /*
- * Use pkt to update stats at entry pos in flow_table
+ * Use 'pkt' to update stats at entry 'key' in flow_table
  */
 int
-flow_table_update_stats(struct flow_key *key, struct rte_mbuf *pkt)
+flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt)
 {
-	int pos = flow_table_lookup(key);
-	CHECK_POS(pos);
 	uint8_t tcp_flags = 0;
+	int pos = 0;
+	CHECK_NULL(key);
+	pos = flow_table_lookup(key);
+	CHECK_POS(pos);
 
-	if (flow_table[pos]->key.ether_type == ETHER_TYPE_IPv4 &&
-	    flow_table[pos]->key.ip_proto == IPPROTO_TCP) {
+	if (flow_table[pos].key.ether_type == ETHER_TYPE_IPv4 &&
+	    flow_table[pos].key.ip_proto == IPPROTO_TCP) {
 		uint8_t *pkt_data = rte_pktmbuf_mtod(pkt, unsigned char *);
 		pkt_data += sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr);
 		struct tcp_hdr *tcp = (struct tcp_hdr *) pkt_data;
 		tcp_flags = tcp->tcp_flags & TCP_FLAG_MASK;
 	}
 
-	rte_spinlock_lock((rte_spinlock_t *)&(flow_table[pos]->stats.lock));
-	flow_table[pos]->stats.used = curr_tsc;
-	flow_table[pos]->stats.packet_count++;
-	flow_table[pos]->stats.byte_count += rte_pktmbuf_data_len(pkt);
-	flow_table[pos]->stats.tcp_flags |= tcp_flags;
-	rte_spinlock_unlock((rte_spinlock_t *)&(flow_table[pos]->stats.lock));
+	rte_spinlock_lock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
+	flow_table[pos].stats.used = curr_tsc;
+	flow_table[pos].stats.packet_count++;
+	flow_table[pos].stats.byte_count += rte_pktmbuf_data_len(pkt);
+	flow_table[pos].stats.tcp_flags |= tcp_flags;
+	rte_spinlock_unlock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 
 	return 0;
 }
@@ -410,7 +438,8 @@ flow_table_update_stats(struct flow_key *key, struct rte_mbuf *pkt)
  * Extract 13 tuple from pkt as key
  */
 void
-flow_key_extract(struct rte_mbuf *pkt, uint8_t in_port, struct flow_key *key)
+flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
+                 struct flow_key *key)
 {
 	struct ether_hdr *ether_hdr = NULL;
 	struct vlan_hdr *vlan_hdr = NULL;
@@ -481,7 +510,7 @@ flow_key_extract(struct rte_mbuf *pkt, uint8_t in_port, struct flow_key *key)
 /*
  * Lookup 'key' in hash table
  */
-int flow_table_lookup(struct flow_key *key)
+int flow_table_lookup(const struct flow_key *key)
 {
 	return rte_hash_lookup(handle, key);
 }
@@ -489,9 +518,11 @@ int flow_table_lookup(struct flow_key *key)
 /*
  * Print flow key to screen
  */
-static void
+static int
 flow_key_print(volatile struct flow_key *key)
 {
+	CHECK_NULL(key);
+
 	printf("key.in_port = %"PRIu32"\n", key->in_port);
 	printf("key.ether_dst = "ETH_FMT"\n", ETH_ARGS(key->ether_dst.addr_bytes));
 	printf("key.ether_src = "ETH_FMT"\n", ETH_ARGS(key->ether_src.addr_bytes));

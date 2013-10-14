@@ -54,8 +54,6 @@ unsigned stats_display_interval;
 unsigned vswitchd_core;
 unsigned client_switching_core;
 
-struct statistics *vport_stats;
-
 int init(int argc, char *argv[]);
 
 #endif /* ifndef _INIT_H_ */

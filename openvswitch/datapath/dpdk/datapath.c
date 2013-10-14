@@ -43,7 +43,6 @@
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define NO_FLAGS            0
-#define VSWITCHD            0
 #define SOCKET0             0
 #define PKT_BURST_SIZE      32
 #define VSWITCHD_RINGSIZE   2048
@@ -113,10 +112,7 @@ void
 send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 {
 	int rslt = 0;
-	struct statistics *vswd_stat = NULL;
 	void *mbuf_ptr = NULL;
-
-	vswd_stat = &vport_stats[VSWITCHD];
 
 	/* send one packet, delete information about segments */
 	rte_pktmbuf_pkt_len(mbuf) = rte_pktmbuf_data_len(mbuf);
@@ -127,8 +123,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	if (mbuf_ptr == NULL) {
 		printf("Cannot prepend upcall info\n");
 		rte_pktmbuf_free(mbuf);
-		switch_tx_drop++;
-		vswd_stat->tx_drop++;
+		stats_vswitch_tx_drop_increment(INC_BY_1);
+		stats_vport_tx_drop_increment(VSWITCHD, INC_BY_1);
 		return;
 	}
 
@@ -139,15 +135,15 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
 			rte_pktmbuf_free(mbuf);
-			switch_tx_drop++;
-			vswd_stat->tx_drop++;
+			stats_vswitch_tx_drop_increment(INC_BY_1);
+			stats_vport_tx_drop_increment(VSWITCHD, INC_BY_1);
 			return;
 		} else {
-			overruns++;
+			stats_vport_overrun_increment(VSWITCHD, INC_BY_1);
 		}
 	}
 
-	vswd_stat->tx++;
+	stats_vport_tx_increment(VSWITCHD, INC_BY_1);
 }
 
 /*
@@ -158,10 +154,7 @@ handle_request_from_vswitchd(void)
 {
 	int j = 0;
 	uint16_t dq_pkt = PKT_BURST_SIZE;
-	struct statistics *vswd_stat = NULL;
 	struct rte_mbuf *buf[PKT_BURST_SIZE] = {0};
-
-	vswd_stat = &vport_stats[VSWITCHD];
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
 	while (dq_pkt > 0 &&
@@ -171,7 +164,7 @@ handle_request_from_vswitchd(void)
 		   rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by daemon */
-	vswd_stat->rx += dq_pkt;
+	stats_vport_rx_increment(VSWITCHD, dq_pkt);
 
 	for (j = 0; j < dq_pkt; j++) {
 		handle_vswitchd_cmd(buf[j]);
@@ -186,10 +179,7 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 {
 	struct rte_mbuf *mbuf = NULL;
 	void *ctrlmbuf_data = NULL;
-	struct statistics *vswd_stat = NULL;
 	int rslt = 0;
-
-	vswd_stat = &vport_stats[VSWITCHD];
 
 	/* Preparing the buffer to send */
 	mbuf = rte_ctrlmbuf_alloc(pktmbuf_pool);
@@ -197,9 +187,8 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 	if (!mbuf) {
 		RTE_LOG(WARNING, APP, "Error : Unable to allocate an mbuf "
 		        ": %s : %d", __FUNCTION__, __LINE__);
-		switch_tx_drop++;
-		vswd_stat->rx_drop++;
-
+		stats_vswitch_tx_drop_increment(INC_BY_1);
+		stats_vport_rx_drop_increment(VSWITCHD, INC_BY_1);
 		return;
 	}
 
@@ -211,15 +200,15 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 	rslt = rte_ring_mp_enqueue(vswitchd_reply_ring, (void *)mbuf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
-			rte_pktmbuf_free(mbuf);
-			switch_tx_drop++;
-			vswd_stat->rx_drop++;
+			rte_ctrlmbuf_free(mbuf);
+			stats_vswitch_tx_drop_increment(INC_BY_1);
+			stats_vport_rx_drop_increment(VSWITCHD, INC_BY_1);
 		} else {
-			overruns++;
-			vswd_stat->rx++;
+			stats_vport_overrun_increment(VSWITCHD, INC_BY_1);
+			stats_vport_rx_increment(VSWITCHD, INC_BY_1);
 		}
 	} else {
-		vswd_stat->rx++;
+		stats_vport_rx_increment(VSWITCHD, INC_BY_1);
 	}
 }
 
@@ -246,14 +235,13 @@ flow_cmd_new(struct dpdk_flow_message *request)
 {
 	struct dpdk_message reply = {0};
 	int pos = 0;
-	struct action_output output = {0};
+	struct action action = {0};
 
 	pos = flow_table_lookup(&request->key);
 	if (pos < 0) {
 		if (request->flags & FLAG_CREATE) {
-			output.port = request->action;
-			flow_table_add_flow(&request->key,
-			             ACTION_OUTPUT, &output);
+			action_output_build(&action, request->action);
+			flow_table_add_flow(&request->key, &action);
 			reply.type = 0;
 		} else {
 			reply.type = ENOENT;
@@ -262,13 +250,13 @@ flow_cmd_new(struct dpdk_flow_message *request)
 		if (request->flags & FLAG_REPLACE) {
 			/* Retrieve flow stats*/
 			flow_table_get_flow(&request->key,
-			                       NULL, NULL, &request->stats);
+			                    NULL, &request->stats);
 			/* Depending on the value of request->clear we will
 			 * either update or keep the same stats
 			 */
-			output.port = request->action;
+			action_output_build(&action, request->action);
 			flow_table_mod_flow(&request->key,
-			         ACTION_OUTPUT, &output, request->clear);
+			         &action, request->clear);
 			reply.type = 0;
 		} else {
 			reply.type = EEXIST;
@@ -302,7 +290,7 @@ flow_cmd_del(struct dpdk_flow_message *request)
 		} else {
 			/* Retrieve flow stats*/
 			flow_table_get_flow(&request->key,
-			               NULL, NULL, &request->stats);
+			               NULL, &request->stats);
 			flow_table_del_flow(&request->key);
 			reply.type = 0;
 		}
@@ -319,16 +307,14 @@ static void
 flow_cmd_get(struct dpdk_flow_message *request)
 {
 	struct dpdk_message reply = {0};
-	int rc = 0;
-	struct action_output output = {0};
-	enum action_type type = ACTION_NULL;
+	int ret = 0;
+	struct action action = {0};
 
-	rc = flow_table_get_flow(&request->key,
-	                         &type, &output, &request->stats);
-	if (rc < 0) {
+	ret = flow_table_get_flow(&request->key, &action, &request->stats);
+	if (ret < 0) {
 		reply.type = ENOENT;
 	} else {
-		request->action = output.port;
+		request->action = action.data.output.port;
 		reply.type = 0;
 	}
 
@@ -347,29 +333,28 @@ flow_cmd_get(struct dpdk_flow_message *request)
 static void
 flow_cmd_dump(struct dpdk_flow_message *request)
 {
-	int rc = 0;
+	int ret = 0;
 	struct dpdk_message reply = {0};
 	struct flow_key empty = {0};
 	struct flow_key key = {0};
 	struct flow_stats stats = {0};
-	struct action_output output = {0};
-	enum action_type type = ACTION_NULL;
+	struct action action = {0};
 
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*
 		 * if key is empty, it is first call of dump(), so we
 		 * need to reply using the first flow
 		 */
-		rc = flow_table_get_first_flow(&key, &type, &output, &stats);
+		ret = flow_table_get_first_flow(&key, &action, &stats);
 	} else {
 		/* next flow */
-		rc = flow_table_get_next_flow(&request->key,
-		               &key, &type, &output, &stats);
+		ret = flow_table_get_next_flow(&request->key,
+		               &key, &action, &stats);
 	}
 
-	if (rc >= 0) {
+	if (ret >= 0) {
 		request->key = key;
-		request->action = output.port;
+		request->action = action.data.output.port;
 		request->stats = stats;
 		reply.type = 0;
 	} else {
@@ -411,11 +396,10 @@ handle_flow_cmd(struct dpdk_flow_message *request)
 static void
 handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
 {
-	struct action_output action;
-	action.port = request->action;
+	struct action action = {0};
+	action_output_build(&action, request->action);
 
-	/* can we not use action_table_execute() here? */
-	action_execute(ACTION_OUTPUT, &action, pkt);
+	action_execute(&action, pkt);
 }
 
 /*

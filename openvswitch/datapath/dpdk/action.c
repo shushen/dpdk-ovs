@@ -42,22 +42,27 @@
                              if ((ptr) == NULL) return -1; \
                          } while (0)
 
-static action_output(struct rte_mbuf *mbuf, struct action_output *action);
+static void action_output(const struct action_output *action,
+                          struct rte_mbuf *mbuf);
 
 /*
  * Do 'action' of action_type 'type' on 'mbuf'
  */
-int action_execute(enum action_type type, void *action, struct rte_mbuf *mbuf)
+int action_execute(const struct action *action, struct rte_mbuf *mbuf)
 {
+	enum action_type type = ACTION_NULL;
 	CHECK_NULL(action);
 	CHECK_NULL(mbuf);
 
+	type = action->type;
+
 	switch (type) {
 	case ACTION_OUTPUT:
-		action_output(mbuf, action);
+		action_output(&(action->data.output), mbuf);
 		break;
 	default:
-		printf("action_execute(): action not currently implemented\n");
+		RTE_LOG(INFO, APP, "action_execute(): action not currently"
+                                   " implemented\n");
 		return -1;
 	}
 
@@ -68,7 +73,8 @@ int action_execute(enum action_type type, void *action, struct rte_mbuf *mbuf)
 /*
  * Excutes the output action on 'mbuf'
  */
-static action_output(struct rte_mbuf *mbuf, struct action_output *action)
+static void action_output(const struct action_output *action,
+                          struct rte_mbuf *mbuf)
 {
 	uint8_t vport = 0;
 

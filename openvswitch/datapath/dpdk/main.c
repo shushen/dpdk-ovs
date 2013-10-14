@@ -72,17 +72,16 @@ void switch_packet(struct rte_mbuf *pkt, uint8_t in_port);
 void
 switch_packet(struct rte_mbuf *pkt, uint8_t in_port)
 {
-	int rc = 0;
+	int ret = 0;
 	struct dpdk_upcall info = {0};
-	enum action_type type = ACTION_NULL;
-	struct action_output output = {0};
+	struct action action = {0};
 
 	flow_key_extract(pkt, in_port, &info.key);
 
-	rc = flow_table_get_flow(&info.key, &type, &output, NULL);
-	if (rc >= 0) {
+	ret = flow_table_get_flow(&info.key, &action, NULL);
+	if (ret >= 0) {
 		flow_table_update_stats(&info.key, pkt);
-		action_execute(type, &output, pkt);
+		action_execute(&action, pkt);
 	} else {
 		/* flow table miss, send unmatched packet to the daemon */
 		info.cmd = PACKET_CMD_MISS;
@@ -104,8 +103,7 @@ do_vswitchd(void)
 	              && stats_display_interval != 0)
 	{
 		last_stats_display_tsc = curr_tsc;
-
-		do_stats_display();
+		stats_display();
 	}
 }
 
@@ -207,7 +205,6 @@ flush_pkts(unsigned action)
 	uint16_t deq_count = PKT_BURST_SIZE;
 	struct rte_mbuf *pkts[PKT_BURST_SIZE] =  {0};
 	struct port_queue *pq =  &port_queues[action & PORT_MASK];
-	struct statistics *s = &vport_stats[action];
 	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 	uint64_t diff_tsc = 0;
 	static uint64_t prev_tsc[MAX_PHYPORTS] = {0};
@@ -244,9 +241,10 @@ flush_pkts(unsigned action)
 	{
 		for (i = sent; i < num_pkts; i++)
 			rte_pktmbuf_free(pkts[i]);
-		s->tx_drop += (num_pkts - sent);
+
+		stats_vport_tx_drop_increment(action, num_pkts - sent);
 	}
-	s->tx += sent;
+	stats_vport_tx_increment(action, sent);
 }
 
 /* Get CPU frequency */
@@ -330,7 +328,7 @@ MAIN(int argc, char *argv[])
 
 	RTE_LOG(INFO, APP, "Finished Process Init.\n");
 
-	clear_stats();
+	stats_clear();
 
 	for (i = 0; i < nb_cfg_params; i++) {
 		RTE_LOG(INFO, APP, "config = %d,%d,%d\n",
