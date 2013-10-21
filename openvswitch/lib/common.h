@@ -23,12 +23,6 @@
 
 #define MAX_DIGITS_UNSIGNED_INT    20
 
-#define MP_CLIENT_RXQ_NAME        "MProc_Client_%u_RX"
-#define MP_CLIENT_TXQ_NAME        "MProc_Client_%u_TX"
-#define PACKET_RING_NAME          "MProc_Packet_RX"
-#define PKTMBUF_POOL_NAME         "MProc_pktmbuf_pool"
-#define DATAPATH_RING_ID          0
-
 #define MAX_VPORTS                 48
 
 #define VLAN_ID_MASK               0xFFF
@@ -38,25 +32,6 @@
 #define DPDK_PORT_PREFIX_LEN       9
 #define DPDK_PORT_MAX_STRING_LEN   12
 #define BASE10                     10
-#define VSWITCHD                   0
-
-static inline const char *
-get_rx_queue_name(uint8_t id)
-{
-    static char buffer[sizeof(MP_CLIENT_RXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
-
-    rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_RXQ_NAME, id);
-    return buffer;
-}
-
-static inline const char *
-get_tx_queue_name(uint8_t id)
-{
-    static char buffer[sizeof(MP_CLIENT_TXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
-
-    rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_TXQ_NAME, id);
-    return buffer;
-}
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 

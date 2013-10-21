@@ -32,28 +32,36 @@
  *
  */
 
+#ifndef __DATAPATH_H_
+#define __DATAPATH_H_
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#include <rte_mbuf.h>
+#include "flow.h"
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
+enum flow_cmd {
+	FLOW_CMD_UNSPEC,
+	FLOW_CMD_NEW,
+	FLOW_CMD_DEL,
+	FLOW_CMD_GET
 };
 
-struct port_queue *port_queues;
+enum packet_cmd {
+	PACKET_CMD_UNSPEC,
+	PACKET_CMD_MISS,
+	PACKET_CMD_ACTION,
+	PACKET_CMD_EXECUTE
+};
+
+struct dpdk_upcall {
+	uint8_t cmd;         /* The reason why we are sending the packet to
+	                        the daemon. */
+	struct flow_key key; /* Extracted flow key for the packet. */
+};
+
+void handle_request_from_vswitchd(void);
+void send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info);
+void datapath_init(void);
+
+#endif /* __DATAPATH_H_ */
 
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
-
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
-
-int init(int argc, char *argv[]);
-
-#endif /* ifndef _INIT_H_ */

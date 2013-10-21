@@ -33,6 +33,7 @@
  */
 
 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -44,18 +45,13 @@
 #include <rte_memory.h>
 #include <rte_string_fns.h>
 
-#include "common.h"
 #include "args.h"
 #include "init.h"
+#include "vport.h"
+#include "kni.h"
 
 #define PORT_OFFSET 0x10
-
-/* global var for number of clients - extern in header */
-uint8_t num_clients            = 0;
-uint8_t num_kni                = 0;
-unsigned stats_display_interval= 0; /* in seconds, set to 0 to disable update */
-unsigned vswitchd_core         = 0;
-unsigned client_switching_core = 0;
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 struct cfg_params cfg_params_array[MAX_CFG_PARAMS];
 struct cfg_params cfg_params_array_default[] = {
@@ -117,7 +113,7 @@ parse_portmask(uint8_t max_ports, const char *portmask)
 				printf("WARNING: requested port %u not present"
 				" - ignoring\n", (unsigned)count);
 			else
-			    ports->id[ports->num_ports++] = count;
+			    port_cfg.id[port_cfg.num_ports++] = count;
 		}
 		pm = (pm >> 1);
 		count++;
@@ -271,17 +267,18 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		}
 	}
 
-	if (num_clients == 0) {
-        printf ("Ports and clients must be greater than 0\n");
+	if (num_clients == 0 || num_clients > MAX_CLIENTS) {
+        printf ("Number of clients is invalid\n");
 		usage();
 		return -1;
 	}
 
-	if (num_kni == 0) {
-        printf ("KNI ports must be greater than 0\n");
+	if (num_kni == 0 || num_kni > MAX_KNI_PORTS) {
+        printf ("Number of KNI ports is invalid\n");
 		usage();
 		return -1;
 	}
+
 
 	return 0;
 }

@@ -32,28 +32,41 @@
  *
  */
 
+#ifndef __VPORT_H_
+#define __VPORT_H_
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#include <stdint.h>
+#include <rte_mbuf.h>
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
+#include "kni.h"
+
+#define MAX_VPORTS          48
+#define MAX_PHYPORTS        16
+#define MAX_CLIENTS         16
+#define PKT_BURST_SIZE      32
+#define CLIENT1             1
+#define KNI0                0x20
+#define PORT_MASK           0x0F
+#define KNI_MASK            0x1F
+#define IS_PHY_PORT(action) ((action) > PORT_MASK && (action) <= KNI_MASK)
+#define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) < (KNI_MASK + MAX_KNI_PORTS))
+
+struct port_info {
+	uint8_t num_ports;
+	uint8_t id[RTE_MAX_ETHPORTS];
 };
 
-struct port_queue *port_queues;
+struct port_info *ports;
+
+void vport_init(void);
+void vport_fini(void);
+int send_to_client(uint8_t client, struct rte_mbuf *buf);
+int send_to_port(uint8_t vportid, struct rte_mbuf *buf);
+int send_to_kni(uint8_t vportid, struct rte_mbuf *buf);
+uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
+uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
+uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
+
+#endif /* __VPORT_H_ */
 
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
-
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
-
-int init(int argc, char *argv[]);
-
-#endif /* ifndef _INIT_H_ */

@@ -32,28 +32,36 @@
  *
  */
 
+#ifndef __STATS_H_
+#define __STATS_H_
 
-#ifndef _INIT_H_
-#define _INIT_H_
+#define INC_BY_1  1
+#define VSWITCHD 0
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
-};
+void stats_init(void);
+void stats_fini(void);
+void stats_clear(void);
 
-struct port_queue *port_queues;
+void stats_vport_clear_all(void);
+void stats_vport_clear(unsigned vportid);
+void stats_vport_rx_increment(unsigned vportid, int inc);
+void stats_vport_rx_drop_increment(unsigned vportid, int inc);
+void stats_vport_tx_increment(unsigned vportid, int inc);
+void stats_vport_tx_drop_increment(unsigned vportid, int inc);
+void stats_vport_overrun_increment(unsigned vportid, int inc);
+uint64_t stats_vport_rx_get(unsigned vportid);
+uint64_t stats_vport_rx_drop_get(unsigned vportid);
+uint64_t stats_vport_tx_get(unsigned vportid);
+uint64_t stats_vport_tx_drop_get(unsigned vportid);
+uint64_t stats_vport_overrun_get(unsigned vportid);
 
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-unsigned num_sockets;
+void stats_vswitch_clear(void);
+void stats_vswitch_rx_drop_increment(int inc);
+uint64_t stats_vswitch_rx_drop_get(void);
+void stats_vswitch_tx_drop_increment(int inc);
+uint64_t stats_vswitch_tx_drop_get(void);
 
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
 
-int init(int argc, char *argv[]);
+#endif /* __STATS_H_ */
 
-#endif /* ifndef _INIT_H_ */

@@ -69,24 +69,9 @@ OVS_CHECK_LINKER_SECTIONS
 OVS_CHECK_XENSERVER_VERSION
 OVS_CHECK_GROFF
 
-AC_SUBST(HAVE_DPDK_TRUE, [])
-AC_SUBST(HAVE_DPDK_FALSE, [])
-AC_ARG_VAR([RTE_SDK], [Top level DPDK directory])
-AC_ARG_WITH([nodpdk],
-   [AS_HELP_STRING([--with-nodpdk],[Disable DPDK support])],
-   [
-   HAVE_DPDK_TRUE=["#"]
-   ],
-   [
-   HAVE_NETLINK=no
-   HAVE_DPDK=
-   DPDK_ENABLE=yes
-   if test "${RTE_SDK+set}" != set; then
-       AC_MSG_ERROR([Please set RTE_SDK.])
-   fi
-   ])
-AM_CONDITIONAL([DPDK_ENABLE],
-               [test "$DPDK_ENABLE" = yes])
+OVS_CHECK_DPDK
+AC_SUBST([RTE_SDK])
+AM_CONDITIONAL([RTE_SDK_SET], [test ! -z "$RTE_SDK"])
 
 OVS_ENABLE_OPTION([-Wall])
 OVS_ENABLE_OPTION([-Wno-sign-compare])

@@ -40,11 +40,17 @@
 #include <rte_ether.h>
 #include <rte_ethdev.h>
 #include "kni.h"
-#include "common.h"
 #include "init_drivers.h"
+#include "flow.h"
 #include "args.h"
 #include "init.h"
 #include "main.h"
+#include "vport.h"
+#include "datapath.h"
+#include "stats.h"
+
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
+#define NO_FLAGS 0
 
 /* These are used to dimension the overall size of the mbuf mempool. They
  * are arbitrary values that have been determined by tuning */
@@ -53,72 +59,14 @@
 #define MBUFS_PER_KNI     3072
 #define MBUFS_PER_DAEMON  2048
 
+#define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
+
 #define MBUF_CACHE_SIZE 32
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define RX_MBUF_DATA_SIZE 2048
 #define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
 
-/* Ethernet port TX/RX ring sizes */
-#define RTE_MP_RX_DESC_DEFAULT    512
-#define RTE_MP_TX_DESC_DEFAULT    512
 
-/* Ring size for communication with clients */
-#define CLIENT_QUEUE_RINGSIZE     4096
-
-/* Ring size for communication with daemon */
-#define DAEMON_PKT_QUEUE_RINGSIZE 2048
-
-/*
- * RX and TX Prefetch, Host, and Write-back threshold values should be
- * carefully set for optimal performance. Consult the network
- * controller's datasheet and supporting DPDK documentation for guidance
- * on how these parameters should be set.
- */
-/* Default configuration for rx and tx thresholds etc. */
-/*
- * These default values are optimized for use with the Intel(R) 82599 10 GbE
- * Controller and the DPDK ixgbe PMD. Consider using other values for other
- * network controllers and/or network drivers.
- */
-#define MP_DEFAULT_PTHRESH 36
-#define MP_DEFAULT_RX_HTHRESH 8
-#define MP_DEFAULT_TX_HTHRESH 0
-#define MP_DEFAULT_WTHRESH 0
-#define VPORT_STATS_SIZE sizeof(struct statistics) * MAX_VPORTS
-
-static const struct rte_eth_rxconf rx_conf_default = {
-		.rx_thresh = {
-				.pthresh = MP_DEFAULT_PTHRESH,
-				.hthresh = MP_DEFAULT_RX_HTHRESH,
-				.wthresh = MP_DEFAULT_WTHRESH,
-		},
-};
-
-static const struct rte_eth_txconf tx_conf_default = {
-		.tx_thresh = {
-				.pthresh = MP_DEFAULT_PTHRESH,
-				.hthresh = MP_DEFAULT_TX_HTHRESH,
-				.wthresh = MP_DEFAULT_WTHRESH,
-		},
-		.tx_free_thresh = 0, /* Use PMD default values */
-		.tx_rs_thresh = 0, /* Use PMD default values */
-};
-
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-
-/* array of info/queues for clients */
-struct client *clients = NULL;
-
-/* ring to receive packets with vswitchd */
-struct rte_ring *vswitch_packet_ring = NULL;
-
-/* the port details */
-struct port_info *ports;
-struct port_queue *port_queues = NULL;
-
-/* the flow table details */
-struct flow_table *flow_table;
 
 /**
  * Initialise the mbuf pool
@@ -127,7 +75,7 @@ static int
 init_mbuf_pools(void)
 {
 	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT)
-			+ (ports->num_ports * MBUFS_PER_PORT)
+			+ (port_cfg.num_ports * MBUFS_PER_PORT)
 			+ (num_kni * MBUFS_PER_KNI)
 			+ MBUFS_PER_DAEMON;
 
@@ -144,125 +92,6 @@ init_mbuf_pools(void)
 }
 
 /**
- * Initialise an individual port:
- * - configure number of rx and tx rings
- * - set up each rx ring, to pull from the main mbuf pool
- * - set up each tx ring
- * - start the port and report its status to stdout
- */
-static int
-init_port(uint8_t port_num)
-{
-	/* for port configuration all features are off by default */
-	const struct rte_eth_conf port_conf = {
-		.rxmode = {
-			.mq_mode = ETH_RSS
-		}
-	};
-	const uint16_t rx_rings = 1, tx_rings = num_clients;
-	const uint16_t rx_ring_size = RTE_MP_RX_DESC_DEFAULT;
-	const uint16_t tx_ring_size = RTE_MP_TX_DESC_DEFAULT;
-
-	struct rte_eth_link link;
-	uint16_t q;
-	int retval;
-
-	printf("Port %u init ... ", (unsigned)port_num);
-	fflush(stdout);
-
-	/* Standard DPDK port initialisation - config port, then set up
-	 * rx and tx rings */
-	if ((retval = rte_eth_dev_configure(port_num, rx_rings, tx_rings,
-		&port_conf)) != 0)
-		return retval;
-
-	for (q = 0; q < rx_rings; q++) {
-		retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
-				SOCKET0, &rx_conf_default, pktmbuf_pool);
-		if (retval < 0) return retval;
-	}
-
-	for ( q = 0; q < tx_rings; q ++ ) {
-		retval = rte_eth_tx_queue_setup(port_num, q, tx_ring_size,
-				SOCKET0, &tx_conf_default);
-		if (retval < 0) return retval;
-	}
-
-	rte_eth_promiscuous_enable(port_num);
-
-	retval  = rte_eth_dev_start(port_num);
-	if (retval < 0) return retval;
-
-	printf( "done: ");
-
-	/* get link status */
-	rte_eth_link_get(port_num, &link);
-	if (link.link_status) {
-		printf(" Link Up - speed %u Mbps - %s\n",
-		       (uint32_t) link.link_speed,
-		       (link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-		       ("full-duplex") : ("half-duplex\n"));
-	} else {
-		printf(" Link Down\n");
-	}
-
-	return 0;
-}
-
-/**
- * Set up the DPDK rings which will be used to pass packets, via
- * pointers, between the multi-process server and client processes.
- * Each client needs one RX queue.
- */
-static int
-init_shm_rings(void)
-{
-	unsigned i;
-	const unsigned ringsize = CLIENT_QUEUE_RINGSIZE;
-
-	clients = rte_malloc("client details",
-		sizeof(*clients) * num_clients, 0);
-	if (clients == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot allocate memory for client program details\n");
-
-	port_queues = rte_malloc("port_txq details",
-		sizeof(*port_queues) * ports->num_ports, 0);
-	if (port_queues == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot allocate memory for port tx_q details\n");
-
-	for (i = 0; i < num_clients; i++) {
-		/* Create an RX queue for each client */
-		clients[i].rx_q = rte_ring_create(get_rx_queue_name(i),
-				ringsize, SOCKET0,
-				NO_FLAGS); /* multi producer multi consumer*/
-		if (clients[i].rx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create rx ring for client %u\n", i);
-
-		clients[i].tx_q = rte_ring_create(get_tx_queue_name(i),
-				ringsize, SOCKET0,
-				NO_FLAGS); /* multi producer multi consumer*/
-		if (clients[i].tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring for client %u\n", i);
-	}
-
-	for (i = 0; i < ports->num_ports; i++) {
-		/* Create an RX queue for each ports */
-		port_queues[i].tx_q = rte_ring_create(get_port_tx_queue_name(i),
-				ringsize, SOCKET0,
-				RING_F_SC_DEQ); /* multi producer single consumer*/
-		if (port_queues[i].tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring for port %u\n", i);
-	}
-
-	vswitch_packet_ring = rte_ring_create(PACKET_RING_NAME,
-			         DAEMON_PKT_QUEUE_RINGSIZE, SOCKET0, NO_FLAGS);
-	if (vswitch_packet_ring == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot create packet ring for vswitchd");
-
-	return 0;
-}
-
-/**
  * Main init function for the multi-process server app,
  * calls subfunctions to do each stage of the initialisation.
  */
@@ -271,7 +100,7 @@ init(int argc, char *argv[])
 {
 	int retval;
 	const struct rte_memzone *mz;
-	uint8_t i, total_ports;
+	uint8_t total_ports = 0;
 
 	/* init EAL, parsing EAL args */
 	retval = rte_eal_init(argc, argv);
@@ -282,7 +111,6 @@ init(int argc, char *argv[])
         if (rte_eal_pci_probe())
                 rte_panic("Cannot probe PCI\n");
 
-
 	/* initialise the nic drivers */
 	retval = init_drivers();
 	if (retval != 0)
@@ -290,30 +118,6 @@ init(int argc, char *argv[])
 
 	/* get total number of ports */
 	total_ports = rte_eth_dev_count();
-
-	/* set up array for port data */
-	mz = rte_memzone_reserve(MZ_PORT_INFO, sizeof(*ports),
-				rte_socket_id(), NO_FLAGS);
-	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for port information\n");
-	memset(mz->addr, 0, sizeof(*ports));
-	ports = mz->addr;
-	RTE_LOG(INFO, APP, "memzone address is %lx\n", mz->phys_addr);
-
-	/* set up array for statistics */
-	mz = rte_memzone_reserve(MZ_STATS_INFO, VPORT_STATS_SIZE, rte_socket_id(), NO_FLAGS);
-	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for statistics\n");
-	memset(mz->addr, 0, VPORT_STATS_SIZE);
-	vport_stats = mz->addr;
-
-	/* set up array for flow table data */
-	mz = rte_memzone_reserve(MZ_FLOW_TABLE, sizeof(*flow_table),
-				rte_socket_id(), NO_FLAGS);
-	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for port information\n");
-	memset(mz->addr, 0, sizeof(*flow_table));
-	flow_table = mz->addr;
 
 	/* parse additional, application arguments */
 	retval = parse_app_args(total_ports, argc, argv);
@@ -325,19 +129,10 @@ init(int argc, char *argv[])
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "Cannot create needed mbuf pools\n");
 
-	/* now initialise the ports we will use */
-	for (i = 0; i < ports->num_ports; i++) {
-		retval = init_port(ports->id[i]);
-		if (retval != 0)
-			rte_exit(EXIT_FAILURE, "Cannot initialise port %u\n",
-					(unsigned)i);
-	}
-
-	/* initialise the client queues/rings for inter process comms */
-	init_shm_rings();
-
-	/* initalise kni queues */
-	init_kni();
+	flow_table_init();
+	datapath_init();
+	vport_init();
+	stats_init();
 
 	return 0;
 }
