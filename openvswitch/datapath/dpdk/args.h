@@ -44,7 +44,7 @@
 #define PARAM_CSC "client_switching_core"
 #define PARAM_KSC "kni_switching_core"
 
-#define MAX_CFG_PARAMS 1024
+#define MAX_CFG_PARAMS MAX_PHYPORTS
 struct cfg_params {
 	uint8_t port_id;
 	uint8_t queue_id;

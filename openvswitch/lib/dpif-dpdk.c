@@ -854,9 +854,8 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
     memcpy(flow->dl_dst, key->ether_dst.addr_bytes, ETHER_ADDR_LEN);
     memcpy(flow->dl_src, key->ether_src.addr_bytes, ETHER_ADDR_LEN);
     flow->dl_type = rte_cpu_to_be_16(key->ether_type);
-    flow->vlan_tci = rte_cpu_to_be_16(key->vlan_prio) << VLAN_PRIO_SHIFT | rte_cpu_to_be_16(key->vlan_id);
-    if (flow->vlan_tci != 0)
-        flow->vlan_tci |= rte_cpu_to_be_16(VLAN_CFI);
+    if (key->vlan_id != 0)
+        flow->vlan_tci = rte_cpu_to_be_16(key->vlan_prio << VLAN_PRIO_SHIFT | key->vlan_id | VLAN_CFI);
     flow->nw_src = rte_cpu_to_be_32(key->ip_src);
     flow->nw_dst = rte_cpu_to_be_32(key->ip_dst);
     flow->nw_proto = key->ip_proto;

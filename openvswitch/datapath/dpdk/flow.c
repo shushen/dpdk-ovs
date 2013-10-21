@@ -102,7 +102,6 @@ static struct flow_table_entry *flow_table = NULL;
 static struct rte_hash *handle = NULL;
 
 static uint64_t ovs_flow_used_time(uint64_t flow_tsc);
-static int flow_key_print(volatile struct flow_key *key);
 static int copy_entry_from_table(int pos, struct flow_key *key,
             struct action *action, struct flow_stats *stats);
 
@@ -447,7 +446,6 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	struct tcp_hdr *tcp = NULL;
 	struct udp_hdr *udp = NULL;
 	unsigned char *pkt_data = NULL;
-	uint16_t next_proto = 0;
 	uint16_t vlan_tci = 0;
 
 	key->in_port = in_port;
@@ -461,8 +459,7 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	key->ether_src = ether_hdr->s_addr;
 	key->ether_type = rte_be_to_cpu_16(ether_hdr->ether_type);
 
-	next_proto = key->ether_type;
-	if (next_proto == ETHER_TYPE_VLAN) {
+	if (key->ether_type == ETHER_TYPE_VLAN) {
 		vlan_hdr = (struct vlan_hdr *)pkt_data;
 		pkt_data += sizeof(struct vlan_hdr);
 
@@ -470,11 +467,10 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 		key->vlan_id = vlan_tci & VLAN_ID_MASK;
 		key->vlan_prio = vlan_tci >> VLAN_PRIO_SHIFT;
 
-		next_proto = rte_be_to_cpu_16(vlan_hdr->eth_proto);
-		next_proto = key->ether_type;
+		key->ether_type = rte_be_to_cpu_16(vlan_hdr->eth_proto);
 	}
 
-	if (next_proto == ETHER_TYPE_IPv4) {
+	if (key->ether_type == ETHER_TYPE_IPv4) {
 		ipv4_hdr = (struct ipv4_hdr *)pkt_data;
 		pkt_data += sizeof(struct ipv4_hdr);
 
@@ -513,29 +509,6 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 int flow_table_lookup(const struct flow_key *key)
 {
 	return rte_hash_lookup(handle, key);
-}
-
-/*
- * Print flow key to screen
- */
-static int
-flow_key_print(volatile struct flow_key *key)
-{
-	CHECK_NULL(key);
-
-	printf("key.in_port = %"PRIu32"\n", key->in_port);
-	printf("key.ether_dst = "ETH_FMT"\n", ETH_ARGS(key->ether_dst.addr_bytes));
-	printf("key.ether_src = "ETH_FMT"\n", ETH_ARGS(key->ether_src.addr_bytes));
-	printf("key.ether_type = %"PRIx16"\n", key->ether_type);
-	printf("key.vlan_id = %"PRIu16"\n", key->vlan_id);
-	printf("key.vlan_prio = %"PRIu8"\n", key->vlan_prio);
-	printf("key.ip_src = "IP_FMT"\n", IP_ARGS(key->ip_src));
-	printf("key.ip_dst = "IP_FMT"\n", IP_ARGS(key->ip_dst));
-	printf("key.ip_proto = %"PRIu8"\n", key->ip_proto);
-	printf("key.ip_tos  = %"PRIx8"\n", key->ip_tos);
-	printf("key.ip_ttl = %"PRIu8"\n", key->ip_ttl);
-	printf("key.tran_src_port  = %"PRIu16"\n", key->tran_src_port);
-	printf("key.tran_dst_port  = %"PRIu16"\n", key->tran_dst_port);
 }
 
 /*

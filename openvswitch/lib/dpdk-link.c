@@ -119,18 +119,18 @@ int
 dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 {
     struct rte_mbuf *mbuf = NULL;
-    void *ctrlmbuf_data = NULL;
-    int ctrlmbuf_len = 0;
+    void *pktmbuf_data = NULL;
+    int pktmbuf_len = 0;
 
     DPDK_DEBUG()
 
     while (rte_ring_sc_dequeue(reply_ring, (void **)&mbuf) != 0);
 
-    ctrlmbuf_data = (void *)rte_ctrlmbuf_data(mbuf);
-    ctrlmbuf_len = rte_ctrlmbuf_len(mbuf);
-    rte_memcpy(reply, ctrlmbuf_data, ctrlmbuf_len);
+    pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
+    pktmbuf_len = rte_pktmbuf_data_len(mbuf);
+    rte_memcpy(reply, pktmbuf_data, pktmbuf_len);
 
-    rte_ctrlmbuf_free(mbuf);
+    rte_pktmbuf_free(mbuf);
 
     return 0;
 }

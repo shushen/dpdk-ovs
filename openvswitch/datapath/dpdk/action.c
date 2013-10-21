@@ -36,8 +36,6 @@
 #include "action.h"
 #include "vport.h"
 
-#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
-
 #define CHECK_NULL(ptr)   do { \
                              if ((ptr) == NULL) return -1; \
                          } while (0)
@@ -61,8 +59,8 @@ int action_execute(const struct action *action, struct rte_mbuf *mbuf)
 		action_output(&(action->data.output), mbuf);
 		break;
 	default:
-		RTE_LOG(INFO, APP, "action_execute(): action not currently"
-                                   " implemented\n");
+		printf("action_execute(): action not currently"
+		       " implemented\n");
 		return -1;
 	}
 

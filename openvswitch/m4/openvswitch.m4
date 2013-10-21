@@ -1,6 +1,7 @@
 # -*- autoconf -*-
 
 # Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira Networks.
+# Copyright (c) 2013 Intel Corporation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -354,3 +355,24 @@ AC_DEFUN([OVS_CHECK_GROFF],
        ovs_cv_groff=no
      fi])
    AM_CONDITIONAL([HAVE_GROFF], [test "$ovs_cv_groff" = yes])])
+
+dnl Checks for --with-nodpdk and defines DPDK_ENABLE if it is *not* specified.
+AC_DEFUN([OVS_CHECK_DPDK],
+  [AC_SUBST(HAVE_DPDK_TRUE, [])
+  AC_SUBST(HAVE_DPDK_FALSE, [])
+  AC_ARG_VAR([RTE_SDK], [Top level DPDK directory])
+  AC_ARG_WITH([nodpdk],
+     [AS_HELP_STRING([--with-nodpdk],[Disable DPDK Support])],
+    [
+    HAVE_DPDK_TRUE=["#"]
+    ],
+    [
+    HAVE_NETLINK=no
+    HAVE_DPDK=
+    DPDK_ENABLE=yes
+    if test "${RTE_SDK+set}" != set; then
+      AC_MSG_ERROR([Please set RTE_SDK.])
+    fi
+    ])
+ AM_CONDITIONAL([DPDK_ENABLE],
+               [test "$DPDK_ENABLE" = yes])])

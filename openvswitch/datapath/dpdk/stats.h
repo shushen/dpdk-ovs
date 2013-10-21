@@ -62,7 +62,6 @@ uint64_t stats_vswitch_rx_drop_get(void);
 void stats_vswitch_tx_drop_increment(int inc);
 uint64_t stats_vswitch_tx_drop_get(void);
 
-void stats_display(void);
 
 #endif /* __STATS_H_ */
 

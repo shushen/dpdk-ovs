@@ -178,11 +178,11 @@ static void
 send_reply_to_vswitchd(struct dpdk_message *reply)
 {
 	struct rte_mbuf *mbuf = NULL;
-	void *ctrlmbuf_data = NULL;
+	void *pktmbuf_data = NULL;
 	int rslt = 0;
 
 	/* Preparing the buffer to send */
-	mbuf = rte_ctrlmbuf_alloc(pktmbuf_pool);
+	mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
 
 	if (!mbuf) {
 		RTE_LOG(WARNING, APP, "Error : Unable to allocate an mbuf "
@@ -192,15 +192,15 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 		return;
 	}
 
-	ctrlmbuf_data = rte_ctrlmbuf_data(mbuf);
-	rte_memcpy(ctrlmbuf_data, reply, sizeof(*reply));
-	rte_ctrlmbuf_len(mbuf) = sizeof(*reply);
+	pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
+	rte_memcpy(pktmbuf_data, reply, sizeof(*reply));
+	rte_pktmbuf_data_len(mbuf) = sizeof(*reply);
 
 	/* Sending the buffer to vswitchd */
 	rslt = rte_ring_mp_enqueue(vswitchd_reply_ring, (void *)mbuf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
-			rte_ctrlmbuf_free(mbuf);
+			rte_pktmbuf_free(mbuf);
 			stats_vswitch_tx_drop_increment(INC_BY_1);
 			stats_vport_rx_drop_increment(VSWITCHD, INC_BY_1);
 		} else {

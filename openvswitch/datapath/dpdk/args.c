@@ -48,6 +48,7 @@
 #include "args.h"
 #include "init.h"
 #include "vport.h"
+#include "kni.h"
 
 #define PORT_OFFSET 0x10
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
@@ -266,17 +267,18 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		}
 	}
 
-	if (num_clients == 0) {
-        printf ("Ports and clients must be greater than 0\n");
+	if (num_clients == 0 || num_clients > MAX_CLIENTS) {
+        printf ("Number of clients is invalid\n");
 		usage();
 		return -1;
 	}
 
-	if (num_kni == 0) {
-        printf ("KNI ports must be greater than 0\n");
+	if (num_kni == 0 || num_kni > MAX_KNI_PORTS) {
+        printf ("Number of KNI ports is invalid\n");
 		usage();
 		return -1;
 	}
+
 
 	return 0;
 }

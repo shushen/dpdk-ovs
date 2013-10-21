@@ -35,6 +35,7 @@
 #include <rte_ethdev.h>
 #include <rte_kni.h>
 #include <rte_cycles.h>
+#include <rte_string_fns.h>
 
 #include "kni.h"
 #include "args.h"
@@ -47,6 +48,9 @@
 #include "action.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
+#define NUM_BYTES_MAC_ADDR  6
+#define MAC_ADDR_STR_INT_L  3
+#define NEWLINE_CHAR_OFFSET 1
 
 /*
  * When reading/writing to/from rings/ports use this batch size
@@ -65,6 +69,101 @@ extern uint16_t nb_cfg_params;
 
 static void flush_pkts(unsigned);
 void switch_packet(struct rte_mbuf *pkt, uint8_t in_port);
+static const char *get_printable_mac_addr(uint8_t port);
+static void stats_display(void);
+
+/*
+ * Returns MAC address for port in a string
+ */
+static const char *
+get_printable_mac_addr(uint8_t port)
+{
+	static const char err_address[] = "00:00:00:00:00:00";
+	static char addresses[RTE_MAX_ETHPORTS][sizeof(err_address)] = {0};
+	struct ether_addr mac = {0};
+	int ether_addr_len = sizeof(err_address) - NEWLINE_CHAR_OFFSET;
+	int i = 0;
+	int j = 0;
+
+	if (unlikely(port >= RTE_MAX_ETHPORTS))
+		return err_address;
+
+	/* first time run for this port so we populate addresses */
+	if (unlikely(addresses[port][0] == '\0')) {
+		rte_eth_macaddr_get(port, &mac);
+		while(j < NUM_BYTES_MAC_ADDR) {
+			rte_snprintf(&addresses[port][0] + i,
+			             MAC_ADDR_STR_INT_L + NEWLINE_CHAR_OFFSET,
+			             "%02x:",
+			             mac.addr_bytes[j]);
+			i += MAC_ADDR_STR_INT_L;
+			j++;
+		}
+		/* Overwrite last ":" and null terminate the string */
+		addresses[port][ether_addr_len] = '\0';
+	}
+	return addresses[port];
+}
+
+/*
+ * This function displays the recorded statistics for each port
+ * and for each client. It uses ANSI terminal codes to clear
+ * screen when called. It is called from a single non-master
+ * thread in the server process, when the process is run with more
+ * than one lcore enabled.
+ */
+static void
+stats_display(void)
+{
+	unsigned i = 0;
+	unsigned j = 0;
+	/* ANSI escape sequences for terminal display.
+	 * 27 = ESC, 2J = Clear screen */
+	const char clr[] = {27, '[', '2', 'J', '\0'};
+	/* H = Home position for cursor*/
+	const char topLeft[] = {27, '[', '1', ';', '1', 'H','\0'};
+	uint64_t overruns = 0;
+
+	/* Clear screen and move to top left */
+	printf("%s%s", clr, topLeft);
+
+	printf("Physical Ports\n");
+	printf("-----\n");
+	for (i = 0; i < ports->num_ports; i++)
+		printf("Port %u: '%s'\t", ports->id[i],
+				get_printable_mac_addr(ports->id[i]));
+	printf("\n\n");
+
+	printf("\nVport Statistics\n"
+		     "============   ============  ============  ============  ============\n"
+		     "Interface      rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
+		     "------------   ------------  ------------  ------------  ------------\n");
+	for (i = 0; i < MAX_VPORTS; i++) {
+		if (i == 0) {
+			printf("vswitchd   ");
+		} else if (i <= PORT_MASK) {
+			printf("Client   %2u", i);
+		} else if (i <= KNI_MASK) {
+			printf("Port     %2u", i & PORT_MASK);
+		} else {
+			printf("KNI Port %2u", i & KNI_MASK);
+		}
+		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
+		       stats_vport_rx_get(i),
+		       stats_vport_rx_drop_get(i),
+		       stats_vport_tx_get(i),
+		       stats_vport_tx_drop_get(i));
+
+		overruns += stats_vport_overrun_get(i);
+	}
+	printf("============   ============  ============  ============  ============\n");
+
+	printf("\n Switch rx dropped %d\n", stats_vswitch_rx_drop_get());
+	printf("\n Switch tx dropped %d\n", stats_vswitch_tx_drop_get());
+	printf("\n Queue overruns   %d\n",  overruns);
+	printf("\n Mempool count    %9u\n", rte_mempool_count(pktmbuf_pool));
+	printf("\n");
+}
 
 /*
  * This function takes a packet and routes it as per the flow table.
