@@ -139,14 +139,16 @@ stats_display(void)
 		     "Interface      rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		if (i == 0) {
+		if (i == CLIENT0) {
 			printf("vswitchd   ");
-		} else if (i <= PORT_MASK) {
+		} else if (IS_CLIENT_PORT(i)) {
 			printf("Client   %2u", i);
-		} else if (i <= KNI_MASK) {
+		} else if (IS_PHY_PORT(i)) {
 			printf("Port     %2u", i & PORT_MASK);
-		} else {
+		} else if (IS_KNI_PORT(i)) {
 			printf("KNI Port %2u", i & KNI_MASK);
+		} else {  /* fallthrough */
+			continue;
 		}
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 		       stats_vport_rx_get(i),

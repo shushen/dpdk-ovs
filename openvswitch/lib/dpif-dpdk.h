@@ -24,6 +24,7 @@
 
 #include "ofpbuf.h"
 #include "dpif.h"
+#include "action.h"
 
 #define DPIF_DPDK_FLOW_FAMILY	0xF
 #define DPIF_DPDK_PACKET_FAMILY	0x1F
@@ -62,12 +63,12 @@ struct dpif_dpdk_flow_message {
 	uint32_t flags;
 	struct dpif_dpdk_flow_key key;
 	struct dpif_dpdk_flow_stats stats;
-	uint32_t action;
+	struct action action;
 	bool clear;
 };
 
 struct dpif_dpdk_packet_message {
-    uint32_t action;
+    struct action action;
 };
 
 struct dpif_dpdk_message {

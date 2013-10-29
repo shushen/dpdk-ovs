@@ -69,13 +69,13 @@ struct dpdk_flow_message {
 	uint32_t flags;
 	struct flow_key key;
 	struct flow_stats stats;
-	uint32_t action;
+	struct action action;
 	bool clear;
 };
 
 struct dpdk_packet_message {
-	uint32_t action;  /* What to do with the packet received from
-	                     the daemon. */
+	struct action action; /* What to do with the packet received from
+	                       the daemon. */
 };
 
 struct dpdk_message {
@@ -235,12 +235,11 @@ flow_cmd_new(struct dpdk_flow_message *request)
 {
 	struct dpdk_message reply = {0};
 	int pos = 0;
-	struct action action = {0};
+	struct action action = request->action;
 
 	pos = flow_table_lookup(&request->key);
 	if (pos < 0) {
 		if (request->flags & FLAG_CREATE) {
-			action_output_build(&action, request->action);
 			flow_table_add_flow(&request->key, &action);
 			reply.type = 0;
 		} else {
@@ -254,7 +253,6 @@ flow_cmd_new(struct dpdk_flow_message *request)
 			/* Depending on the value of request->clear we will
 			 * either update or keep the same stats
 			 */
-			action_output_build(&action, request->action);
 			flow_table_mod_flow(&request->key,
 			         &action, request->clear);
 			reply.type = 0;
@@ -314,7 +312,10 @@ flow_cmd_get(struct dpdk_flow_message *request)
 	if (ret < 0) {
 		reply.type = ENOENT;
 	} else {
-		request->action = action.data.output.port;
+		request->action.type = action.type;
+		if (action.type == ACTION_OUTPUT) {
+			request->action.data.output.port = action.data.output.port;
+		}
 		reply.type = 0;
 	}
 
@@ -354,7 +355,10 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 
 	if (ret >= 0) {
 		request->key = key;
-		request->action = action.data.output.port;
+		request->action.type = action.type;
+		if (action.type == ACTION_OUTPUT) {
+			request->action.data.output.port = action.data.output.port;
+		}
 		request->stats = stats;
 		reply.type = 0;
 	} else {
@@ -397,9 +401,8 @@ static void
 handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
 {
 	struct action action = {0};
-	action_output_build(&action, request->action);
 
-	action_execute(&action, pkt);
+	action_execute(&request->action, pkt);
 }
 
 /*

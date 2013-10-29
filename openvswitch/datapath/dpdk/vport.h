@@ -44,12 +44,15 @@
 #define MAX_PHYPORTS        16
 #define MAX_CLIENTS         16
 #define PKT_BURST_SIZE      32
+#define CLIENT0             0
 #define CLIENT1             1
 #define KNI0                0x20
+#define CLIENT_MASK         0x00
 #define PORT_MASK           0x0F
 #define KNI_MASK            0x1F
+#define IS_CLIENT_PORT(action) ((action) > CLIENT_MASK && (action) <= PORT_MASK)
 #define IS_PHY_PORT(action) ((action) > PORT_MASK && (action) <= KNI_MASK)
-#define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) < (KNI_MASK + MAX_KNI_PORTS))
+#define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) <= (KNI_MASK + MAX_KNI_PORTS))
 
 struct port_info {
 	uint8_t num_ports;

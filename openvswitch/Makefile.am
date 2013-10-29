@@ -33,6 +33,7 @@ endif
 AM_CPPFLAGS = $(SSL_CFLAGS)
 AM_CPPFLAGS += -I $(top_srcdir)/include
 AM_CPPFLAGS += -I $(top_srcdir)/lib
+AM_CPPFLAGS += -I $(top_srcdir)/datapath/dpdk
 AM_CPPFLAGS += -I $(top_builddir)/lib
 if DPDK_ENABLE
 AM_CPPFLAGS += -I $(dpdk_inc_dir)

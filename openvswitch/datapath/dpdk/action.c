@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include "action.h"
 #include "vport.h"
+#include "stats.h"
 
 #define CHECK_NULL(ptr)   do { \
                              if ((ptr) == NULL) return -1; \
@@ -43,20 +44,24 @@
 static void action_output(const struct action_output *action,
                           struct rte_mbuf *mbuf);
 
+static void action_drop(struct rte_mbuf *mbuf);
 /*
  * Do 'action' of action_type 'type' on 'mbuf'
  */
 int action_execute(const struct action *action, struct rte_mbuf *mbuf)
 {
-	enum action_type type = ACTION_NULL;
+	enum action_type action_type = ACTION_NULL;
 	CHECK_NULL(action);
 	CHECK_NULL(mbuf);
 
-	type = action->type;
+	action_type = action->type;
 
-	switch (type) {
+	switch (action_type) {
 	case ACTION_OUTPUT:
 		action_output(&(action->data.output), mbuf);
+		break;
+	case ACTION_NULL:
+		action_drop(mbuf);
 		break;
 	default:
 		printf("action_execute(): action not currently"
@@ -84,4 +89,14 @@ static void action_output(const struct action_output *action,
 		send_to_kni(vport, mbuf);
 	else                            /* Client ring */
 		send_to_client(vport, mbuf);
+}
+
+/*
+ * Excutes the drop action on 'mbuf' and increases the
+ * vswitch's RX drop statistics
+ */
+static void action_drop(struct rte_mbuf *mbuf)
+{
+	rte_pktmbuf_free(mbuf);
+	stats_vswitch_rx_drop_increment(INC_BY_1);
 }

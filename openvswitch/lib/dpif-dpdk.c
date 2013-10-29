@@ -18,6 +18,8 @@
 
 #include <rte_config.h>
 #include <rte_byteorder.h>
+#include <rte_common.h>
+#include <rte_branch_prediction.h>
 
 #include <inttypes.h>
 
@@ -306,7 +308,10 @@ dpif_dpdk_flow_get(const struct dpif *dpif_,
             dpif_dpdk_flow_get_stats(&reply, stats);
         }
         if (actionsp) {
-            nl_msg_put_u32(*actionsp, OVS_ACTION_ATTR_OUTPUT, reply.action);
+            if (request.action.type == ACTION_OUTPUT) {
+                nl_msg_put_u32(*actionsp, OVS_ACTION_ATTR_OUTPUT,
+                                reply.action.data.output.port);
+            }
         }
     }
 
@@ -334,8 +339,19 @@ flow_message_put_create(struct dpif *dpif OVS_UNUSED,
     odp_flow_key_to_flow(key, key_len, &flow);
     dpif_dpdk_flow_key_from_flow(&request->key, &flow);
 
-    assert(nl_attr_type(actions) == OVS_ACTION_ATTR_OUTPUT);
-    request->action = nl_attr_get_u32(actions);
+    /* Currently, only drop and output actions are supported */
+    if(likely(actions != NULL)) {
+        switch(nl_attr_type(actions)) {
+            case OVS_ACTION_ATTR_OUTPUT:
+                request->action.type = ACTION_OUTPUT;
+                request->action.data.output.port = nl_attr_get_u32(actions);
+                break;
+        default:
+                rte_exit(EXIT_FAILURE, "Unsupported action");
+        }
+    } else { /* Drop action */
+        request->action.type = ACTION_NULL;
+    }
 
     if (flags & DPIF_FP_ZERO_STATS) {
         request->clear = true;
@@ -364,7 +380,7 @@ dpif_dpdk_flow_put(struct dpif *dpif_, enum dpif_flow_put_flags flags,
 
     DPDK_DEBUG()
 
-    if ((key == NULL) || (actions == NULL)) {
+    if (key == NULL) {
         return EINVAL;
     }
 
@@ -500,8 +516,12 @@ dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
     /* If actions, key or stats are not null, retrieve from state. */
     if (actions) {
         ofpbuf_reinit(&state->actions_buf, 0); /* zero buf again */
-        nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
-                       reply.action);
+        switch (reply.action.type) {
+            case ACTION_OUTPUT:
+                nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
+                                reply.action.data.output.port);
+                break;
+        }
         *actions = state->actions_buf.data;
         *actions_len = state->actions_buf.size;
     }
@@ -553,14 +573,25 @@ dpif_dpdk_execute(struct dpif *dpif_ OVS_UNUSED,
 
     DPDK_DEBUG()
 
-    if((actions == NULL) || (packet == NULL)) {
+    if(packet == NULL) {
         return EINVAL;
     }
 
-    request.type = DPIF_DPDK_PACKET_FAMILY;
+    /* Currently, only drop and output actions are supported */
+    if (likely(actions != NULL)) {
+        switch (nl_attr_type(actions)) {
+            case OVS_ACTION_ATTR_OUTPUT:
+                request.packet_msg.action.type = ACTION_OUTPUT;
+                request.packet_msg.action.data.output.port =
+                                           nl_attr_get_u32(actions);
+                break;
+            default:
+                rte_exit(EXIT_FAILURE, "Unsupported action");
 
-    assert(nl_attr_type(actions) == OVS_ACTION_ATTR_OUTPUT);
-    request.packet_msg.action = nl_attr_get_u32(actions);
+        }
+    } else { /* Drop action */
+        request.packet_msg.action.type = ACTION_NULL;
+    }
 
     error = dpdk_link_send(&request, packet);
 
@@ -590,10 +621,21 @@ dpif_dpdk_operate(struct dpif *dpif_, union dpif_op **ops, size_t n_ops)
             } else if (op->type == DPIF_OP_EXECUTE) {
                 struct dpif_execute *execute = &op->execute;
 
+                /* Currently, only drop and output actions are supported */
+                if (likely(execute->actions != NULL )) {
+                    switch (nl_attr_type(execute->actions)) {
+                        case OVS_ACTION_ATTR_OUTPUT:
+                            requests[exec].packet_msg.action.type = ACTION_OUTPUT;
+                            requests[exec].packet_msg.action.data.output.port =
+                                nl_attr_get_u32(execute->actions);
+                            break;
+                        default:
+                            rte_exit(EXIT_FAILURE, "Unsupported action");
+                    }
+                } else { /* Drop action */
+                    requests[exec].packet_msg.action.type = ACTION_NULL;
+                }
                 requests[exec].type = DPIF_DPDK_PACKET_FAMILY;
-                assert(nl_attr_type(execute->actions) == OVS_ACTION_ATTR_OUTPUT);
-                requests[exec].packet_msg.action =
-                                               nl_attr_get_u32(execute->actions);
                 packets[exec] = execute->packet;
                 exec++;
             } else {

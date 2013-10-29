@@ -39,14 +39,9 @@
 
 #include <rte_mbuf.h>
 
-#define action_output_build(action_struct, vport)   do { \
-                             (action_struct)->type = ACTION_OUTPUT; \
-                             (action_struct)->data.output.port = (vport);\
-                         } while (0)
-
 /* Set of all supported actions */
 enum action_type {
-	ACTION_NULL,    /* Empty action */
+	ACTION_NULL,    /* Empty action - drop packet */
 	ACTION_OUTPUT,  /* Output packet to port */
 	ACTION_MAX      /* Maximum number of supported actions */
 };
@@ -66,5 +61,4 @@ struct action {
 int action_execute(const struct action *action, struct rte_mbuf *mbuf);
 
 #endif /* __ACTION_H_ */
-
 
