@@ -433,6 +433,24 @@ flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt)
 	return 0;
 }
 
+struct icmp_hdr {
+	uint8_t icmp_type;
+	uint8_t icmp_code;
+	uint16_t icmp_csum;
+	union {
+		struct {
+			uint16_t id;
+			uint16_t seq;
+		} echo;
+		struct {
+			uint16_t empty;
+			uint16_t mtu;
+		} frag;
+		uint32_t gateway;
+	} icmp_fields;
+	uint8_t icmp_data[0];
+};
+
 /*
  * Extract 13 tuple from pkt as key
  */
@@ -445,6 +463,7 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	struct ipv4_hdr *ipv4_hdr = NULL;
 	struct tcp_hdr *tcp = NULL;
 	struct udp_hdr *udp = NULL;
+	struct icmp_hdr *icmp = NULL;
 	unsigned char *pkt_data = NULL;
 	uint16_t vlan_tci = 0;
 
@@ -495,6 +514,13 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 
 			key->tran_dst_port = rte_be_to_cpu_16(udp->dst_port);
 			key->tran_src_port = rte_be_to_cpu_16(udp->src_port);
+			break;
+		case IPPROTO_ICMP:
+			icmp = (struct icmp_hdr *)pkt_data;
+			pkt_data += sizeof(struct icmp_hdr);
+
+			key->tran_dst_port = icmp->icmp_code;
+			key->tran_src_port = icmp->icmp_type;
 			break;
 		default:
 			key->tran_dst_port = 0;

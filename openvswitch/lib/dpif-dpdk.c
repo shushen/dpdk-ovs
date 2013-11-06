@@ -521,6 +521,9 @@ dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
                 nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
                                 reply.action.data.output.port);
                 break;
+            case ACTION_NULL:
+            case ACTION_MAX:
+                break;
         }
         *actions = state->actions_buf.data;
         *actions_len = state->actions_buf.size;
