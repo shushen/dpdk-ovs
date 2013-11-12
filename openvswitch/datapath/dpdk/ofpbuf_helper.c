@@ -32,44 +32,39 @@
  *
  */
 
-#ifndef __ACTION_H_
-#define __ACTION_H_
-
-#include <stdint.h>
-
+#include <rte_config.h>
+#include <rte_lcore.h>
 #include <rte_mbuf.h>
 
-/* TODO: same value as VPORTS increase if required */
-#define MAX_ACTIONS	(48)
+#include "ofpbuf.h"
 
-/* Set of all supported actions */
-enum action_type {
-	ACTION_NULL,     /* Empty action - drop packet */
-	ACTION_OUTPUT,   /* Output packet to port */
-	ACTION_POP_VLAN, /* Remove 802.1Q header */
-	ACTION_PUSH_VLAN,/* Add 802.1Q VLAN header to packet */
-	ACTION_MAX       /* Maximum number of supported actions */
-};
+/* We declare a struct ofpbuf per core as each thread may do an action
+ * simultaneously and while the ofbuf itself is merely overlayed on top
+ * of the mbuf, the actual struct that stores the pointers may be
+ * overwritten by another thread.
+ *
+ * This workaround is temporary
+ */
+struct ofpbuf buf[RTE_MAX_LCORE];
 
-struct action_output {
-	uint32_t port;    /* Output port */
-};
+void * overlay_ofpbuf(struct rte_mbuf *mbuf)
+{
+	const unsigned id = rte_lcore_id();
 
-struct action_push_vlan {
-	uint16_t tpid; /* Tag Protocol ID (always 0x8100) */
-	uint16_t tci;  /* Tag Control Information */
-};
+	ofpbuf_use_const(&buf[id], mbuf->buf_addr, mbuf->buf_len);
+	buf[id].data = mbuf->pkt.data;
+	buf[id].size = mbuf->pkt.pkt_len;
 
-struct action {
-	enum action_type type;
-	union { /* union of difference action types */
-		struct action_output output;
-		struct action_push_vlan vlan;
-		/* add other action structs here */
-	} data;
-};
+	/* VLAN pop library function requires l2 pointer */
+	buf[id].l2 = mbuf->pkt.data;
 
-int action_execute(const struct action *action, struct rte_mbuf *mbuf);
+	return &buf[id];
+}
 
-#endif /* __ACTION_H_ */
-
+void update_mbuf(struct ofpbuf *ovs_pkt, struct rte_mbuf *mbuf)
+{
+	/* Update mbuf pointers following action execution */
+	mbuf->pkt.data = ovs_pkt->data;
+	mbuf->pkt.data_len = ovs_pkt->size;
+	mbuf->pkt.pkt_len = ovs_pkt->size;
+}

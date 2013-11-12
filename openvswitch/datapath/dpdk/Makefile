@@ -53,7 +53,7 @@ ifeq ($(UT),)
 APP = ovs_dpdk
 
 # all source are stored in SRCS-y
-SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c stats.c
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c stats.c ofpbuf_helper.c
 
 INC := $(wildcard *.h)
 
@@ -67,10 +67,12 @@ else
 APP = ut_ovs_dpdk
 
 # all source are stored in SRCS-y
-SRCS-y := vport_stub.c action.c flow.c stats.c ut.c
+SRCS-y := vport_stub.c action.c flow.c stats.c ut.c ofpbuf_helper.c
 
 INC := $(wildcard *.h)
 
+CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch -lrt
 CFLAGS += -O0 -g
 CFLAGS += -Wno-error
 endif

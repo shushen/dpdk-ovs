@@ -24,7 +24,6 @@
 
 #include "ofpbuf.h"
 #include "dpif.h"
-#include "action.h"
 
 #define DPIF_DPDK_FLOW_FAMILY	0xF
 #define DPIF_DPDK_PACKET_FAMILY	0x1F
@@ -58,17 +57,46 @@ struct dpif_dpdk_upcall {
     struct dpif_dpdk_flow_key key;
 };
 
+/* TODO: same value as VPORTS increase if required */
+#define MAX_ACTIONS	(48)
+
+enum dpif_dpdk_action_type {
+	ACTION_NULL,     /* Empty action */
+	ACTION_OUTPUT,   /* Output packet to port */
+	ACTION_POP_VLAN, /* Remove 802.1Q header */
+	ACTION_PUSH_VLAN,/* Add 802.1Q VLAN header to packet */
+	ACTION_MAX       /* Maximum number of supported actions */
+};
+
+struct dpif_dpdk_action_output {
+	uint32_t port;    /* Output port */
+};
+
+struct dpif_action_push_vlan {
+	uint16_t tpid; /* Tag Protocol ID (always 0x8100) */
+	uint16_t tci;  /* Tag Control Information */
+};
+
+struct dpif_dpdk_action {
+	enum dpif_dpdk_action_type type;
+	union { /* union of different action types */
+		struct dpif_dpdk_action_output output;
+		struct dpif_action_push_vlan vlan;
+		/* add other action structs here */
+	} data;
+};
+
 struct dpif_dpdk_flow_message {
 	uint8_t cmd;
 	uint32_t flags;
 	struct dpif_dpdk_flow_key key;
 	struct dpif_dpdk_flow_stats stats;
-	struct action action;
+	struct dpif_dpdk_action actions[MAX_ACTIONS];
 	bool clear;
 };
 
 struct dpif_dpdk_packet_message {
-    struct action action;
+	struct dpif_dpdk_action actions[MAX_ACTIONS];
 };
 
 struct dpif_dpdk_message {

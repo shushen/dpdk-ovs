@@ -36,43 +36,96 @@
 #include "action.h"
 #include "vport.h"
 #include "stats.h"
+#include "ofpbuf.h"
+#include "ofpbuf_helper.h"
 
 #define CHECK_NULL(ptr)   do { \
                              if ((ptr) == NULL) return -1; \
                          } while (0)
+#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 static void action_output(const struct action_output *action,
                           struct rte_mbuf *mbuf);
-
 static void action_drop(struct rte_mbuf *mbuf);
+static void action_pop_vlan(struct rte_mbuf *mbuf);
+static void action_push_vlan(const struct action_push_vlan *action,
+                             struct rte_mbuf *mbuf);
+static int check_for_multiple_output(const struct action *actions);
+
 /*
  * Do 'action' of action_type 'type' on 'mbuf'
  */
-int action_execute(const struct action *action, struct rte_mbuf *mbuf)
+int action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 {
-	enum action_type action_type = ACTION_NULL;
-	CHECK_NULL(action);
+	const struct rte_mempool *mp = NULL;
+	struct rte_mbuf *mb = mbuf;
+	int i = 0;
+	int multiple_outputs = 0;
+	CHECK_NULL(actions);
 	CHECK_NULL(mbuf);
 
-	action_type = action->type;
-
-	switch (action_type) {
-	case ACTION_OUTPUT:
-		action_output(&(action->data.output), mbuf);
-		break;
-	case ACTION_NULL:
+	if (actions[0].type == ACTION_NULL) {
 		action_drop(mbuf);
-		break;
-	default:
-		printf("action_execute(): action not currently"
-		       " implemented\n");
-		return -1;
+		return 0;
 	}
 
-	return 0;
+	multiple_outputs = check_for_multiple_output(actions);
+	if (multiple_outputs)
+		mp = rte_mempool_from_obj(mbuf);
 
+	for (i = 0; i < MAX_ACTIONS && actions[i].type != ACTION_NULL; i++) {
+		switch (actions[i].type) {
+		case ACTION_OUTPUT:
+			/* need to clone only if multiple OUTPUT case */
+			if (multiple_outputs) {
+				mb = rte_pktmbuf_clone(mbuf, (struct rte_mempool *)mp);
+				if (mb)
+					action_output(&actions[i].data.output, mb);
+				else
+					RTE_LOG(ERR, APP, "Failed to clone pktmbuf");
+			}
+			else {
+				action_output(&actions[i].data.output, mbuf);
+			}
+			break;
+		case ACTION_POP_VLAN:
+			action_pop_vlan(mbuf);
+			break;
+		case ACTION_PUSH_VLAN:
+			action_push_vlan(&actions[i].data.vlan, mbuf);
+			break;
+		default:
+			printf("action_execute(): action not currently"
+			       " implemented\n");
+			break;
+		}
+	}
+	/* in multiple OUTPUT case, mbuf must be freed here */
+	if (multiple_outputs)
+		rte_pktmbuf_free(mbuf);
+
+
+	return 0;
 }
 
+/* If we have multiple output actions the mbuf must be cloned each time.
+ * This is a performance hit in the case of a single output action
+ */
+static int check_for_multiple_output(const struct action *actions)
+{
+	int num_output_actions = 0;
+
+	int i = 0;
+
+	for (i = 0; i < MAX_ACTIONS && actions[i].type != ACTION_NULL; i++) {
+		if (actions[i].type == ACTION_OUTPUT) {
+			num_output_actions++;
+			if (num_output_actions > 1)
+				return 1; /* Multiple output */
+		}
+	}
+	return 0; /* Single output */
+}
 /*
  * Excutes the output action on 'mbuf'
  */
@@ -100,3 +153,29 @@ static void action_drop(struct rte_mbuf *mbuf)
 	rte_pktmbuf_free(mbuf);
 	stats_vswitch_rx_drop_increment(INC_BY_1);
 }
+
+/*
+ * Removes 802.1Q header from the packet associated with 'mbuf'
+ */
+static void action_pop_vlan(struct rte_mbuf *mbuf)
+{
+	struct ofpbuf *ovs_pkt = NULL;
+
+	ovs_pkt = overlay_ofpbuf(mbuf);
+	eth_pop_vlan(ovs_pkt);
+	update_mbuf(ovs_pkt, mbuf);
+}
+
+/*
+ * Adds an 802.1Q header to the packet associated with 'mbuf'
+ */
+static void action_push_vlan(const struct action_push_vlan *action,
+                             struct rte_mbuf *mbuf)
+{
+	struct ofpbuf *ovs_pkt = NULL;
+
+	ovs_pkt = overlay_ofpbuf(mbuf);
+	eth_push_vlan(ovs_pkt, action->tci);
+	update_mbuf(ovs_pkt, mbuf);
+}
+

@@ -95,7 +95,6 @@ int flow_table_get_next_flow(const struct flow_key *key,
              struct flow_key *next_key, struct action *action,
              struct flow_stats *stats);
 int flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt);
-int flow_table_clear_stats(const struct flow_key *key);
 
 #endif /* __FLOW_H_ */
 

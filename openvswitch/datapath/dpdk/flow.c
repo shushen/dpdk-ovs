@@ -84,7 +84,7 @@ struct flow_table_entry {
 	struct flow_key key;     /* Flow key. */
 	struct flow_stats stats; /* Flow statistics. */
 	bool used;               /* Flow is used */
-	struct action action;    /* Type of action */
+	struct action actions[MAX_ACTIONS];    /* Type of action */
 };
 
 /* Parameters used for hash table */
@@ -103,7 +103,7 @@ static struct rte_hash *handle = NULL;
 
 static uint64_t ovs_flow_used_time(uint64_t flow_tsc);
 static int copy_entry_from_table(int pos, struct flow_key *key,
-            struct action *action, struct flow_stats *stats);
+            struct action *actions, struct flow_stats *stats);
 
 /* Initialize the flow table  */
 void
@@ -145,14 +145,9 @@ flow_table_init(void)
 /*
  * Clear flow table statistics for 'key'
  */
-int
-flow_table_clear_stats(const struct flow_key *key)
+static int
+flow_table_clear_stats(int pos)
 {
-	int pos = 0;
-	CHECK_NULL(key);
-	pos = flow_table_lookup(key);
-	CHECK_POS(pos);
-
 	rte_spinlock_init((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 
 	flow_table[pos].stats.used = 0;
@@ -167,11 +162,12 @@ flow_table_clear_stats(const struct flow_key *key)
  * Add 'key' and corresponding 'action' to flow table
  */
 int
-flow_table_add_flow(const struct flow_key *key, const struct action *action)
+flow_table_add_flow(const struct flow_key *key, const struct action *actions)
 {
+	int i = 0;
 	int pos = 0;
 	CHECK_NULL(key);
-	CHECK_NULL(action);
+	CHECK_NULL(actions);
 
 	pos = flow_table_lookup(key);
 	/* already exists */
@@ -188,14 +184,14 @@ flow_table_add_flow(const struct flow_key *key, const struct action *action)
 
 	flow_table[pos].key = *key;
 	flow_table[pos].used = true;
-	memcpy(&(flow_table[pos].action), action,
-	                 sizeof(flow_table[pos].action));
+	memcpy(&(flow_table[pos].actions), actions,
+	                 sizeof(flow_table[pos].actions));
 
 	/* release lock as table has been written */
 	rte_rwlock_write_unlock(&flow_table[pos].lock);
 
 	/* dont care about locking stats */
-	flow_table_clear_stats(key);
+	flow_table_clear_stats(pos);
 	return pos;
 }
 
@@ -204,13 +200,13 @@ flow_table_add_flow(const struct flow_key *key, const struct action *action)
  * for that entry
  */
 int
-flow_table_mod_flow(const struct flow_key *key, const struct action *action,
+flow_table_mod_flow(const struct flow_key *key, const struct action *actions,
                     bool clear_stats)
 {
 	int ret = -1;
 	int pos = 0;
 	CHECK_NULL(key);
-	CHECK_NULL(action);
+	CHECK_NULL(actions);
 
 	pos = flow_table_lookup(key);
 	CHECK_POS(pos);
@@ -219,12 +215,12 @@ flow_table_mod_flow(const struct flow_key *key, const struct action *action,
 	rte_rwlock_write_lock(&flow_table[pos].lock);
 
 	if (clear_stats) {
-		flow_table_clear_stats(key);
+		flow_table_clear_stats(pos);
 	}
 
-	if (action) {
-		memcpy(&(flow_table[pos].action), action,
-				sizeof(flow_table[pos].action));
+	if (actions) {
+		memcpy(&(flow_table[pos].actions), actions,
+				sizeof(flow_table[pos].actions));
 	}
 
 	ret = pos;
@@ -237,7 +233,7 @@ flow_table_mod_flow(const struct flow_key *key, const struct action *action,
 }
 
 static int
-copy_entry_from_table(int pos, struct flow_key *key, struct action *action,
+copy_entry_from_table(int pos, struct flow_key *key, struct action *actions,
                         struct flow_stats *stats)
 {
 	int ret = 0;
@@ -246,9 +242,9 @@ copy_entry_from_table(int pos, struct flow_key *key, struct action *action,
 		if (key) {
 			*key = flow_table[pos].key;
 		}
-		if (action) {
-			memcpy(action, &flow_table[pos].action,
-			       sizeof(flow_table[pos].action));
+		if (actions) {
+			memcpy(actions, &flow_table[pos].actions,
+			       sizeof(flow_table[pos].actions));
 		}
 		if (stats) {
 			*stats = flow_table[pos].stats;
@@ -270,7 +266,7 @@ copy_entry_from_table(int pos, struct flow_key *key, struct action *action,
  *
  * All data is copied
  */
-int flow_table_get_flow(struct flow_key *key, struct action *action,
+int flow_table_get_flow(struct flow_key *key, struct action *actions,
                         struct flow_stats *stats)
 {
 	int pos = 0;
@@ -282,7 +278,7 @@ int flow_table_get_flow(struct flow_key *key, struct action *action,
 	/* As we are reading from the table, acquire read lock */
 	rte_rwlock_read_lock(&flow_table[pos].lock);
 
-	ret = copy_entry_from_table(pos, NULL, action, stats);
+	ret = copy_entry_from_table(pos, NULL, actions, stats);
 
 	/* release lock as we have everything we need */
 	rte_rwlock_read_unlock(&flow_table[pos].lock);
@@ -296,7 +292,7 @@ int flow_table_get_flow(struct flow_key *key, struct action *action,
  * All data is copied
  */
 int flow_table_get_next_flow(const struct flow_key *key,
-     struct flow_key *next_key, struct action *action, struct flow_stats *stats)
+     struct flow_key *next_key, struct action *actions, struct flow_stats *stats)
 {
 	int pos = 0;
 	int ret = -1;
@@ -308,7 +304,7 @@ int flow_table_get_next_flow(const struct flow_key *key,
 
 	for (; pos < MAX_FLOWS; pos++) {
 		/* dont lock as only writer should call this */
-		ret = copy_entry_from_table(pos, next_key, action, stats);
+		ret = copy_entry_from_table(pos, next_key, actions, stats);
 		if (ret == pos) {
 			break;
 		}
@@ -325,7 +321,7 @@ int flow_table_get_next_flow(const struct flow_key *key,
  *
  * All data is copied
  */
-int flow_table_get_first_flow(struct flow_key *first_key, struct action *action,
+int flow_table_get_first_flow(struct flow_key *first_key, struct action *actions,
                               struct flow_stats *stats)
 {
 	int pos = 0;
@@ -333,7 +329,7 @@ int flow_table_get_first_flow(struct flow_key *first_key, struct action *action,
 
 	for (pos = 0; pos < MAX_FLOWS; pos++) {
 		/* dont lock as only writer should call this */
-		ret = copy_entry_from_table(pos, first_key, action, stats);
+		ret = copy_entry_from_table(pos, first_key, actions, stats);
 		if (ret == pos) {
 			break;
 		}
@@ -362,15 +358,15 @@ flow_table_del_flow(const struct flow_key *key)
 
 	memset((void *)&flow_table[pos].key, 0,
 	       sizeof(flow_table[pos].key));
-	memset((void *)&flow_table[pos].action, 0,
-	       sizeof(flow_table[pos].action));
+	memset((void *)&flow_table[pos].actions, 0,
+	       sizeof(flow_table[pos].actions));
 	flow_table[pos].used = false;
 
 	/* release lock as table has been written */
 	rte_rwlock_write_unlock(&flow_table[pos].lock);
 
 	/* dont care about locking stats */
-	flow_table_clear_stats(key);
+	flow_table_clear_stats(pos);
 	return pos;
 }
 
@@ -385,15 +381,15 @@ flow_table_del_all(void)
 
 	for (pos = 0; pos < MAX_FLOWS; pos++) {
 		key = &(flow_table[pos].key);
-		flow_table_clear_stats(key);
+		flow_table_clear_stats(pos);
 		rte_hash_del_key(handle, key);
 
 		/* As we are writing to the table, acquire write lock */
 		rte_rwlock_write_lock(&flow_table[pos].lock);
 
 		memset(key, 0, sizeof(struct flow_key));
-		memset((void *)&flow_table[pos].action, 0,
-		       sizeof(flow_table[pos].action));
+		memset((void *)&flow_table[pos].actions, 0,
+		       sizeof(flow_table[pos].actions));
 		flow_table[pos].used = false;
 
 		/* release lock as table has been written */

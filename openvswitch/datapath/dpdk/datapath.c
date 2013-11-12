@@ -36,6 +36,10 @@
 #include <rte_memcpy.h>
 #include <rte_ring.h>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/ioctl.h>
+
 #include "datapath.h"
 #include "action.h"
 #include "stats.h"
@@ -63,19 +67,19 @@
 #define FLOW_CMD_FAMILY        0xF
 #define PACKET_CMD_FAMILY      0x1F
 
+#define DPIF_SOCKNAME "\0dpif-dpdk"
 
 struct dpdk_flow_message {
 	uint8_t cmd;
 	uint32_t flags;
 	struct flow_key key;
 	struct flow_stats stats;
-	struct action action;
+	struct action actions[MAX_ACTIONS];
 	bool clear;
 };
 
 struct dpdk_packet_message {
-	struct action action; /* What to do with the packet received from
-	                       the daemon. */
+	struct action actions[MAX_ACTIONS];
 };
 
 struct dpdk_message {
@@ -104,6 +108,23 @@ static void flow_cmd_get(struct dpdk_flow_message *request);
 static void flow_cmd_new(struct dpdk_flow_message *request);
 static void flow_cmd_del(struct dpdk_flow_message *request);
 static void flow_cmd_dump(struct dpdk_flow_message *request);
+
+static int dpif_socket = -1;
+
+static void send_signal_to_dpif(void)
+{
+	static struct sockaddr_un addr;
+	int n;
+
+	if (!addr.sun_family) {
+		addr.sun_family = AF_UNIX;
+		memcpy(addr.sun_path, DPIF_SOCKNAME, sizeof(DPIF_SOCKNAME));
+	}
+
+	/* don't care about error */
+	sendto(dpif_socket, &n, sizeof(n), 0,
+		(struct sockaddr *)&addr, sizeof(addr));
+}
 
 /*
  * Function sends unmatched packets to vswitchd.
@@ -144,6 +165,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	}
 
 	stats_vport_tx_increment(VSWITCHD, INC_BY_1);
+
+	send_signal_to_dpif();
 }
 
 /*
@@ -235,12 +258,11 @@ flow_cmd_new(struct dpdk_flow_message *request)
 {
 	struct dpdk_message reply = {0};
 	int pos = 0;
-	struct action action = request->action;
 
 	pos = flow_table_lookup(&request->key);
 	if (pos < 0) {
 		if (request->flags & FLAG_CREATE) {
-			flow_table_add_flow(&request->key, &action);
+			flow_table_add_flow(&request->key, request->actions);
 			reply.type = 0;
 		} else {
 			reply.type = ENOENT;
@@ -254,7 +276,7 @@ flow_cmd_new(struct dpdk_flow_message *request)
 			 * either update or keep the same stats
 			 */
 			flow_table_mod_flow(&request->key,
-			         &action, request->clear);
+			         request->actions, request->clear);
 			reply.type = 0;
 		} else {
 			reply.type = EEXIST;
@@ -306,16 +328,11 @@ flow_cmd_get(struct dpdk_flow_message *request)
 {
 	struct dpdk_message reply = {0};
 	int ret = 0;
-	struct action action = {0};
 
-	ret = flow_table_get_flow(&request->key, &action, &request->stats);
+	ret = flow_table_get_flow(&request->key, request->actions, &request->stats);
 	if (ret < 0) {
 		reply.type = ENOENT;
 	} else {
-		request->action.type = action.type;
-		if (action.type == ACTION_OUTPUT) {
-			request->action.data.output.port = action.data.output.port;
-		}
 		reply.type = 0;
 	}
 
@@ -339,26 +356,21 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	struct flow_key empty = {0};
 	struct flow_key key = {0};
 	struct flow_stats stats = {0};
-	struct action action = {0};
 
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*
 		 * if key is empty, it is first call of dump(), so we
 		 * need to reply using the first flow
 		 */
-		ret = flow_table_get_first_flow(&key, &action, &stats);
+		ret = flow_table_get_first_flow(&key, request->actions, &stats);
 	} else {
 		/* next flow */
 		ret = flow_table_get_next_flow(&request->key,
-		               &key, &action, &stats);
+		               &key, request->actions, &stats);
 	}
 
 	if (ret >= 0) {
 		request->key = key;
-		request->action.type = action.type;
-		if (action.type == ACTION_OUTPUT) {
-			request->action.data.output.port = action.data.output.port;
-		}
 		request->stats = stats;
 		reply.type = 0;
 	} else {
@@ -400,9 +412,7 @@ handle_flow_cmd(struct dpdk_flow_message *request)
 static void
 handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
 {
-	struct action action = {0};
-
-	action_execute(&request->action, pkt);
+	action_execute(request->actions, pkt);
 }
 
 /*
@@ -436,6 +446,8 @@ handle_vswitchd_cmd(struct rte_mbuf *mbuf)
 void
 datapath_init(void)
 {
+	int one = 1;
+
 	vswitchd_packet_ring = rte_ring_create(VSWITCHD_PACKET_RING_NAME,
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_packet_ring == NULL)
@@ -450,4 +462,11 @@ datapath_init(void)
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
+
+	dpif_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (dpif_socket < 0)
+		rte_exit(EXIT_FAILURE, "Cannot create socket");
+
+	if (ioctl(dpif_socket, FIONBIO, &one) < 0)
+		rte_exit(EXIT_FAILURE, "Cannot make socket non-blocking");
 }
