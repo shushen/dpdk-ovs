@@ -19,7 +19,7 @@ of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on
 [01.org][ovdk gsg]. This document gives an in-depth overview of the components,
 system requirements and basic operation of Intel(R) DPDK vSwitch.
 
-[ovdk gsg] https://01.org/downloads/222
+[ovdk gsg]: https://01.org/downloads/222
 
 Build Instructions
 ------------------
