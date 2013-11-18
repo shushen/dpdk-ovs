@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <rte_memcpy.h>
 #include <rte_ring.h>
+#include <rte_cycles.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -68,6 +69,8 @@
 #define PACKET_CMD_FAMILY      0x1F
 
 #define DPIF_SOCKNAME "\0dpif-dpdk"
+
+#define DPIF_SEND_US 100000
 
 struct dpdk_flow_message {
 	uint8_t cmd;
@@ -134,6 +137,11 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 {
 	int rslt = 0;
 	void *mbuf_ptr = NULL;
+	const uint64_t dpif_send_tsc =
+		(rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * DPIF_SEND_US;
+	uint64_t cur_tsc = 0;
+	uint64_t diff_tsc = 0;
+	static uint64_t prev_tsc = 0;
 
 	/* send one packet, delete information about segments */
 	rte_pktmbuf_pkt_len(mbuf) = rte_pktmbuf_data_len(mbuf);
@@ -166,7 +174,12 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 
 	stats_vport_tx_increment(VSWITCHD, INC_BY_1);
 
-	send_signal_to_dpif();
+	cur_tsc = rte_rdtsc();
+	diff_tsc = cur_tsc - prev_tsc;
+	prev_tsc = cur_tsc;
+	/* Only signal the daemon after 100 milliseconds */
+	if (unlikely(diff_tsc > dpif_send_tsc))
+		send_signal_to_dpif();
 }
 
 /*

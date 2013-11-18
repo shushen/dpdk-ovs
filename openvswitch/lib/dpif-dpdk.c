@@ -84,7 +84,7 @@ static void flow_message_flush_create(struct dpif_dpdk_flow_message *request);
 
 static int
 dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
-               bool create OVS_UNUSED, struct dpif **dpifp)
+               bool create, struct dpif **dpifp)
 {
     struct sockaddr_un addr;
     int error = 0;
@@ -102,7 +102,7 @@ dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
         return error;
     }
 
-    if (dpdk_sock == -1) {
+    if (create && dpdk_sock == -1) {
         dpdk_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
         if (dpdk_sock == -1)
             return errno;
