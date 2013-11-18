@@ -139,14 +139,16 @@ stats_display(void)
 		     "Interface      rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		if (i == 0) {
+		if (i == CLIENT0) {
 			printf("vswitchd   ");
-		} else if (i <= PORT_MASK) {
+		} else if (IS_CLIENT_PORT(i)) {
 			printf("Client   %2u", i);
-		} else if (i <= KNI_MASK) {
+		} else if (IS_PHY_PORT(i)) {
 			printf("Port     %2u", i & PORT_MASK);
-		} else {
+		} else if (IS_KNI_PORT(i)) {
 			printf("KNI Port %2u", i & KNI_MASK);
+		} else {  /* fallthrough */
+			continue;
 		}
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 		       stats_vport_rx_get(i),
@@ -173,14 +175,14 @@ switch_packet(struct rte_mbuf *pkt, uint8_t in_port)
 {
 	int ret = 0;
 	struct dpdk_upcall info = {0};
-	struct action action = {0};
+	struct action actions[MAX_ACTIONS];
 
 	flow_key_extract(pkt, in_port, &info.key);
 
-	ret = flow_table_get_flow(&info.key, &action, NULL);
+	ret = flow_table_get_flow(&info.key, actions, NULL);
 	if (ret >= 0) {
 		flow_table_update_stats(&info.key, pkt);
-		action_execute(&action, pkt);
+		action_execute(actions, pkt);
 	} else {
 		/* flow table miss, send unmatched packet to the daemon */
 		info.cmd = PACKET_CMD_MISS;
@@ -312,19 +314,20 @@ flush_pkts(unsigned action)
 
 	diff_tsc = cur_tsc - prev_tsc[action & PORT_MASK];
 
-	if (unlikely(rte_ring_count(pq->tx_q) >= PKT_BURST_SIZE))
-	{
-		num_pkts = PKT_BURST_SIZE;
-	}
-	else
-	{
-		/* If queue idles with less than PKT_BURST packets, drain it*/
-		if(unlikely(diff_tsc > drain_tsc)) {
-			num_pkts = rte_ring_count(pq->tx_q);
-		}
-		else {
+	num_pkts = rte_ring_count(pq->tx_q);
+
+	/* If queue idles with less than PKT_BURST packets, drain it*/
+	if ((num_pkts < PKT_BURST_SIZE) ) {
+		if(unlikely(diff_tsc < drain_tsc)) {
 			return;
 		}
+
+	}
+
+	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
+	if (unlikely(num_pkts >= PKT_BURST_SIZE))
+	{
+		num_pkts = PKT_BURST_SIZE;
 	}
 
 	if (unlikely(rte_ring_dequeue_bulk(

@@ -16,10 +16,22 @@
 
 /* Implementation of the DPIF interface for a Intel DPDK vSwitch. */
 
+#include <config.h>
+
 #include <rte_config.h>
 #include <rte_byteorder.h>
+#include <rte_common.h>
+#include <rte_branch_prediction.h>
 
 #include <inttypes.h>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/ioctl.h>
+
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
 
 #include "common.h"
 #include "dpif-dpdk.h"
@@ -29,6 +41,7 @@
 #include "netlink.h"
 #include "netdev-provider.h"
 #include "odp-util.h"
+#include "poll-loop.h"
 #include "vlog.h"
 
 #define VLAN_CFI 0x1000
@@ -39,7 +52,12 @@
 #define DPDK_DEBUG()
 #endif
 
+#define DPIF_SOCKNAME "\0dpif-dpdk"
+
 VLOG_DEFINE_THIS_MODULE(dpif_dpdk);
+
+static int dpdk_sock = -1;
+static int polling;
 
 static void dpif_dpdk_flow_init(struct dpif_dpdk_flow_message *);
 static int dpif_dpdk_flow_transact(struct dpif_dpdk_flow_message *request,
@@ -66,9 +84,11 @@ static void flow_message_flush_create(struct dpif_dpdk_flow_message *request);
 
 static int
 dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
-               bool create OVS_UNUSED, struct dpif **dpifp)
+               bool create, struct dpif **dpifp)
 {
+    struct sockaddr_un addr;
     int error = 0;
+    int one = 1;
 
     if(dpif_class_p == NULL) {
         return EINVAL;
@@ -80,6 +100,25 @@ dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
 
     if (error) {
         return error;
+    }
+
+    if (create && dpdk_sock == -1) {
+        dpdk_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+        if (dpdk_sock == -1)
+            return errno;
+        if (ioctl(dpdk_sock, FIONBIO, &one) < 0) {
+            close(dpdk_sock);
+            dpdk_sock = -1;
+            return errno;
+        }
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        memcpy(addr.sun_path, DPIF_SOCKNAME, sizeof(DPIF_SOCKNAME));
+        if (bind(dpdk_sock, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+            close(dpdk_sock);
+            dpdk_sock = -1;
+            return errno;
+        }
     }
 
     *dpifp = xzalloc(sizeof(**dpifp));
@@ -109,12 +148,25 @@ static void
 dpif_dpdk_run(struct dpif *dpif OVS_UNUSED)
 {
     DPDK_DEBUG()
+
+    for (;;) {
+        int n;
+
+        if (recvfrom(dpdk_sock, &n, sizeof(n), 0, NULL, NULL) <= 0)
+            break;
+    }
+
+    polling = 0;
 }
 
 static void
 dpif_dpdk_wait(struct dpif *dpif OVS_UNUSED)
 {
     DPDK_DEBUG()
+
+    if (!polling)
+        poll_fd_wait(dpdk_sock, POLLIN);
+    polling = 1;
 }
 
 static int
@@ -306,11 +358,61 @@ dpif_dpdk_flow_get(const struct dpif *dpif_,
             dpif_dpdk_flow_get_stats(&reply, stats);
         }
         if (actionsp) {
-            nl_msg_put_u32(*actionsp, OVS_ACTION_ATTR_OUTPUT, reply.action);
+            int i;
+
+            for (i = 0; i < MAX_ACTIONS && reply.actions[i].type != ACTION_NULL; i++) {
+                if (reply.actions[i].type == ACTION_OUTPUT) {
+                    nl_msg_put_u32(*actionsp, OVS_PACKET_CMD_ACTION,
+                                   reply.actions[i].data.output.port);
+                }
+            }
         }
     }
 
     return error;
+}
+
+static void
+dpif_dpdk_create_actions(struct dpif_dpdk_action *dpif_actions,
+                         const struct nlattr *actions, size_t actions_len)
+{
+    const struct nlattr *a;
+    size_t len;
+    int i = 0;
+
+    if (actions_len <= 0) {
+        dpif_actions[0].type = ACTION_NULL;
+        return;
+    }
+
+    if(likely(actions != NULL)) {
+        NL_ATTR_FOR_EACH_UNSAFE(a, len, actions, actions_len) {
+            switch (nl_attr_type(a)) {
+                case OVS_ACTION_ATTR_OUTPUT:
+                    dpif_actions[i].type = ACTION_OUTPUT;
+                    dpif_actions[i].data.output.port = nl_attr_get_u32(a);
+                    ++i;
+                    break;
+                case OVS_ACTION_ATTR_POP_VLAN:
+                    dpif_actions[i].type = ACTION_POP_VLAN;
+                    ++i;
+                    break;
+                case OVS_ACTION_ATTR_PUSH_VLAN:
+                    dpif_actions[i].type = ACTION_PUSH_VLAN;
+                    struct ovs_action_push_vlan *vlan = (struct ovs_action_push_vlan *)
+                        nl_attr_get_unspec(a, sizeof(struct ovs_action_push_vlan));
+                    dpif_actions[i].data.vlan.tpid = vlan->vlan_tpid;
+                    dpif_actions[i].data.vlan.tci = vlan->vlan_tci;
+                    ++i;
+                    break;
+                default:
+                    /* unsupported action */
+                    break;
+            }
+        }
+    }
+
+    dpif_actions[i].type = ACTION_NULL;
 }
 
 /*
@@ -334,8 +436,7 @@ flow_message_put_create(struct dpif *dpif OVS_UNUSED,
     odp_flow_key_to_flow(key, key_len, &flow);
     dpif_dpdk_flow_key_from_flow(&request->key, &flow);
 
-    assert(nl_attr_type(actions) == OVS_ACTION_ATTR_OUTPUT);
-    request->action = nl_attr_get_u32(actions);
+    dpif_dpdk_create_actions(request->actions, actions, actions_len);
 
     if (flags & DPIF_FP_ZERO_STATS) {
         request->clear = true;
@@ -364,7 +465,7 @@ dpif_dpdk_flow_put(struct dpif *dpif_, enum dpif_flow_put_flags flags,
 
     DPDK_DEBUG()
 
-    if ((key == NULL) || (actions == NULL)) {
+    if (key == NULL) {
         return EINVAL;
     }
 
@@ -499,11 +600,31 @@ dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
 
     /* If actions, key or stats are not null, retrieve from state. */
     if (actions) {
+        int i;
+
         ofpbuf_reinit(&state->actions_buf, 0); /* zero buf again */
-        nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
-                       reply.action);
-        *actions = state->actions_buf.data;
-        *actions_len = state->actions_buf.size;
+        for (i = 0; i < MAX_ACTIONS && reply.actions[i].type != ACTION_NULL; i++) {
+            switch (reply.actions[i].type) {
+                case ACTION_OUTPUT:
+                    nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
+                               reply.actions[i].data.output.port);
+                    break;
+                case ACTION_POP_VLAN:
+                     nl_msg_put_flag(&state->actions_buf, OVS_ACTION_ATTR_POP_VLAN);
+                     break;
+                case ACTION_PUSH_VLAN:
+                     nl_msg_put_unspec(&state->actions_buf, OVS_ACTION_ATTR_PUSH_VLAN,
+                         &(reply.actions[i].data.vlan), sizeof(struct dpif_action_push_vlan));
+                     break;
+                case ACTION_NULL:
+                case ACTION_MAX:
+                default:
+                /* unsupported action */
+                     break;
+            }
+            *actions = state->actions_buf.data;
+            *actions_len = state->actions_buf.size;
+        }
     }
     if (key) {
        ofpbuf_reinit(&state->key_buf, 0); /* zero buf again */
@@ -553,14 +674,12 @@ dpif_dpdk_execute(struct dpif *dpif_ OVS_UNUSED,
 
     DPDK_DEBUG()
 
-    if((actions == NULL) || (packet == NULL)) {
+    if(packet == NULL) {
         return EINVAL;
     }
 
     request.type = DPIF_DPDK_PACKET_FAMILY;
-
-    assert(nl_attr_type(actions) == OVS_ACTION_ATTR_OUTPUT);
-    request.packet_msg.action = nl_attr_get_u32(actions);
+    dpif_dpdk_create_actions(request.packet_msg.actions, actions, actions_len);
 
     error = dpdk_link_send(&request, packet);
 
@@ -586,14 +705,14 @@ dpif_dpdk_operate(struct dpif *dpif_, union dpif_op **ops, size_t n_ops)
                 struct dpif_flow_put *put = &op->flow_put;
 
                 put->error = dpif_dpdk_flow_put(dpif_, put->flags, put->key,
-                          put->key_len, put->actions, put->actions_len, put->stats);
+                                                put->key_len, put->actions,
+                                                put->actions_len, put->stats);
             } else if (op->type == DPIF_OP_EXECUTE) {
                 struct dpif_execute *execute = &op->execute;
 
                 requests[exec].type = DPIF_DPDK_PACKET_FAMILY;
-                assert(nl_attr_type(execute->actions) == OVS_ACTION_ATTR_OUTPUT);
-                requests[exec].packet_msg.action =
-                                               nl_attr_get_u32(execute->actions);
+                dpif_dpdk_create_actions(requests[exec].packet_msg.actions,
+                                         execute->actions, execute->actions_len);
                 packets[exec] = execute->packet;
                 exec++;
             } else {

@@ -32,44 +32,39 @@
  *
  */
 
-#ifndef __VPORT_H_
-#define __VPORT_H_
-
-#include <stdint.h>
+#include <rte_config.h>
+#include <rte_lcore.h>
 #include <rte_mbuf.h>
 
-#include "kni.h"
+#include "ofpbuf.h"
 
-#define MAX_VPORTS          48
-#define MAX_PHYPORTS        16
-#define MAX_CLIENTS         16
-#define PKT_BURST_SIZE      32
-#define CLIENT0             0
-#define CLIENT1             1
-#define KNI0                0x20
-#define CLIENT_MASK         0x00
-#define PORT_MASK           0x0F
-#define KNI_MASK            0x1F
-#define IS_CLIENT_PORT(action) ((action) > CLIENT_MASK && (action) <= PORT_MASK)
-#define IS_PHY_PORT(action) ((action) > PORT_MASK && (action) <= KNI_MASK)
-#define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) <= (KNI_MASK + MAX_KNI_PORTS))
+/* We declare a struct ofpbuf per core as each thread may do an action
+ * simultaneously and while the ofbuf itself is merely overlayed on top
+ * of the mbuf, the actual struct that stores the pointers may be
+ * overwritten by another thread.
+ *
+ * This workaround is temporary
+ */
+struct ofpbuf buf[RTE_MAX_LCORE];
 
-struct port_info {
-	uint8_t num_ports;
-	uint8_t id[RTE_MAX_ETHPORTS];
-};
+void * overlay_ofpbuf(struct rte_mbuf *mbuf)
+{
+	const unsigned id = rte_lcore_id();
 
-struct port_info *ports;
+	ofpbuf_use_const(&buf[id], mbuf->buf_addr, mbuf->buf_len);
+	buf[id].data = mbuf->pkt.data;
+	buf[id].size = mbuf->pkt.pkt_len;
 
-void vport_init(void);
-void vport_fini(void);
-int send_to_client(uint8_t client, struct rte_mbuf *buf);
-int send_to_port(uint8_t vportid, struct rte_mbuf *buf);
-int send_to_kni(uint8_t vportid, struct rte_mbuf *buf);
-uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
-uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
-uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
+	/* VLAN pop library function requires l2 pointer */
+	buf[id].l2 = mbuf->pkt.data;
 
-#endif /* __VPORT_H_ */
+	return &buf[id];
+}
 
-
+void update_mbuf(struct ofpbuf *ovs_pkt, struct rte_mbuf *mbuf)
+{
+	/* Update mbuf pointers following action execution */
+	mbuf->pkt.data = ovs_pkt->data;
+	mbuf->pkt.data_len = ovs_pkt->size;
+	mbuf->pkt.pkt_len = ovs_pkt->size;
+}

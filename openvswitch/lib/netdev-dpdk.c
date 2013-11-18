@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <config.h>
+
 #include <rte_config.h>
 #include <rte_ethdev.h>
 

@@ -16,6 +16,8 @@
 
 /* Interface layer to communicate with Intel DPDK vSwitch. */
 
+#include <config.h>
+
 #include <rte_config.h>
 #include <rte_mbuf.h>
 #include <rte_memcpy.h>
@@ -26,6 +28,10 @@
 #include <rte_log.h>
 
 #include <assert.h>
+
+#include "vlog.h"
+
+VLOG_DEFINE_THIS_MODULE(dpdk_link);
 
 #define PKT_BURST_SIZE 256
 
@@ -74,6 +80,8 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
         mbufs[i] = rte_pktmbuf_alloc(mp);
 
         if (!mbufs[i]) {
+            for (; i >= 0; i--)
+                rte_pktmbuf_free(mbufs[i]);
             return ENOBUFS;
         }
 
@@ -85,7 +93,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
             if (likely(packets[i]->size <= (mbufs[i]->buf_len - sizeof(request[i])))) {
                 rte_memcpy(mbuf_data, packets[i]->data, packets[i]->size);
                 rte_pktmbuf_data_len(mbufs[i]) =
-		                 sizeof(request[i]) + packets[i]->size;
+                                 sizeof(request[i]) + packets[i]->size;
                 rte_pktmbuf_pkt_len(mbufs[i]) = rte_pktmbuf_data_len(mbufs[i]);
             } else {
                 RTE_LOG(ERR, APP, "%s, %d: %s", __FUNCTION__, __LINE__,
@@ -97,7 +105,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
             }
         } else {
             rte_pktmbuf_data_len(mbufs[i]) = sizeof(request[i]);
-	    rte_pktmbuf_pkt_len(mbufs[i]) = rte_pktmbuf_data_len(mbufs[i]);
+            rte_pktmbuf_pkt_len(mbufs[i]) = rte_pktmbuf_data_len(mbufs[i]);
         }
     }
 
