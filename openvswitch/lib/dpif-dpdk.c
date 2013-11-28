@@ -68,6 +68,8 @@ static void dpif_dpdk_flow_key_from_flow(struct dpif_dpdk_flow_key *,
                                          const struct flow *);
 static void dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *,
                                        struct flow *);
+static void dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *,
+                                              struct ofpbuf *);
 static int dpif_dpdk_init(void);
 static void flow_message_get_create(const struct dpif *dpif_ OVS_UNUSED,
                                     const struct nlattr *key, size_t key_len,
@@ -358,14 +360,7 @@ dpif_dpdk_flow_get(const struct dpif *dpif_,
             dpif_dpdk_flow_get_stats(&reply, stats);
         }
         if (actionsp) {
-            int i;
-
-            for (i = 0; i < MAX_ACTIONS && reply.actions[i].type != ACTION_NULL; i++) {
-                if (reply.actions[i].type == ACTION_OUTPUT) {
-                    nl_msg_put_u32(*actionsp, OVS_PACKET_CMD_ACTION,
-                                   reply.actions[i].data.output.port);
-                }
-            }
+            dpif_dpdk_flow_actions_to_actions(reply.actions, *actionsp);
         }
     }
 
@@ -600,31 +595,10 @@ dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
 
     /* If actions, key or stats are not null, retrieve from state. */
     if (actions) {
-        int i;
-
         ofpbuf_reinit(&state->actions_buf, 0); /* zero buf again */
-        for (i = 0; i < MAX_ACTIONS && reply.actions[i].type != ACTION_NULL; i++) {
-            switch (reply.actions[i].type) {
-                case ACTION_OUTPUT:
-                    nl_msg_put_u32(&state->actions_buf, OVS_ACTION_ATTR_OUTPUT,
-                               reply.actions[i].data.output.port);
-                    break;
-                case ACTION_POP_VLAN:
-                     nl_msg_put_flag(&state->actions_buf, OVS_ACTION_ATTR_POP_VLAN);
-                     break;
-                case ACTION_PUSH_VLAN:
-                     nl_msg_put_unspec(&state->actions_buf, OVS_ACTION_ATTR_PUSH_VLAN,
-                         &(reply.actions[i].data.vlan), sizeof(struct dpif_action_push_vlan));
-                     break;
-                case ACTION_NULL:
-                case ACTION_MAX:
-                default:
-                /* unsupported action */
-                     break;
-            }
-            *actions = state->actions_buf.data;
-            *actions_len = state->actions_buf.size;
-        }
+        dpif_dpdk_flow_actions_to_actions(reply.actions, &state->actions_buf);
+        *actions = state->actions_buf.data;
+        *actions_len = state->actions_buf.size;
     }
     if (key) {
        ofpbuf_reinit(&state->key_buf, 0); /* zero buf again */
@@ -982,4 +956,34 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
     flow->nw_ttl = key->ip_ttl;
     flow->tp_src = rte_cpu_to_be_16(key->tran_src_port);
     flow->tp_dst = rte_cpu_to_be_16(key->tran_dst_port);
+}
+
+/*
+ * Convert from dpif_dpdk_actions to ofpbuf actions
+ */
+static void
+dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *actions,
+                                  struct ofpbuf *actionsp)
+{
+    int i;
+
+    for (i = 0; i < MAX_ACTIONS && actions[i].type != ACTION_NULL; i++) {
+        switch (actions[i].type) {
+            case ACTION_OUTPUT:
+                nl_msg_put_u32(actionsp, OVS_ACTION_ATTR_OUTPUT,
+                               actions[i].data.output.port);
+                break;
+            case ACTION_POP_VLAN:
+                nl_msg_put_flag(actionsp, OVS_ACTION_ATTR_POP_VLAN);
+                break;
+            case ACTION_PUSH_VLAN:
+                nl_msg_put_unspec(actionsp, OVS_ACTION_ATTR_PUSH_VLAN,
+                                  &actions[i].data.vlan,
+                                  sizeof(struct dpif_action_push_vlan));
+                break;
+            case ACTION_NULL:
+            case ACTION_MAX:
+                break;
+        }
+    }
 }

@@ -349,7 +349,10 @@ send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
 	int rslt = 0;
 	struct kni_port *kp = NULL;
 
-	rslt = rte_kni_tx_burst(&rte_kni_list[vportid & KNI_MASK], &buf, 1);
+	i = vportid & KNI_MASK;
+	rte_spinlock_lock(&rte_kni_locks[i]);
+	rslt = rte_kni_tx_burst(&rte_kni_list[i], &buf, 1);
+	rte_spinlock_unlock(&rte_kni_locks[i]);
 	/* FIFO is full */
 	if (rslt == 0) {
 		rte_pktmbuf_free(buf);
@@ -373,7 +376,6 @@ receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs)
 	struct statistics *s = NULL;
 
 	rslt = rte_kni_rx_burst(&rte_kni_list[vportid & KNI_MASK], bufs, PKT_BURST_SIZE);
-
 	if (rslt != 0)
 		stats_vport_tx_increment(vportid, rslt);
 

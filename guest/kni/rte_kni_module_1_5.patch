@@ -1,0 +1,155 @@
+--- a/DPDK/lib/librte_eal/linuxapp/kni/kni_misc.c
++++ b/DPDK/lib/librte_eal/linuxapp/kni/kni_misc.c
+@@ -41,6 +41,17 @@ MODULE_DESCRIPTION("Kernel Module for managing kni devices");
+
+ #define KNI_MAX_DEVICES 32
+
++#define PCI_VENDOR_ID_IVSHMEM   0x1AF4
++#define PCI_DEVICE_ID_IVSHMEM   0x1110
++#define BAR2                    2
++#define HUGEPAGE_SIZE           (1<<30)
++
++#define KNI_FIFO_COUNT_MAX      1024
++#define KNI_FIFO_SIZE          ((KNI_FIFO_COUNT_MAX) * sizeof(void *) + \
++                                sizeof(struct rte_kni_fifo))
++
++static void *kern_va_pci_region_start = NULL; /* virtual address of hugepage */
++
+ extern void kni_net_rx(struct kni_dev *kni);
+ extern void kni_net_init(struct net_device *dev);
+ extern void kni_net_config_lo_mode(char *lo_str);
+@@ -102,8 +116,27 @@ static struct list_head kni_list_head = LIST_HEAD_INIT(kni_list_head);
+ static int __init
+ kni_init(void)
+ {
++	struct pci_dev *ivshm_dev = NULL;
++	phys_addr_t bus_addr_pci_region_start = 0;
++
+ 	KNI_PRINT("######## DPDK kni module loading ########\n");
+
++ 	KNI_PRINT("######## Remapping huge page   ########\n");
++
++ 	/* For use in this virtualised enviroment, where the shared memory
++ 	 * is mapped in as a pci device, we need to make sure the driver is
++ 	 * operating on the correct address. Rather than use phys_to_virt, we
++ 	 * pass down a physical address offset through the IOCTL, remap the
++ 	 * bus address to a kernel virtual address, then add the offset to
++ 	 * the kva to get each memzones kernel virtual address.
++ 	 */
++ 	ivshm_dev = pci_get_device(PCI_VENDOR_ID_IVSHMEM, PCI_DEVICE_ID_IVSHMEM, NULL);
++ 	if(ivshm_dev == NULL) {
++ 		KNI_PRINT("Could not find device\n");
++ 		misc_deregister(&kni_misc);
++ 		return -ENODEV;
++ 	}
++
+ 	if (kni_parse_kthread_mode() < 0) {
+ 		KNI_ERR("Invalid parameter for kthread_mode\n");
+ 		return -EINVAL;
+@@ -120,7 +151,11 @@ kni_init(void)
+ 	/* Configure the lo mode according to the input parameter */
+ 	kni_net_config_lo_mode(lo_mode);
+
+-	KNI_PRINT("######## DPDK kni module loaded  ########\n");
++ 	bus_addr_pci_region_start = pci_resource_start(ivshm_dev, BAR2);
++ 	KNI_DBG("Bus hugepage start is %llx\n", bus_addr_pci_region_start);
++ 	kern_va_pci_region_start = ioremap(bus_addr_pci_region_start, HUGEPAGE_SIZE);
++ 	KNI_DBG("KVA hugepage start is %p\n", kern_va_pci_region_start);
++ 	KNI_PRINT("######## DPDK kni module loaded  ########\n");
+
+ 	return 0;
+ }
+@@ -128,6 +163,7 @@ kni_init(void)
+ static void __exit
+ kni_exit(void)
+ {
++ 	iounmap(kern_va_pci_region_start);
+ 	misc_deregister(&kni_misc);
+ 	KNI_PRINT("####### DPDK kni module unloaded  #######\n");
+ }
+@@ -359,17 +395,18 @@ kni_ioctl_create(unsigned int ioctl_num, unsigned long ioctl_param)
+ 	strncpy(kni->name, dev_info.name, RTE_KNI_NAMESIZE);
+
+ 	/* Translate user space info into kernel space info */
+-	kni->tx_q = phys_to_virt(dev_info.tx_phys);
+-	kni->rx_q = phys_to_virt(dev_info.rx_phys);
+-	kni->alloc_q = phys_to_virt(dev_info.alloc_phys);
+-	kni->free_q = phys_to_virt(dev_info.free_phys);
++	/* Note, we treat dev_info.tx_phys as an offset */
++	kni->tx_q = ((uint8_t *)kern_va_pci_region_start + dev_info.tx_phys);
++	kni->rx_q = ((uint8_t *)kern_va_pci_region_start + dev_info.rx_phys);
++	kni->alloc_q = ((uint8_t *)kern_va_pci_region_start + dev_info.alloc_phys);
++	kni->free_q =  ((uint8_t *)kern_va_pci_region_start + dev_info.free_phys);
+
+-	kni->req_q = phys_to_virt(dev_info.req_phys);
+-	kni->resp_q = phys_to_virt(dev_info.resp_phys);
++	kni->req_q =  ((uint8_t *)kern_va_pci_region_start + dev_info.req_phys);
++	kni->resp_q = ((uint8_t *)kern_va_pci_region_start + dev_info.resp_phys);
+ 	kni->sync_va = dev_info.sync_va;
+-	kni->sync_kva = phys_to_virt(dev_info.sync_phys);
++	kni->sync_kva = ((uint8_t *)kern_va_pci_region_start + dev_info.sync_phys);
+
+-	kni->mbuf_kva = phys_to_virt(dev_info.mbuf_phys);
++	kni->mbuf_kva = ((uint8_t *)kern_va_pci_region_start + dev_info.mbuf_phys);
+ 	kni->mbuf_va = dev_info.mbuf_va;
+
+ #ifdef RTE_KNI_VHOST
+--- a/DPDK/lib/librte_eal/linuxapp/kni/kni_net.c
++++ b/DPDK/lib/librte_eal/linuxapp/kni/kni_net.c
+@@ -69,15 +69,16 @@ kni_net_open(struct net_device *dev)
+ 	int ret;
+ 	struct rte_kni_request req;
+ 	struct kni_dev *kni = netdev_priv(dev);
+-
+-	if (kni->lad_dev)
+-		memcpy(dev->dev_addr, kni->lad_dev->dev_addr, ETH_ALEN);
+-	else
+-		/*
+-		 * Generate random mac address. eth_random_addr() is the newer
+-		 * version of generating mac address in linux kernel.
+-		 */
+-		random_ether_addr(dev->dev_addr);
++	if (!is_valid_ether_addr(dev->dev_addr)) {
++		if (kni->lad_dev)
++			memcpy(dev->dev_addr, kni->lad_dev->dev_addr, ETH_ALEN);
++		else
++			/*
++			 * Generate random mac address. eth_random_addr() is the newer
++			 * version of generating mac address in linux kernel.
++			 */
++			random_ether_addr(dev->dev_addr);
++	}
+
+ 	netif_start_queue(dev);
+
+@@ -481,6 +482,22 @@ kni_net_tx_timeout (struct net_device *dev)
+ 	return;
+ }
+
++static int
++kni_set_mac_address(struct net_device *dev, void *addr_ptr)
++{
++	struct sockaddr *addr = addr_ptr;
++
++	if (netif_running(dev))
++		return -EBUSY;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
++
++	return 0;
++}
++
+ /*
+  * Ioctl commands
+  */
+@@ -630,6 +647,7 @@ static const struct net_device_ops kni_net_netdev_ops = {
+ 	.ndo_do_ioctl = kni_net_ioctl,
+ 	.ndo_get_stats = kni_net_stats,
+ 	.ndo_tx_timeout = kni_net_tx_timeout,
++	.ndo_set_mac_address = kni_set_mac_address,
+ };
+
+ void

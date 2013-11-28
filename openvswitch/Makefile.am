@@ -20,14 +20,16 @@ endif
 @HAVE_DPDK_TRUE@dpdk_lib_dir=$(dpdk_dir)/x86_64-default-linuxapp-gcc/lib
 @HAVE_DPDK_TRUE@dpdk_inc_dir=$(dpdk_dir)/x86_64-default-linuxapp-gcc/include
 
-@HAVE_DPDK_TRUE@dpdk_libs=$(dpdk_lib_dir)/librte_eal.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/libethdev.a \
+@HAVE_DPDK_TRUE@dpdk_libs=@HAVE_DPDK_TRUE@$(dpdk_lib_dir)/libethdev.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_cmdline.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_hash.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_lpm.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_mbuf.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_ring.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_mempool.a \
+      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_eal.a \
+      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_pmd_ring.a \
+      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/libethdev.a \
       @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_malloc.a
 
 AM_CPPFLAGS = $(SSL_CFLAGS)

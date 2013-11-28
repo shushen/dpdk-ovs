@@ -116,7 +116,8 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
         }
         ret = ENOBUFS;
     } else if (unlikely(ret == -EDQUOT)) {
-        ret = EDQUOT;
+        /* do not return this error code to the caller */
+        ret = 0;
     }
 
     return ret;

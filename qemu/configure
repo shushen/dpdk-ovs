@@ -3455,6 +3455,8 @@ if test "$dpdk" = "yes"; then
   echo "   \$(dpdk_lib_dir)/librte_mbuf.a \\" >> $config_host_mak
   echo "   \$(dpdk_lib_dir)/librte_ring.a \\" >> $config_host_mak
   echo "   \$(dpdk_lib_dir)/librte_mempool.a \\" >> $config_host_mak
+  echo "   \$(dpdk_lib_dir)/librte_pmd_ring.a \\" >> $config_host_mak
+  echo "   \$(dpdk_lib_dir)/libethdev.a \\" >> $config_host_mak
   echo "   \$(dpdk_lib_dir)/librte_malloc.a" >> $config_host_mak
   LIBS="\$(dpdk_libs) $LIBS"
   QEMU_INCLUDES="-I\$(dpdk_inc_dir) $QEMU_INCLUDES"
