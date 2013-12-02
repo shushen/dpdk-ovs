@@ -16,7 +16,7 @@ v0.7 - November 2013
     - Bug fixes
 
 v0.6 - October 2013
-  -------------------
+-------------------
     - Datapath:
         - Added 802.1Q VLAN-tagged frame support
     - Performance Improvements
