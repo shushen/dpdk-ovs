@@ -1,6 +1,8 @@
 v0.8 - December 2013
 --------------------
     - Added partial support for ``ovs-testsuite`` - a collection of unit tests found in standard Open vSwitch
+    - Updated to use DPDK 1.5.2, NOTE: this update removes KNI compatibility with DPDK 1.4
+    - Bug fixes
 
 v0.7 - November 2013
 --------------------
