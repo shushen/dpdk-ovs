@@ -49,6 +49,7 @@
 #include "init.h"
 #include "vport.h"
 #include "kni.h"
+#include "veth.h"
 
 #define PORT_OFFSET 0x10
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
@@ -78,10 +79,11 @@ static void
 usage(void)
 {
 	printf(
-	    "%s [EAL options] -- -p PORTMASK -n NUM_CLIENTS -k NUM_KNI\n"
+	    "%s [EAL options] -- -p PORTMASK -n NUM_CLIENTS -k NUM_KNI [-v NUM_VETH]\n"
 	    " -p PORTMASK: hexadecimal bitmask of ports to use\n"
 	    " -n NUM_CLIENTS: number of client processes to use\n"
 	    " -k NUM_KNI: number of kni ports to use\n"
+	    " -v NUM_VETH: number of host kni (veth) ports to use\n"
 	    , progname);
 }
 
@@ -195,6 +197,7 @@ parse_config(const char *q_arg)
 	}
 	printf("nb_cfg_params = %d\n", nb_cfg_params);
 	cfg_params = cfg_params_array;
+
 	return 0;
 }
 
@@ -220,16 +223,16 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 
 	progname = argv[0];
 
-	while ((opt = getopt_long(argc, argvopt, "n:p:k:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:", lgopts,
 		&option_index)) != EOF) {
 		switch (opt) {
-			case 'p':
+			case 'p':  /* Physical ports */
 				if (parse_portmask(max_ports, optarg) != 0) {
 					usage();
 					return -1;
 				}
 				break;
-			case 'n':
+			case 'n':  /* Client ports */
 				temp = parse_num_clients(optarg);
 				if (temp <= 0) {
 					usage();
@@ -237,13 +240,21 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				}
 				num_clients = (uint8_t)temp;
 				break;
-			case 'k':
+			case 'k':  /* KNI ports */
 				temp = parse_num_clients(optarg);
 				if (temp <= 0) {
 					usage();
 					return -1;
 				}
 				num_kni = (uint8_t)temp;
+				break;
+			case 'v':  /* vEth ports */
+				temp = parse_num_clients(optarg);
+				if (temp <= 0) {
+					usage();
+					return -1;
+				}
+				num_veth = (uint8_t)temp;
 				break;
 			case 0:
 				if (!strcmp(lgopts[option_index].name, PARAM_CONFIG)) {
@@ -268,17 +279,22 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 	}
 
 	if (num_clients == 0 || num_clients > MAX_CLIENTS) {
-        printf ("Number of clients is invalid\n");
+		printf ("Number of clients is invalid\n");
 		usage();
 		return -1;
 	}
 
 	if (num_kni == 0 || num_kni > MAX_KNI_PORTS) {
-        printf ("Number of KNI ports is invalid\n");
+		printf ("Number of KNI ports is invalid\n");
 		usage();
 		return -1;
 	}
 
+	if (num_veth > MAX_VETH_PORTS) {
+		printf ("Number of host KNI (vEth) ports is invalid\n");
+		usage();
+		return -1;
+	}
 
 	return 0;
 }

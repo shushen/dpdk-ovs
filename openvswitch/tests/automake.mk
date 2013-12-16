@@ -56,7 +56,9 @@ TESTSUITE_AT = \
 	tests/ovs-xapi-sync.at \
 	tests/stp.at \
 	tests/interface-reconfigure.at \
-	tests/vlog.at
+	tests/vlog.at \
+	tests/dpdk-datapath.at \
+	tests/dpdk-link.at
 TESTSUITE = $(srcdir)/tests/testsuite
 DISTCLEANFILES += tests/atconfig tests/atlocal
 
@@ -81,6 +83,7 @@ lcov_wrappers = \
 	tests/lcov/test-csum \
 	tests/lcov/test-file_name \
 	tests/lcov/test-flows \
+	tests/lcov/test-dpdk-link \
 	tests/lcov/test-hash \
 	tests/lcov/test-hmap \
 	tests/lcov/test-json \
@@ -137,6 +140,7 @@ valgrind_wrappers = \
 	tests/valgrind/test-csum \
 	tests/valgrind/test-file_name \
 	tests/valgrind/test-flows \
+	tests/valgrind/test-dpdk-link \
 	tests/valgrind/test-hash \
 	tests/valgrind/test-hmap \
 	tests/valgrind/test-json \
@@ -220,6 +224,10 @@ noinst_PROGRAMS += tests/test-flows
 tests_test_flows_SOURCES = tests/test-flows.c
 tests_test_flows_LDADD = lib/libopenvswitch.a
 dist_check_SCRIPTS = tests/flowgen.pl
+
+noinst_PROGRAMS += tests/test-dpdk-link
+tests_test_dpdk_link_SOURCES = tests/test-dpdk-link.c
+tests_test_dpdk_link_LDADD = lib/libopenvswitch.a $(dpdk_libs)
 
 noinst_PROGRAMS += tests/test-hash
 tests_test_hash_SOURCES = tests/test-hash.c

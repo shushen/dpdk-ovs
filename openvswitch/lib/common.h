@@ -23,7 +23,7 @@
 
 #define MAX_DIGITS_UNSIGNED_INT    20
 
-#define MAX_VPORTS                 48
+#define MAX_VPORTS                 80
 
 #define VLAN_ID_MASK               0xFFF
 #define VLAN_PRIO_SHIFT            13

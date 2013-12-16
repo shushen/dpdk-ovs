@@ -53,7 +53,7 @@
 
 #include "flow.h"
 #include "action.h"
-
+#include "datapath.h"
 
 #define CHECK_POS(pos) do {\
                              if ((pos) >= MAX_FLOWS || (pos) < 0) return -1; \
@@ -104,6 +104,7 @@ static struct rte_hash *handle = NULL;
 static uint64_t ovs_flow_used_time(uint64_t flow_tsc);
 static int copy_entry_from_table(int pos, struct flow_key *key,
             struct action *actions, struct flow_stats *stats);
+static int flow_table_update_stats(int pos, const struct rte_mbuf *pkt);
 
 /* Initialize the flow table  */
 void
@@ -164,7 +165,6 @@ flow_table_clear_stats(int pos)
 int
 flow_table_add_flow(const struct flow_key *key, const struct action *actions)
 {
-	int i = 0;
 	int pos = 0;
 	CHECK_NULL(key);
 	CHECK_NULL(actions);
@@ -174,7 +174,6 @@ flow_table_add_flow(const struct flow_key *key, const struct action *actions)
 	if (pos >= 0) {
 		return -1;
 	}
-
 
 	pos = rte_hash_add_key(handle, key);
 	CHECK_POS(pos);
@@ -232,13 +231,11 @@ flow_table_mod_flow(const struct flow_key *key, const struct action *actions,
 	return ret;
 }
 
-static int
+inline static int
 copy_entry_from_table(int pos, struct flow_key *key, struct action *actions,
                         struct flow_stats *stats)
 {
-	int ret = 0;
-
-	if (flow_table[pos].used) {
+	if (likely(flow_table[pos].used)) {
 		if (key) {
 			*key = flow_table[pos].key;
 		}
@@ -251,13 +248,9 @@ copy_entry_from_table(int pos, struct flow_key *key, struct action *actions,
 			/* vswitchd needs linux monotonic time (not TSC cycles) */
 			stats->used = flow_table[pos].stats.used ? ovs_flow_used_time(flow_table[pos].stats.used) : 0;
 		}
-
-		ret = pos;
-	} else {
-		ret = -1;
+		return pos;
 	}
-
-	return ret;
+	return -1;
 }
 
 
@@ -266,7 +259,9 @@ copy_entry_from_table(int pos, struct flow_key *key, struct action *actions,
  *
  * All data is copied
  */
-int flow_table_get_flow(struct flow_key *key, struct action *actions,
+
+inline int __attribute__((always_inline))
+flow_table_get_flow(struct flow_key *key, struct action *actions,
                         struct flow_stats *stats)
 {
 	int pos = 0;
@@ -297,7 +292,6 @@ int flow_table_get_next_flow(const struct flow_key *key,
 	int pos = 0;
 	int ret = -1;
 	CHECK_NULL(key);
-
 	pos = flow_table_lookup(key);
 	CHECK_POS(pos);
 	pos++;
@@ -333,7 +327,6 @@ int flow_table_get_first_flow(struct flow_key *first_key, struct action *actions
 		if (ret == pos) {
 			break;
 		}
-
 	}
 
 	if (pos == MAX_FLOWS)
@@ -402,14 +395,10 @@ flow_table_del_all(void)
 /*
  * Use 'pkt' to update stats at entry 'key' in flow_table
  */
-int
-flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt)
+static inline int __attribute__((always_inline))
+flow_table_update_stats(int pos, const struct rte_mbuf *pkt)
 {
 	uint8_t tcp_flags = 0;
-	int pos = 0;
-	CHECK_NULL(key);
-	pos = flow_table_lookup(key);
-	CHECK_POS(pos);
 
 	if (flow_table[pos].key.ether_type == ETHER_TYPE_IPv4 &&
 	    flow_table[pos].key.ip_proto == IPPROTO_TCP) {
@@ -450,7 +439,7 @@ struct icmp_hdr {
 /*
  * Extract 13 tuple from pkt as key
  */
-void
+inline void __attribute__((always_inline))
 flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
                  struct flow_key *key)
 {
@@ -528,6 +517,7 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 /*
  * Lookup 'key' in hash table
  */
+inline
 int flow_table_lookup(const struct flow_key *key)
 {
 	return rte_hash_lookup(handle, key);
@@ -556,4 +546,34 @@ ovs_flow_used_time(uint64_t flow_tsc)
 	curr_ms = tp.tv_sec * 1000UL + tp.tv_nsec / 1000000UL;
 
 	return curr_ms - idle_ms;
+}
+
+/*
+ * This function takes a packet and routes it as per the flow table.
+ */
+inline void __attribute__((always_inline))
+switch_packet(struct rte_mbuf *pkt, struct flow_key *key)
+{
+	int pos;
+
+	pos = flow_table_lookup(key);
+
+	if (likely(pos >= 0)) {
+		rte_rwlock_read_lock(&flow_table[pos].lock);
+		if (flow_table[pos].used) {
+			struct action *actions;
+			actions = &flow_table[pos].actions[0];
+			action_execute(actions, pkt);
+			flow_table_update_stats(pos, pkt);
+		}
+		rte_rwlock_read_unlock(&flow_table[pos].lock);
+	} else {
+		struct dpdk_upcall info;
+		/* flow table miss, send unmatched packet to the daemon */
+		info.cmd = PACKET_CMD_MISS;
+		info.key = *key;
+		send_packet_to_vswitchd(pkt, &info);
+	}
+
+	return;
 }

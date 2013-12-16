@@ -14,19 +14,14 @@ homepage at [01.org](https://01.org/packet-processing/intel%C2%AE-ovdk).
 Getting Started
 ---------------
 
-To get started right away, we recommend that you check out the latest version
-of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on
-[01.org][ovdk gsg]. This document gives an in-depth overview of the components,
-system requirements and basic operation of Intel(R) DPDK vSwitch.
+To get started right away, we recommend that you check out the latest version of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on [01.org][ovdk gsg]. This document gives an in-depth overview of the components, system requirements and basic operation of Intel(R) DPDK vSwitch.
 
 [ovdk gsg]: https://01.org/downloads/222
 
 Build Instructions
 ------------------
 
-Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK,
-QEMU and Open vSwitch. Of these, DPDK must be built first due to dependencies
-in DPDK vSwitch.
+Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK, QEMU and Open vSwitch. Of these, DPDK must be built first due to dependencies in DPDK vSwitch.
 
  * DPDK
 
@@ -52,12 +47,10 @@ in DPDK vSwitch.
 Further Information
 -------------------
 
-For further information, please check out the Getting Started Guide, or use the
-mailing list.
+For further information, please check out the Getting Started Guide, or use the mailing list.
 
 Contribute
 ----------
 
-Please submit all questions, bugs and patch requests to the official [mailing
-list](https://lists.01.org/mailman/listinfo/dpdk-ovs).
+Please submit all questions, bugs and patch requests to the official [mailing list](https://lists.01.org/mailman/listinfo/dpdk-ovs).
 
