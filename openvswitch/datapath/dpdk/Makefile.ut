@@ -60,7 +60,8 @@ endif
 APP = test-datapath
 
 # all source are stored in SRCS-y
-SRCS-y := dpdk-vport-stub.c action.c flow.c stats.c ut.c test-datapath-dpdk.c ofpbuf_helper.c
+SRCS-y := dpdk-vport-stub.c action.c datapath.c flow.c stats.c ut.c \
+          test-datapath-dpdk.c ofpbuf_helper.c veth.c
 
 INC := $(wildcard *.h)
 

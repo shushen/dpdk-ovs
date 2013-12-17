@@ -156,44 +156,44 @@ void stats_vswitch_tx_drop_increment(int inc)
 }
 
 #else /* STATS_DISABLE */
-void stats_vport_rx_increment(unsigned vportid, int inc)
+inline void stats_vport_rx_increment(unsigned vportid, int inc)
 {
 	vport_stats[vportid]->stats[rte_lcore_id()].rx += inc;
 }
 
-void stats_vport_rx_drop_increment(unsigned vportid, int inc)
+inline void stats_vport_rx_drop_increment(unsigned vportid, int inc)
 {
 	vport_stats[vportid]->stats[rte_lcore_id()].rx_drop += inc;
 }
 
-void stats_vport_tx_increment(unsigned vportid, int inc)
+inline void stats_vport_tx_increment(unsigned vportid, int inc)
 {
 	vport_stats[vportid]->stats[rte_lcore_id()].tx += inc;
 }
 
-void stats_vport_tx_drop_increment(unsigned vportid, int inc)
+inline void stats_vport_tx_drop_increment(unsigned vportid, int inc)
 {
 	vport_stats[vportid]->stats[rte_lcore_id()].tx_drop += inc;
 }
 
-void stats_vport_overrun_increment(unsigned vportid, int inc)
+inline void stats_vport_overrun_increment(unsigned vportid, int inc)
 {
 	vport_stats[vportid]->stats[rte_lcore_id()].overrun += inc;
 }
 
-void stats_vswitch_rx_drop_increment(int inc)
+inline void stats_vswitch_rx_drop_increment(int inc)
 {
 	vswitch_stats->stats[rte_lcore_id()].rx_drop += inc;
 }
 
-void stats_vswitch_tx_drop_increment(int inc)
+inline void stats_vswitch_tx_drop_increment(int inc)
 {
 	vswitch_stats->stats[rte_lcore_id()].tx_drop += inc;
 }
 
 #endif /* STATS_DISABLE */
 
-uint64_t stats_vport_rx_get(unsigned vportid)
+inline uint64_t stats_vport_rx_get(unsigned vportid)
 {
 	uint64_t rx;
 	int i;
@@ -204,7 +204,7 @@ uint64_t stats_vport_rx_get(unsigned vportid)
 	return rx;
 }
 
-uint64_t stats_vport_rx_drop_get(unsigned vportid)
+inline uint64_t stats_vport_rx_drop_get(unsigned vportid)
 {
 	uint64_t rx_drop;
 	int i;
@@ -215,7 +215,7 @@ uint64_t stats_vport_rx_drop_get(unsigned vportid)
 	return rx_drop;
 }
 
-uint64_t stats_vport_tx_get(unsigned vportid)
+inline uint64_t stats_vport_tx_get(unsigned vportid)
 {
 	uint64_t tx;
 	int i;
@@ -226,7 +226,7 @@ uint64_t stats_vport_tx_get(unsigned vportid)
 	return tx;
 }
 
-uint64_t stats_vport_tx_drop_get(unsigned vportid)
+inline uint64_t stats_vport_tx_drop_get(unsigned vportid)
 {
 	uint64_t tx_drop;
 	int i;
@@ -237,7 +237,7 @@ uint64_t stats_vport_tx_drop_get(unsigned vportid)
 	return tx_drop;
 }
 
-uint64_t stats_vport_overrun_get(unsigned vportid)
+inline uint64_t stats_vport_overrun_get(unsigned vportid)
 {
 	uint64_t overrun;
 	int i;
@@ -248,7 +248,7 @@ uint64_t stats_vport_overrun_get(unsigned vportid)
 	return overrun;
 }
 
-uint64_t stats_vswitch_rx_drop_get(void)
+inline uint64_t stats_vswitch_rx_drop_get(void)
 {
 	uint64_t rx_drop;
 	int i;
@@ -259,7 +259,7 @@ uint64_t stats_vswitch_rx_drop_get(void)
 	return rx_drop;
 }
 
-uint64_t stats_vswitch_tx_drop_get(void)
+inline uint64_t stats_vswitch_tx_drop_get(void)
 {
 	uint64_t tx_drop;
 	int i;

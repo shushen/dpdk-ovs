@@ -203,8 +203,7 @@ AT_SKIP_IF([test "x$RANDOM" = x])
 SSL_PORT=`expr 32767 + \( $RANDOM % 32767 \)`
 PKIDIR=$abs_top_builddir/tests
 AT_SKIP_IF([expr "$PKIDIR" : ".*[ 	'\"
-
-\\]"])
+\\]"])
 AT_DATA([schema],
   [[{"name": "mydb",
      "tables": {

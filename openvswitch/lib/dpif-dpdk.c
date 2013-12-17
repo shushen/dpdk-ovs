@@ -418,7 +418,7 @@ flow_message_put_create(struct dpif *dpif OVS_UNUSED,
                         enum dpif_flow_put_flags flags,
                         const struct nlattr *key, size_t key_len,
                         const struct nlattr *actions,
-                        size_t actions_len OVS_UNUSED,
+                        size_t actions_len,
                         struct dpif_dpdk_flow_message *request)
 {
     struct flow flow;

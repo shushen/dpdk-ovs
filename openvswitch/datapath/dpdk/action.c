@@ -33,6 +33,7 @@
  */
 
 #include <stdio.h>
+#include "packets.h"
 #include "action.h"
 #include "vport.h"
 #include "stats.h"
@@ -55,16 +56,17 @@ static int check_for_multiple_output(const struct action *actions);
 /*
  * Do 'action' of action_type 'type' on 'mbuf'
  */
-int action_execute(const struct action *actions, struct rte_mbuf *mbuf)
+inline int __attribute__((always_inline))
+action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 {
 	const struct rte_mempool *mp = NULL;
-	struct rte_mbuf *mb = mbuf;
+	struct rte_mbuf *mb;
 	int i = 0;
 	int multiple_outputs = 0;
 	CHECK_NULL(actions);
 	CHECK_NULL(mbuf);
 
-	if (actions[0].type == ACTION_NULL) {
+	if (unlikely(actions[0].type == ACTION_NULL)) {
 		action_drop(mbuf);
 		return 0;
 	}
@@ -82,7 +84,7 @@ int action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 				if (mb)
 					action_output(&actions[i].data.output, mb);
 				else
-					RTE_LOG(ERR, APP, "Failed to clone pktmbuf");
+					RTE_LOG(ERR, APP, "Failed to clone pktmbuf\n");
 			}
 			else {
 				action_output(&actions[i].data.output, mbuf);
@@ -104,14 +106,14 @@ int action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 	if (multiple_outputs)
 		rte_pktmbuf_free(mbuf);
 
-
 	return 0;
 }
 
 /* If we have multiple output actions the mbuf must be cloned each time.
  * This is a performance hit in the case of a single output action
  */
-static int check_for_multiple_output(const struct action *actions)
+static inline int
+check_for_multiple_output(const struct action *actions)
 {
 	int num_output_actions = 0;
 
@@ -126,21 +128,23 @@ static int check_for_multiple_output(const struct action *actions)
 	}
 	return 0; /* Single output */
 }
+
 /*
  * Excutes the output action on 'mbuf'
  */
-static void action_output(const struct action_output *action,
+static inline void
+action_output(const struct action_output *action,
                           struct rte_mbuf *mbuf)
 {
-	uint8_t vport = 0;
+	uint8_t vport = action->port;
 
-	vport = action->port;
-
-	if (IS_PHY_PORT(vport))         /* Physical port */
+	if (IS_PHY_PORT(vport))                   /* Physical port */
 		send_to_port(vport, mbuf);
-	else if (IS_KNI_PORT(vport))    /* KNI FIFO */
+	else if (IS_KNI_PORT(vport))              /* KNI FIFO */
 		send_to_kni(vport, mbuf);
-	else                            /* Client ring */
+	else if (unlikely(IS_VETH_PORT(vport)))   /* vEth FIFO */
+		send_to_veth(vport, mbuf);
+	else                                      /* Client ring */
 		send_to_client(vport, mbuf);
 }
 
@@ -148,7 +152,8 @@ static void action_output(const struct action_output *action,
  * Excutes the drop action on 'mbuf' and increases the
  * vswitch's RX drop statistics
  */
-static void action_drop(struct rte_mbuf *mbuf)
+static inline void
+action_drop(struct rte_mbuf *mbuf)
 {
 	rte_pktmbuf_free(mbuf);
 	stats_vswitch_rx_drop_increment(INC_BY_1);
@@ -157,7 +162,8 @@ static void action_drop(struct rte_mbuf *mbuf)
 /*
  * Removes 802.1Q header from the packet associated with 'mbuf'
  */
-static void action_pop_vlan(struct rte_mbuf *mbuf)
+static inline void
+action_pop_vlan(struct rte_mbuf *mbuf)
 {
 	struct ofpbuf *ovs_pkt = NULL;
 
@@ -169,7 +175,8 @@ static void action_pop_vlan(struct rte_mbuf *mbuf)
 /*
  * Adds an 802.1Q header to the packet associated with 'mbuf'
  */
-static void action_push_vlan(const struct action_push_vlan *action,
+static inline void
+action_push_vlan(const struct action_push_vlan *action,
                              struct rte_mbuf *mbuf)
 {
 	struct ofpbuf *ovs_pkt = NULL;

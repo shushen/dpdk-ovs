@@ -39,20 +39,24 @@
 #include <rte_mbuf.h>
 
 #include "kni.h"
+#include "veth.h"
 
-#define MAX_VPORTS          48
+#define MAX_VPORTS          80
 #define MAX_PHYPORTS        16
 #define MAX_CLIENTS         16
-#define PKT_BURST_SIZE      32
+#define PKT_BURST_SIZE      32u
 #define CLIENT0             0
 #define CLIENT1             1
 #define KNI0                0x20
+#define VETH0               0x40
 #define CLIENT_MASK         0x00
 #define PORT_MASK           0x0F
 #define KNI_MASK            0x1F
+#define VETH_MASK           0x3F
 #define IS_CLIENT_PORT(action) ((action) > CLIENT_MASK && (action) <= PORT_MASK)
 #define IS_PHY_PORT(action) ((action) > PORT_MASK && (action) <= KNI_MASK)
 #define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) <= (KNI_MASK + MAX_KNI_PORTS))
+#define IS_VETH_PORT(action) ((action) > VETH_MASK  && (action) <= (VETH_MASK + MAX_VETH_PORTS))
 
 struct port_info {
 	uint8_t num_ports;
@@ -63,12 +67,16 @@ struct port_info *ports;
 
 void vport_init(void);
 void vport_fini(void);
+
 int send_to_client(uint8_t client, struct rte_mbuf *buf);
 int send_to_port(uint8_t vportid, struct rte_mbuf *buf);
 int send_to_kni(uint8_t vportid, struct rte_mbuf *buf);
+int send_to_veth(uint8_t vportid, struct rte_mbuf *buf);
+
+uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
 uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
 uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
-uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
+uint16_t receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs);
 
 #endif /* __VPORT_H_ */
 

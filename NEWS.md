@@ -1,6 +1,7 @@
 v0.8 - December 2013
 --------------------
     - Added partial support for ``ovs-testsuite`` - a collection of unit tests found in standard Open vSwitch
+    - Added support for Host KNI, a.k.a. KNI vEth. This, in turn, added support for [``OFTest``](http://www.projectfloodlight.org/oftest/)
     - Updated to use DPDK 1.5.2, NOTE: this update removes KNI compatibility with DPDK 1.4
     - Bug fixes
 
@@ -16,7 +17,7 @@ v0.7 - November 2013
     - Bug fixes
 
 v0.6 - October 2013
--------------------
+  -------------------
     - Datapath:
         - Added 802.1Q VLAN-tagged frame support
     - Performance Improvements
@@ -30,4 +31,4 @@ v0.5 - August 2013
 
 v0.4 - July 2013
 ----------------
-    - Add support for numerous IO virtualization mechanisms: Virtio, IVSHM, and IVSHM with Intel(R) DPDK KNI.
+    - Add support for numerous IO virtualization mechanisms: Virtio, IVSHM, and IVSHM with Intel(R) DPDK KNI

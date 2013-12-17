@@ -42,6 +42,7 @@
 #define RING     0
 #define KNI      1
 #define PHY      2
+#define VETH     3
 
 struct rte_mbuf *buf_array[MAX_PORT_TYPES][MAX_PORTS_PER_CLIENT][MAX_BUFS] = {NULL};
 
@@ -126,6 +127,18 @@ int
 send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
 {
 	return enqueue(vportid & KNI_MASK, KNI, buf);
+}
+
+int
+send_to_veth(uint8_t vportid, struct rte_mbuf *buf)
+{
+	return enqueue(vportid & VETH_MASK, VETH, buf);
+}
+
+uint16_t
+receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs)
+{
+	return dequeue(vportid & VETH_MASK, VETH, bufs);
 }
 
 uint16_t

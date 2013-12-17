@@ -55,13 +55,29 @@ endif
 APP = ovs_dpdk
 
 # all source are stored in SRCS-y
-SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c stats.c ofpbuf_helper.c
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c \
+          stats.c ofpbuf_helper.c veth.c
 
 INC := $(wildcard *.h)
 
-CFLAGS += -O3 -g
+CFLAGS += -O3
 CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
-CFLAGS += -Wno-error
+CFLAGS += -Wall -Werror \
+-Wclobbered \
+-Wempty-body \
+-Wignored-qualifiers \
+-Wmissing-parameter-type \
+-Wold-style-declaration \
+-Woverride-init \
+-Wsign-compare \
+-Wtype-limits \
+-Wuninitialized \
+-Wunused-parameter \
+-Wunused-but-set-parameter
+# All extra arguments above are part of -Wextra.
+# See http://stackoverflow.com/q/1538943
+# There's a known bug in gcc4.6 that makes -Wmissing-field-initializers flag
+# fail with a valid struct initialization. Left it out for now.
 
 # fix dpdk link order, add to LDLIBS which is processed by dpdk's
 # macros.
