@@ -94,7 +94,7 @@ int flow_table_get_first_flow(struct flow_key *first_key,
 int flow_table_get_next_flow(const struct flow_key *key,
              struct flow_key *next_key, struct action *action,
              struct flow_stats *stats);
-void switch_packet(struct rte_mbuf *pkt, struct flow_key *key);
+int flow_table_update_stats(const struct flow_key *key, const struct rte_mbuf *pkt);
 
 #endif /* __FLOW_H_ */
 

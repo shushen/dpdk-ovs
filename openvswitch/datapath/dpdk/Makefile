@@ -37,29 +37,66 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app ut
 
-app:
-	$(MAKE) -f Makefile.app
+# Default target, can be overriden by command line or environment
+RTE_TARGET ?= x86_64-default-linuxapp-gcc
 
-ut:
-	$(MAKE) -f Makefile.ut
+include $(RTE_SDK)/mk/rte.vars.mk
 
-check: ut
+ifneq ($(CONFIG_RTE_EXEC_ENV),"linuxapp")
+$(error This application can only operate in a linuxapp environment, \
+please change the definition of the RTE_TARGET environment variable)
+endif
 
-check-am:
-	$(warning "This target is not implemented")
+ifeq ($(UT),)
+# binary name
+APP = ovs_dpdk
 
-check-local:
-	$(warning "This target is not implemented")
+# all source are stored in SRCS-y
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c stats.c ofpbuf_helper.c
 
-check-recursive:
-	$(warning "This target is not implemented")
+INC := $(wildcard *.h)
 
-clean: clean-app clean-ut
+CFLAGS += -O3 -g
+CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+CFLAGS += -Wno-error
 
-clean-app:
-	$(MAKE) -f Makefile.app clean
+LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch -lrt
+else
+# binary name
+APP = ut_ovs_dpdk
 
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
+# all source are stored in SRCS-y
+SRCS-y := vport_stub.c action.c flow.c stats.c ut.c ofpbuf_helper.c
+
+INC := $(wildcard *.h)
+
+CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+LDFLAGS += -L$(OVS_DIR)/lib -lopenvswitch -lrt
+CFLAGS += -O0 -g
+CFLAGS += -Wno-error
+endif
+
+
+
+
+
+# for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
+# and so the next line can be removed in those cases.
+#EXTRA_CFLAGS += -fno-strict-aliasing
+
+include $(RTE_SDK)/mk/rte.extapp.mk
+
+EMPTY_AUTOMAKE_TARGETS = dvi pdf ps info html tags ctags
+.PHONY: $(EMPTY_AUTOMAKE_TARGETS)
+$(EMPTY_AUTOMAKE_TARGETS):
+
+ifeq ($(UT),)
+clean:
+	rm -rf $(OVS_DIR)/datapath/dpdk/build
+
+else
+clean:
+	rm -rf build
+endif
+distclean: clean

@@ -49,7 +49,7 @@
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define NO_FLAGS            0
 #define SOCKET0             0
-#define PKT_BURST_SIZE      32u
+#define PKT_BURST_SIZE      32
 #define VSWITCHD_RINGSIZE   2048
 #define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
 #define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
@@ -132,7 +132,7 @@ static void send_signal_to_dpif(void)
 /*
  * Function sends unmatched packets to vswitchd.
  */
-inline void __attribute__((always_inline))
+void
 send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 {
 	int rslt = 0;
@@ -149,7 +149,7 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	/* allocate space before the packet for the upcall info */
 	mbuf_ptr = rte_pktmbuf_prepend(mbuf, sizeof(*info));
 
-	if (unlikely(mbuf_ptr == NULL)) {
+	if (mbuf_ptr == NULL) {
 		printf("Cannot prepend upcall info\n");
 		rte_pktmbuf_free(mbuf);
 		stats_vswitch_tx_drop_increment(INC_BY_1);
@@ -196,7 +196,8 @@ handle_request_from_vswitchd(void)
 	while (dq_pkt > 0 &&
 	       unlikely(rte_ring_sc_dequeue_bulk(
 	       vswitchd_message_ring, (void **)buf, dq_pkt) != 0))
-		dq_pkt = (uint16_t)RTE_MIN(rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
+		dq_pkt = (uint16_t)RTE_MIN(
+		   rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by daemon */
 	stats_vport_rx_increment(VSWITCHD, dq_pkt);
@@ -367,7 +368,7 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	struct dpdk_message reply = {0};
 	struct flow_key empty = {0};
 	struct flow_key key = {0};
-	struct flow_stats stats = {{0}};
+	struct flow_stats stats = {0};
 
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*

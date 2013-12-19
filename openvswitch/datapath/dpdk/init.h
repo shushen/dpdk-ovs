@@ -48,7 +48,6 @@ struct port_queue *port_queues;
 struct rte_mempool *pktmbuf_pool;
 uint8_t num_clients;
 uint8_t num_kni;
-uint8_t num_veth;
 unsigned num_sockets;
 
 unsigned stats_display_interval;

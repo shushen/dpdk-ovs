@@ -61,8 +61,8 @@
  * KNI context
  */
 struct rte_kni {
-	char name[RTE_KNI_NAMESIZE];        /**< KNI interface name */
-	uint16_t group_id;                  /**< Group ID of KNI devices */
+	char name[IFNAMSIZ];                /**< KNI interface name */
+	uint8_t port_id;                    /**< Port id KNI associate with */
 	struct rte_mempool *pktmbuf_pool;   /**< pkt mbuf mempool */
 	unsigned mbuf_size;                 /**< mbuf size */
 
@@ -77,7 +77,7 @@ struct rte_kni {
 	void * sync_addr;                   /**< Req/Resp Mem address */
 
 	struct rte_kni_ops ops;             /**< operations for request */
-	uint8_t in_use : 1;                 /**< kni creation flag */
+	uint8_t port_in_use : 1;             /**< kni creation flag */
 };
 
 static struct rte_kni kni_list[MAX_KNI_PORTS];
@@ -235,7 +235,7 @@ create_kni_device(uint8_t port_id)
 	struct rte_mempool *mempool = NULL;
 	char mz_name[QUEUE_NAME_SIZE];
 
-	if (kni_list[port_id].in_use != 0) {
+	if (kni_list[port_id].port_in_use != 0) {
 		RTE_LOG(ERR, KNI, "Port %d has been used\n", port_id);
 		return -1;
 	}
@@ -249,7 +249,9 @@ create_kni_device(uint8_t port_id)
 		}
 	}
 
-	rte_snprintf(dev_info.name, RTE_KNI_NAMESIZE, "vEth%u", port_id);
+	dev_info.port_id   = port_id;
+
+	rte_snprintf(dev_info.name, IFNAMSIZ, "vEth%u", port_id);
 
 	/* We store the guest virtual address in our kni structure and
 	 * write the physical address offset into the dev struct to
@@ -298,10 +300,9 @@ create_kni_device(uint8_t port_id)
 	dev_info.mbuf_size = kni_list[port_id].mbuf_size;
 
 	memcpy(&kni_list[port_id].ops, &kni_ops, sizeof(struct rte_kni_ops));
-	kni_list[port_id].ops.port_id = port_id;
 
 	ioctl(kni_fd, RTE_KNI_IOCTL_CREATE, &dev_info);
-	kni_list[port_id].in_use = 1;
+	kni_list[port_id].port_in_use = 1;
 	return 0;
 }
 

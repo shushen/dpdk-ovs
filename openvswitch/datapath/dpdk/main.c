@@ -32,16 +32,12 @@
  *
  */
 
-#include <unistd.h>
-
 #include <rte_ethdev.h>
 #include <rte_kni.h>
 #include <rte_cycles.h>
 #include <rte_string_fns.h>
-#include <rte_config.h>
 
 #include "kni.h"
-#include "veth.h"
 #include "args.h"
 #include "init.h"
 #include "main.h"
@@ -59,7 +55,11 @@
 /*
  * When reading/writing to/from rings/ports use this batch size
  */
+#define PKT_BURST_SIZE      32
 #define PREFETCH_OFFSET     3
+#define RX_RING_SIZE        128
+#define TX_RING_SIZE        512
+#define RING_SIZE           (PKT_BURST_SIZE * 8)
 #define BYTES_TO_PRINT      256
 #define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
 #define RUN_ON_THIS_THREAD  1
@@ -68,6 +68,7 @@ extern struct cfg_params *cfg_params;
 extern uint16_t nb_cfg_params;
 
 static void flush_pkts(unsigned);
+void switch_packet(struct rte_mbuf *pkt, uint8_t in_port);
 static const char *get_printable_mac_addr(uint8_t port);
 static void stats_display(void);
 
@@ -78,8 +79,8 @@ static const char *
 get_printable_mac_addr(uint8_t port)
 {
 	static const char err_address[] = "00:00:00:00:00:00";
-	static char addresses[RTE_MAX_ETHPORTS][sizeof(err_address)] = {{0}};
-	struct ether_addr mac = {{0}};
+	static char addresses[RTE_MAX_ETHPORTS][sizeof(err_address)] = {0};
+	struct ether_addr mac = {0};
 	int ether_addr_len = sizeof(err_address) - NEWLINE_CHAR_OFFSET;
 	int i = 0;
 	int j = 0;
@@ -115,6 +116,7 @@ static void
 stats_display(void)
 {
 	unsigned i = 0;
+	unsigned j = 0;
 	/* ANSI escape sequences for terminal display.
 	 * 27 = ESC, 2J = Clear screen */
 	const char clr[] = {27, '[', '2', 'J', '\0'};
@@ -133,20 +135,18 @@ stats_display(void)
 	printf("\n\n");
 
 	printf("\nVport Statistics\n"
-		     "=============   ============  ============  ============  ============\n"
-		     "Interface       rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
-		     "-------------   ------------  ------------  ------------  ------------\n");
+		     "============   ============  ============  ============  ============\n"
+		     "Interface      rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
+		     "------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
 		if (i == CLIENT0) {
-			printf("vswitchd     ");
+			printf("vswitchd   ");
 		} else if (IS_CLIENT_PORT(i)) {
-			printf("Client    %2u", i);
+			printf("Client   %2u", i);
 		} else if (IS_PHY_PORT(i)) {
-			printf("Port      %2u", i & PORT_MASK);
+			printf("Port     %2u", i & PORT_MASK);
 		} else if (IS_KNI_PORT(i)) {
-			printf("KNI Port  %2u", i & KNI_MASK);
-		} else if (IS_VETH_PORT(i)) {
-			printf("vEth Port %2u", i & VETH_MASK);
+			printf("KNI Port %2u", i & KNI_MASK);
 		} else {  /* fallthrough */
 			continue;
 		}
@@ -158,13 +158,36 @@ stats_display(void)
 
 		overruns += stats_vport_overrun_get(i);
 	}
-	printf("=============   ============  ============  ============  ============\n");
+	printf("============   ============  ============  ============  ============\n");
 
-	printf("\n Switch rx dropped %lu\n", stats_vswitch_rx_drop_get());
-	printf("\n Switch tx dropped %lu\n", stats_vswitch_tx_drop_get());
-	printf("\n Queue overruns    %lu\n",  overruns);
-	printf("\n Mempool count     %9u\n", rte_mempool_count(pktmbuf_pool));
+	printf("\n Switch rx dropped %d\n", stats_vswitch_rx_drop_get());
+	printf("\n Switch tx dropped %d\n", stats_vswitch_tx_drop_get());
+	printf("\n Queue overruns   %d\n",  overruns);
+	printf("\n Mempool count    %9u\n", rte_mempool_count(pktmbuf_pool));
 	printf("\n");
+}
+
+/*
+ * This function takes a packet and routes it as per the flow table.
+ */
+void
+switch_packet(struct rte_mbuf *pkt, uint8_t in_port)
+{
+	int ret = 0;
+	struct dpdk_upcall info = {0};
+	struct action actions[MAX_ACTIONS];
+
+	flow_key_extract(pkt, in_port, &info.key);
+
+	ret = flow_table_get_flow(&info.key, actions, NULL);
+	if (ret >= 0) {
+		flow_table_update_stats(&info.key, pkt);
+		action_execute(actions, pkt);
+	} else {
+		/* flow table miss, send unmatched packet to the daemon */
+		info.cmd = PACKET_CMD_MISS;
+		send_packet_to_vswitchd(pkt, &info);
+	}
 }
 
 static inline void
@@ -185,18 +208,14 @@ do_vswitchd(void)
 	}
 }
 
-static inline void __attribute__((always_inline))
+static inline void
 do_client_switching(void)
 {
 	static unsigned client = CLIENT1;
 	static unsigned kni_vportid = KNI0;
-	static unsigned veth_vportid = VETH0;
 	int rx_count = 0;
 	int j = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE] = {0};
-	struct flow_key key;
-
-	/* Client ports */
 
 	rx_count = receive_from_client(client, &bufs[0]);
 
@@ -207,23 +226,20 @@ do_client_switching(void)
 
 	/* Prefetch and forward already prefetched packets */
 	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], client, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
+		rte_prefetch0(rte_pktmbuf_mtod(bufs[
+					j + PREFETCH_OFFSET], void *));
+		switch_packet(bufs[j], client);
 	}
 
 	/* Forward remaining prefetched packets */
 	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], client, &key);
-		switch_packet(bufs[j], &key);
+		switch_packet(bufs[j], client);
 	}
 
 	/* move to next client and dont handle client 0*/
 	if (++client == num_clients) {
 		client = 1;
 	}
-
-	/* KNI ports */
 
 	rx_count = receive_from_kni(kni_vportid, &bufs[0]);
 
@@ -234,59 +250,29 @@ do_client_switching(void)
 
 	/* Prefetch and forward already prefetched packets */
 	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], kni_vportid, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
+		rte_prefetch0(rte_pktmbuf_mtod(bufs[
+					j + PREFETCH_OFFSET], void *));
+		switch_packet(bufs[j], kni_vportid);
 	}
 
 	/* Forward remaining prefetched packets */
 	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], kni_vportid, &key);
-		switch_packet(bufs[j], &key);
+		switch_packet(bufs[j], kni_vportid);
 	}
 
 	/* move to next kni port */
-	if (++kni_vportid == (unsigned)KNI0 + num_kni) {
+	if (++kni_vportid == KNI0 + num_kni) {
 		kni_vportid = KNI0;
 	}
 
-	/* vETH Devices */
-	if (unlikely(num_veth > 0)) {  /* vEth devices are optional */
-		rx_count = receive_from_veth(veth_vportid, &bufs[0]);
-
-		/* Prefetch first packets */
-		for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
-			rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
-		}
-
-		/* Prefetch and forward already prefetched packets */
-		for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-			flow_key_extract(bufs[j], veth_vportid, &key);
-			rte_prefetch0(rte_pktmbuf_mtod(bufs[
-						j + PREFETCH_OFFSET], void *));
-			switch_packet(bufs[j], &key);
-		}
-
-		/* Forward remaining prefetched packets */
-		for (; j < rx_count; j++) {
-			flow_key_extract(bufs[j], veth_vportid, &key);
-			switch_packet(bufs[j], &key);
-		}
-
-		/* move to next veth port */
-		if (++veth_vportid == (unsigned)VETH0 + num_veth) {
-			veth_vportid = VETH0;
-		}
-	}
 }
 
-static inline void __attribute__((always_inline))
+static inline void
 do_port_switching(unsigned vportid)
 {
 	int rx_count = 0;
 	int j = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE] = {0};
-	struct flow_key key;
 
 	rx_count = receive_from_port(vportid, &bufs[0]);
 
@@ -297,15 +283,14 @@ do_port_switching(unsigned vportid)
 
 	/* Prefetch and forward already prefetched packets */
 	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], vportid, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
+		rte_prefetch0(rte_pktmbuf_mtod(bufs[
+					j + PREFETCH_OFFSET], void *));
+		switch_packet(bufs[j], vportid);
 	}
 
 	/* Forward remaining prefetched packets */
 	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], vportid, &key);
-		switch_packet(bufs[j], &key);
+		switch_packet(bufs[j], vportid);
 	}
 
 	flush_pkts(vportid);
@@ -314,10 +299,11 @@ do_port_switching(unsigned vportid)
 /*
  * Flush packets scheduled for transmit on ports
  */
-static inline void  __attribute__((always_inline))
+static void
 flush_pkts(unsigned action)
 {
 	unsigned i = 0;
+	uint16_t deq_count = PKT_BURST_SIZE;
 	struct rte_mbuf *pkts[PKT_BURST_SIZE] =  {0};
 	struct port_queue *pq =  &port_queues[action & PORT_MASK];
 	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
@@ -331,15 +317,21 @@ flush_pkts(unsigned action)
 	num_pkts = rte_ring_count(pq->tx_q);
 
 	/* If queue idles with less than PKT_BURST packets, drain it*/
-	if ((num_pkts < PKT_BURST_SIZE))
-		if(unlikely(diff_tsc < drain_tsc))
+	if ((num_pkts < PKT_BURST_SIZE) ) {
+		if(unlikely(diff_tsc < drain_tsc)) {
 			return;
+		}
+
+	}
 
 	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
 	if (unlikely(num_pkts >= PKT_BURST_SIZE))
+	{
 		num_pkts = PKT_BURST_SIZE;
+	}
 
-	if (unlikely(rte_ring_dequeue_bulk(pq->tx_q, (void **)pkts, num_pkts) != 0))
+	if (unlikely(rte_ring_dequeue_bulk(
+			      pq->tx_q, (void **)pkts, num_pkts) != 0))
 		return;
 
 	const uint16_t sent = rte_eth_tx_burst(

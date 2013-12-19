@@ -57,7 +57,6 @@
 #define MBUFS_PER_CLIENT  3072
 #define MBUFS_PER_PORT    3072
 #define MBUFS_PER_KNI     3072
-#define MBUFS_PER_VETH    3072
 #define MBUFS_PER_DAEMON  2048
 
 #define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
@@ -78,7 +77,6 @@ init_mbuf_pools(void)
 	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT)
 			+ (port_cfg.num_ports * MBUFS_PER_PORT)
 			+ (num_kni * MBUFS_PER_KNI)
-			+ (num_veth * MBUFS_PER_VETH)
 			+ MBUFS_PER_DAEMON;
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
@@ -101,6 +99,7 @@ int
 init(int argc, char *argv[])
 {
 	int retval;
+	const struct rte_memzone *mz;
 	uint8_t total_ports = 0;
 
 	/* init EAL, parsing EAL args */

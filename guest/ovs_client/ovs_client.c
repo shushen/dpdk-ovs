@@ -41,7 +41,7 @@
 #include <rte_byteorder.h>
 
 /* Number of packets to attempt to read from queue */
-#define PKT_READ_SIZE  32u
+#define PKT_READ_SIZE  ((uint16_t)32)
 
 /* define common names for structures shared between ovs_dpdk and client */
 #define MP_CLIENT_RXQ_NAME "MProc_Client_%u_RX"

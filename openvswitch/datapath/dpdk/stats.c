@@ -50,25 +50,17 @@
  * vport statistics structure, used by both clients and kni ports
  * to record traffic information
  */
-struct vport_lcore_statistics {
+struct vport_statistics {
 	volatile uint64_t rx;
 	volatile uint64_t tx;
 	volatile uint64_t rx_drop;
 	volatile uint64_t tx_drop;
 	volatile uint64_t overrun;
-} __rte_cache_aligned;
-
-struct vport_statistics {
-	struct vport_lcore_statistics stats[RTE_MAX_LCORE];
 };
 
-struct vswitch_lcore_statistics {
+struct vswitch_statistics {
 	uint64_t tx_drop;
 	uint64_t rx_drop;
-} __rte_cache_aligned;
-
-struct vswitch_statistics {
-	struct vswitch_lcore_statistics stats[RTE_MAX_LCORE];
 };
 
 static struct vport_statistics *vport_stats[MAX_VPORTS] = {NULL};
@@ -87,12 +79,8 @@ stats_clear(void)
 void
 stats_vswitch_clear(void)
 {
-	int i;
-
-	for (i = 0; i < RTE_MAX_LCORE; i++) {
-		vswitch_stats->stats[i].rx_drop = 0;
-		vswitch_stats->stats[i].tx_drop = 0;
-	}
+	vswitch_stats->rx_drop = 0;
+	vswitch_stats->tx_drop = 0;
 }
 
 /*
@@ -101,17 +89,11 @@ stats_vswitch_clear(void)
 void
 stats_vport_clear(unsigned vportid)
 {
-	int i;
-
-	for (i = 0; i < RTE_MAX_LCORE; i++) {
-		struct vport_lcore_statistics *s = &vport_stats[vportid]->stats[i];
-
-		s->rx = 0;
-		s->rx_drop = 0;
-		s->tx = 0;
-		s->tx_drop = 0;
-		s->overrun = 0;
-	}
+	vport_stats[vportid]->rx = 0;
+	vport_stats[vportid]->rx_drop = 0;
+	vport_stats[vportid]->tx = 0;
+	vport_stats[vportid]->tx_drop = 0;
+	vport_stats[vportid]->overrun = 0;
 }
 
 /*
@@ -156,118 +138,76 @@ void stats_vswitch_tx_drop_increment(int inc)
 }
 
 #else /* STATS_DISABLE */
-inline void stats_vport_rx_increment(unsigned vportid, int inc)
+void stats_vport_rx_increment(unsigned vportid, int inc)
 {
-	vport_stats[vportid]->stats[rte_lcore_id()].rx += inc;
+	vport_stats[vportid]->rx += inc;
 }
 
-inline void stats_vport_rx_drop_increment(unsigned vportid, int inc)
+void stats_vport_rx_drop_increment(unsigned vportid, int inc)
 {
-	vport_stats[vportid]->stats[rte_lcore_id()].rx_drop += inc;
+	vport_stats[vportid]->rx_drop += inc;
 }
 
-inline void stats_vport_tx_increment(unsigned vportid, int inc)
+void stats_vport_tx_increment(unsigned vportid, int inc)
 {
-	vport_stats[vportid]->stats[rte_lcore_id()].tx += inc;
+	vport_stats[vportid]->tx += inc;
 }
 
-inline void stats_vport_tx_drop_increment(unsigned vportid, int inc)
+void stats_vport_tx_drop_increment(unsigned vportid, int inc)
 {
-	vport_stats[vportid]->stats[rte_lcore_id()].tx_drop += inc;
+	vport_stats[vportid]->tx_drop += inc;
 }
 
-inline void stats_vport_overrun_increment(unsigned vportid, int inc)
+void stats_vport_overrun_increment(unsigned vportid, int inc)
 {
-	vport_stats[vportid]->stats[rte_lcore_id()].overrun += inc;
+	vport_stats[vportid]->overrun += inc;
 }
 
-inline void stats_vswitch_rx_drop_increment(int inc)
+void stats_vswitch_rx_drop_increment(int inc)
 {
-	vswitch_stats->stats[rte_lcore_id()].rx_drop += inc;
+	vswitch_stats->rx_drop += inc;
 }
 
-inline void stats_vswitch_tx_drop_increment(int inc)
+void stats_vswitch_tx_drop_increment(int inc)
 {
-	vswitch_stats->stats[rte_lcore_id()].tx_drop += inc;
+	vswitch_stats->tx_drop += inc;
 }
 
 #endif /* STATS_DISABLE */
 
-inline uint64_t stats_vport_rx_get(unsigned vportid)
+uint64_t stats_vport_rx_get(unsigned vportid)
 {
-	uint64_t rx;
-	int i;
-
-	for (rx = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		rx += vport_stats[vportid]->stats[i].rx;
-
-	return rx;
+	return vport_stats[vportid]->rx;
 }
 
-inline uint64_t stats_vport_rx_drop_get(unsigned vportid)
+uint64_t stats_vport_rx_drop_get(unsigned vportid)
 {
-	uint64_t rx_drop;
-	int i;
-
-	for (rx_drop = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		rx_drop += vport_stats[vportid]->stats[i].rx_drop;
-
-	return rx_drop;
+	return vport_stats[vportid]->rx_drop;
 }
 
-inline uint64_t stats_vport_tx_get(unsigned vportid)
+uint64_t stats_vport_tx_get(unsigned vportid)
 {
-	uint64_t tx;
-	int i;
-
-	for (tx = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		tx += vport_stats[vportid]->stats[i].tx;
-
-	return tx;
+	return vport_stats[vportid]->tx;
 }
 
-inline uint64_t stats_vport_tx_drop_get(unsigned vportid)
+uint64_t stats_vport_tx_drop_get(unsigned vportid)
 {
-	uint64_t tx_drop;
-	int i;
-
-	for (tx_drop = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		tx_drop += vport_stats[vportid]->stats[i].tx_drop;
-
-	return tx_drop;
+	return vport_stats[vportid]->tx_drop;
 }
 
-inline uint64_t stats_vport_overrun_get(unsigned vportid)
+uint64_t stats_vport_overrun_get(unsigned vportid)
 {
-	uint64_t overrun;
-	int i;
-
-	for (overrun = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		overrun += vport_stats[vportid]->stats[i].overrun;
-
-	return overrun;
+	return vport_stats[vportid]->overrun;
 }
 
-inline uint64_t stats_vswitch_rx_drop_get(void)
+uint64_t stats_vswitch_rx_drop_get(void)
 {
-	uint64_t rx_drop;
-	int i;
-
-	for (rx_drop = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		rx_drop += vswitch_stats->stats[i].rx_drop;
-
-	return rx_drop;
+	return vswitch_stats->rx_drop;
 }
 
-inline uint64_t stats_vswitch_tx_drop_get(void)
+uint64_t stats_vswitch_tx_drop_get(void)
 {
-	uint64_t tx_drop;
-	int i;
-
-	for (tx_drop = 0, i = 0; i < RTE_MAX_LCORE; i++)
-		tx_drop += vswitch_stats->stats[i].tx_drop;
-
-	return tx_drop;
+	return vswitch_stats->tx_drop;
 }
 
 void

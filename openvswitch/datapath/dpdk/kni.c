@@ -135,17 +135,16 @@ kni_fifo_init(struct rte_kni_fifo *fifo, unsigned size)
 	fifo->elem_size = sizeof(void *);
 }
 
-rte_spinlock_t rte_kni_locks[MAX_KNI_PORTS];
 
 void
 init_kni(void)
 {
 	uint8_t i = 0;
+	const struct rte_memzone *mz = NULL;
 
 	/* Create the rte_kni fifos for each KNI port */
-	for (i = 0; i < num_kni; i++) {
+	for (i = 0; i < MAX_KNI_PORTS; i++) {
 		RTE_LOG(INFO, APP, "Initialising KNI %d\n", i);
 		create_kni_fifos(i);
-		rte_spinlock_init(&rte_kni_locks[i]);
 	}
 }
