@@ -37,29 +37,63 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app ut
+# Default target, can be overriden by command line or environment
+RTE_TARGET ?= x86_64-default-linuxapp-gcc
 
-app:
-	$(MAKE) -f Makefile.app
+include $(RTE_SDK)/mk/rte.vars.mk
 
-ut:
-	$(MAKE) -f Makefile.ut
+# Export DPDK variables for output directory and Makefile target. If these
+# are ommited the wrong Makefile will be called by rte.exteapp.mk
+RTE_EXTMK = $(RTE_SRCDIR)/Makefile.app
 
-check: ut
+ifneq ($(CONFIG_RTE_EXEC_ENV),"linuxapp")
+$(error This application can only operate in a linuxapp environment, \
+please change the definition of the RTE_TARGET environment variable)
+endif
 
-check-am:
-	$(warning "This target is not implemented")
+# binary name
+APP = ovs_dpdk
 
-check-local:
-	$(warning "This target is not implemented")
+# all source are stored in SRCS-y
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c \
+          stats.c ofpbuf_helper.c veth.c
 
-check-recursive:
-	$(warning "This target is not implemented")
+INC := $(wildcard *.h)
 
-clean: clean-app clean-ut
+CFLAGS += -O3
+CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+CFLAGS += -Wall -Werror \
+-Wclobbered \
+-Wempty-body \
+-Wignored-qualifiers \
+-Wmissing-parameter-type \
+-Wold-style-declaration \
+-Woverride-init \
+-Wsign-compare \
+-Wtype-limits \
+-Wuninitialized \
+-Wunused-parameter \
+-Wunused-but-set-parameter
+# All extra arguments above are part of -Wextra.
+# See http://stackoverflow.com/q/1538943
+# There's a known bug in gcc4.6 that makes -Wmissing-field-initializers flag
+# fail with a valid struct initialization. Left it out for now.
 
-clean-app:
-	$(MAKE) -f Makefile.app clean
+# fix dpdk link order, add to LDLIBS which is processed by dpdk's
+# macros.
+LDLIBS += -L$(OVS_DIR)/lib  -lopenvswitch -lrt
 
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
+# for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
+# and so the next line can be removed in those cases.
+#EXTRA_CFLAGS += -fno-strict-aliasing
+
+include $(RTE_SDK)/mk/rte.extapp.mk
+
+EMPTY_AUTOMAKE_TARGETS = dvi pdf ps info html tags ctags
+.PHONY: $(EMPTY_AUTOMAKE_TARGETS)
+$(EMPTY_AUTOMAKE_TARGETS):
+
+clean:
+	rm -rf $(OVS_DIR)/datapath/dpdk/build
+
+distclean: clean

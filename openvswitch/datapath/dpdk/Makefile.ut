@@ -37,29 +37,54 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app ut
+ifeq ($(OVS_DIR),)
+$(error "Please define OVS_DIR environment variable")
+endif
 
-app:
-	$(MAKE) -f Makefile.app
+# Default target, can be overriden by command line or environment
+RTE_TARGET ?= x86_64-default-linuxapp-gcc
 
-ut:
-	$(MAKE) -f Makefile.ut
+include $(RTE_SDK)/mk/rte.vars.mk
 
-check: ut
+# Export DPDK variables for output directory and Makefile target. If these
+# are ommited the wrong Makefile will be called by rte.exteapp.mk
+RTE_EXTMK = $(RTE_SRCDIR)/Makefile.ut
+RTE_OUTPUT = $(RTE_SRCDIR)/../../tests/dpdk
 
-check-am:
-	$(warning "This target is not implemented")
+ifneq ($(CONFIG_RTE_EXEC_ENV),"linuxapp")
+$(error This application can only operate in a linuxapp environment, \
+please change the definition of the RTE_TARGET environment variable)
+endif
 
-check-local:
-	$(warning "This target is not implemented")
+# binary name
+APP = test-datapath
 
-check-recursive:
-	$(warning "This target is not implemented")
+# all source are stored in SRCS-y
+SRCS-y := dpdk-vport-stub.c action.c datapath.c flow.c stats.c ut.c \
+          test-datapath-dpdk.c ofpbuf_helper.c veth.c
 
-clean: clean-app clean-ut
+INC := $(wildcard *.h)
 
-clean-app:
-	$(MAKE) -f Makefile.app clean
+CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
 
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
+# fix dpdk link order, add to LDLIBS which is processed by dpdk's
+# macros.
+LDLIBS += -L$(OVS_DIR)/lib  -lopenvswitch -lrt
+
+CFLAGS += -O0 -g
+CFLAGS += -Wno-error
+
+# for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
+# and so the next line can be removed in those cases.
+#EXTRA_CFLAGS += -fno-strict-aliasing
+
+include $(RTE_SDK)/mk/rte.extapp.mk
+
+EMPTY_AUTOMAKE_TARGETS = dvi pdf ps info html tags ctags
+.PHONY: $(EMPTY_AUTOMAKE_TARGETS)
+$(EMPTY_AUTOMAKE_TARGETS):
+
+clean:
+	rm -rf $(OVS_DIR)/tests/dpdk
+
+distclean: clean
