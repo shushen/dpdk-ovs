@@ -44,7 +44,7 @@
 #include "action.h"
 
 /* Maximum number of flow table entries */
-#define MAX_FLOWS               64
+#define MAX_FLOWS              (1 << 16)
 
 /* Measured CPU frequency. Needed to translate tsk to ms. */
 uint64_t cpu_freq;
@@ -66,6 +66,7 @@ struct flow_key {
 	uint8_t ip_proto;
 	uint8_t ip_tos;
 	uint8_t ip_ttl;
+	uint8_t ip_frag;
 	uint16_t tran_src_port;
 	uint16_t tran_dst_port;
 } __attribute__((__packed__));

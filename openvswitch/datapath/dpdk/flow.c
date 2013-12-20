@@ -50,6 +50,7 @@
 #include <rte_jhash.h>
 #endif
 
+#include <linux/openvswitch.h>
 
 #include "flow.h"
 #include "action.h"
@@ -451,6 +452,7 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	struct icmp_hdr *icmp = NULL;
 	unsigned char *pkt_data = NULL;
 	uint16_t vlan_tci = 0;
+	uint16_t be_offset = 0;
 
 	key->in_port = in_port;
 
@@ -483,6 +485,16 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 		key->ip_proto = ipv4_hdr->next_proto_id;
 		key->ip_tos = ipv4_hdr->type_of_service;
 		key->ip_ttl = ipv4_hdr->time_to_live;
+
+		be_offset = ipv4_hdr->fragment_offset;
+		if (be_offset & rte_be_to_cpu_16(IPV4_HDR_OFFSET_MASK)) {
+			key->ip_frag = OVS_FRAG_TYPE_LATER;
+			return;
+		}
+		if (be_offset & rte_be_to_cpu_16(IPV4_HDR_MF_FLAG))
+			key->ip_frag = OVS_FRAG_TYPE_FIRST;
+		else
+			key->ip_frag = OVS_FRAG_TYPE_NONE;
 	}
 
 	switch (key->ip_proto) {

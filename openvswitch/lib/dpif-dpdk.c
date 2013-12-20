@@ -931,6 +931,9 @@ dpif_dpdk_flow_key_from_flow(struct dpif_dpdk_flow_key *key,
     key->ip_proto = flow->nw_proto;
     key->ip_tos = flow->nw_tos;
     key->ip_ttl = flow->nw_ttl;
+    key->ip_frag = flow->nw_frag == 0 ? OVS_FRAG_TYPE_NONE
+                 : flow->nw_frag == FLOW_NW_FRAG_ANY ? OVS_FRAG_TYPE_FIRST
+                 : OVS_FRAG_TYPE_LATER;
     key->tran_src_port = rte_be_to_cpu_16(flow->tp_src);
     key->tran_dst_port = rte_be_to_cpu_16(flow->tp_dst);
 }
@@ -954,6 +957,13 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
     flow->nw_proto = key->ip_proto;
     flow->nw_tos = key->ip_tos;
     flow->nw_ttl = key->ip_ttl;
+    flow->nw_frag = 0;
+    if (key->ip_frag != OVS_FRAG_TYPE_NONE) {
+        flow->nw_frag |= FLOW_NW_FRAG_ANY;
+        if (key->ip_frag == OVS_FRAG_TYPE_LATER) {
+            flow->nw_frag |= FLOW_NW_FRAG_LATER;
+        }
+    }
     flow->tp_src = rte_cpu_to_be_16(key->tran_src_port);
     flow->tp_dst = rte_cpu_to_be_16(key->tran_dst_port);
 }

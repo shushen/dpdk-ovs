@@ -40,6 +40,7 @@ struct dpif_dpdk_flow_key {
 	uint8_t ip_proto;
 	uint8_t ip_tos;
 	uint8_t ip_ttl;
+	uint8_t ip_frag;
 	uint16_t tran_src_port;
 	uint16_t tran_dst_port;
 } __attribute__((__packed__));
