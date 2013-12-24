@@ -36,14 +36,6 @@
 #ifndef _INIT_H_
 #define _INIT_H_
 
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
-};
-
-struct port_queue *port_queues;
-
-
 /* The mbuf pool for packet rx */
 struct rte_mempool *pktmbuf_pool;
 uint8_t num_clients;

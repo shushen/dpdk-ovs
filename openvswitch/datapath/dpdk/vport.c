@@ -33,6 +33,7 @@
  */
 
 #include <rte_ethdev.h>
+#include <rte_cycles.h>
 #include <rte_memzone.h>
 #include <rte_malloc.h>
 #include <rte_string_fns.h>
@@ -49,6 +50,7 @@
 #define SOCKET0         0
 
 #define MZ_PORT_INFO "MProc_port_info"
+#define MZ_VPORT_INFO "MProc_vport_info"
 /* define common names for structures shared between server and client */
 #define MP_CLIENT_RXQ_NAME "MProc_Client_%u_RX"
 #define MP_CLIENT_TXQ_NAME "MProc_Client_%u_TX"
@@ -59,6 +61,8 @@
 #define RTE_MP_TX_DESC_DEFAULT    512
 /* Ring size for communication with clients */
 #define CLIENT_QUEUE_RINGSIZE     4096
+
+#define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
 
 /*
  * This is the maximum number of digits that are required to represent
@@ -102,20 +106,67 @@ static const struct rte_eth_txconf tx_conf_default = {
 		.tx_rs_thresh = 0, /* Use PMD default values */
 };
 
-/*
- * Define a client structure with all needed info.
- */
-struct client {
-	struct rte_ring *rx_q;
-	struct rte_ring *tx_q;
-	unsigned client_id;
+enum vport_type {
+	VPORT_TYPE_DISABLED = 0,
+	VPORT_TYPE_VSWITCHD,
+	VPORT_TYPE_PHY,
+	VPORT_TYPE_CLIENT,
+	VPORT_TYPE_KNI,
+	VPORT_TYPE_VETH,
 };
 
-static struct client *clients = NULL;
+struct vport_phy {
+	struct rte_ring *tx_q;
+	uint8_t index;
+};
 
-/* the port details */
-struct port_info *ports = NULL;
-struct port_queue *port_queues = NULL;
+struct vport_client {
+	struct rte_ring *rx_q;
+	struct rte_ring *tx_q;
+};
+
+struct vport_kni {
+	uint8_t index;
+};
+
+struct vport_veth {
+	uint8_t index;
+};
+
+#define VPORT_INFO_NAMESZ	(32)
+
+struct vport_info {
+	enum vport_type __rte_cache_aligned type;
+	char __rte_cache_aligned name[VPORT_INFO_NAMESZ];
+	union {
+		struct vport_phy phy;
+		struct vport_client client;
+		struct vport_kni kni;
+		struct vport_veth veth;
+	};
+};
+
+static int send_to_client(uint8_t client, struct rte_mbuf *buf);
+static int send_to_port(uint8_t vportid, struct rte_mbuf *buf);
+static int send_to_kni(uint8_t vportid, struct rte_mbuf *buf);
+static int send_to_veth(uint8_t vportid, struct rte_mbuf *buf);
+static uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
+static uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
+static uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
+static uint16_t receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs);
+
+
+/* vports details */
+static struct vport_info *vports;
+
+static void set_vport_name(unsigned i, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsnprintf(vports[i].name, VPORT_INFO_NAMESZ, fmt, ap);
+	va_end(ap);
+}
 
 /*
  * Given the rx queue name template above, get the queue name
@@ -223,37 +274,31 @@ init_shm_rings(void)
 	unsigned i;
 	const unsigned ringsize = CLIENT_QUEUE_RINGSIZE;
 
-	clients = rte_malloc("client details",
-		sizeof(*clients) * num_clients, 0);
-	if (clients == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot allocate memory for clients \n");
+	for (i = CLIENT1; i < num_clients; i++) {
+		struct vport_client *cl = &vports[i].client;
 
-	port_queues = rte_malloc("port_txq details",
-		sizeof(*port_queues) * ports->num_ports, 0);
-	if (port_queues == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot allocate memory for port tx_q details\n");
-
-	for (i = 0; i < num_clients; i++) {
 		/* Create an RX queue for each client */
-		clients[i].rx_q = rte_ring_create(get_rx_queue_name(i),
+		cl->rx_q = rte_ring_create(get_rx_queue_name(i),
 				ringsize, SOCKET0,
 				NO_FLAGS); /* multi producer multi consumer*/
-		if (clients[i].rx_q == NULL)
+		if (cl->rx_q == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot create rx ring for client %u\n", i);
 
-		clients[i].tx_q = rte_ring_create(get_tx_queue_name(i),
+		cl->tx_q = rte_ring_create(get_tx_queue_name(i),
 				ringsize, SOCKET0,
 				NO_FLAGS); /* multi producer multi consumer*/
-		if (clients[i].tx_q == NULL)
+		if (cl->tx_q == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot create tx ring for client %u\n", i);
 	}
 
 	for (i = 0; i < ports->num_ports; i++) {
+		struct vport_phy *phy = &vports[PHYPORT0 + i].phy;
+
 		/* Create an RX queue for each ports */
-		port_queues[i].tx_q = rte_ring_create(get_port_tx_queue_name(i),
+		phy->tx_q = rte_ring_create(get_port_tx_queue_name(i),
 				ringsize, SOCKET0,
 				RING_F_SC_DEQ); /* multi producer single consumer*/
-		if (port_queues[i].tx_q == NULL)
+		if (phy->tx_q == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot create tx ring for port %u\n", i);
 	}
 
@@ -276,12 +321,52 @@ void vport_init(void)
 	ports = mz->addr;
 	RTE_LOG(INFO, APP, "memzone address is %lx\n", mz->phys_addr);
 
+	/* set up array for vport info */
+	mz = rte_memzone_reserve(MZ_VPORT_INFO,
+				sizeof(struct vport_info) * MAX_VPORTS,
+				rte_socket_id(), NO_FLAGS);
+
+	if (!mz)
+		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for vport information\n");
+	memset(mz->addr, 0, sizeof(struct vport_info) * MAX_VPORTS);
+	vports = mz->addr;
+	RTE_LOG(INFO, APP, "memzone for vport info address is %lx\n", mz->phys_addr);
+
 	ports->num_ports = port_cfg.num_ports;
+
+	/* vports setup */
+
+	/* vport 0 is for vswitchd */
+	vports[0].type = VPORT_TYPE_VSWITCHD;
+	set_vport_name(0, "vswitchd");
+
+	/* vport for client */
+	for (i = CLIENT1; i < num_clients; i++) {
+		vports[i].type = VPORT_TYPE_CLIENT;
+		set_vport_name(i, "Client    %2u", i);
+	}
+	/* vport for kni */
+	for (i = 0; i < num_kni; i++) {
+		vports[KNI0 + i].type = VPORT_TYPE_KNI;
+		vports[KNI0 + i].kni.index = i;
+		set_vport_name(KNI0 + i, "KNI Port  %2u", i);
+	}
+	/* vport for veth */
+	for (i = 0; i < num_veth; i++) {
+		vports[VETH0 + i].type = VPORT_TYPE_VETH;
+		vports[VETH0 + i].veth.index = i;
+		set_vport_name(VETH0 + i, "vEth Port %2u", i);
+	}
 
 	/* now initialise the ports we will use */
 	for (i = 0; i < ports->num_ports; i++) {
-		ports->id[i] = port_cfg.id[i];
-		retval = init_port(ports->id[i]);
+		unsigned int vportid = cfg_params[i].port_id;
+
+		vports[vportid].type = VPORT_TYPE_PHY;
+		vports[vportid].phy.index = port_cfg.id[i];
+		set_vport_name(vportid, "Port      %2u", port_cfg.id[i]);
+
+		retval = init_port(port_cfg.id[i]);
 		if (retval != 0)
 			rte_exit(EXIT_FAILURE, "Cannot initialise port %u\n",
 					(unsigned)i);
@@ -300,13 +385,13 @@ void vport_init(void)
 /*
  * Enqueue a single packet to a client rx ring
  */
-inline int
+static inline int
 send_to_client(uint8_t client, struct rte_mbuf *buf)
 {
-	struct client *cl = NULL;
+	struct vport_client *cl;
 	int tx_count = 0;
 
-	cl = &clients[client];
+	cl = &vports[client].client;
 
 	tx_count = rte_ring_mp_enqueue(cl->rx_q, (void *)buf);
 
@@ -329,15 +414,13 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 /*
  * Enqueue single packet to a port
  */
-inline int
+static inline int
 send_to_port(uint8_t vportid, struct rte_mbuf *buf)
 {
-	struct port_queue *pq = NULL;
+	struct vport_phy *phy = &vports[vportid].phy;
 	int tx_count = 0;
 
-	pq = &port_queues[vportid & PORT_MASK];
-
-	tx_count = rte_ring_mp_enqueue(pq->tx_q, (void *)buf);
+	tx_count = rte_ring_mp_enqueue(phy->tx_q, (void *)buf);
 
 	if (tx_count == -ENOBUFS) {
 		rte_pktmbuf_free(buf);
@@ -349,13 +432,13 @@ send_to_port(uint8_t vportid, struct rte_mbuf *buf)
 /*
  * Enqueue single packet to a KNI fifo
  */
-inline int
+static inline int
 send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
 {
 	int i = 0;
 	int tx_count = 0;
 
-	i = vportid & KNI_MASK;
+	i = vports[vportid].kni.index;
 	rte_spinlock_lock(&rte_kni_locks[i]);
 	tx_count = rte_kni_tx_burst(&rte_kni_list[i], &buf, 1);
 	rte_spinlock_unlock(&rte_kni_locks[i]);
@@ -375,13 +458,13 @@ send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
 /*
  * Enqueue single packet to a vETH fifo
  */
-int
+static int
 send_to_veth(uint8_t vportid, struct rte_mbuf *buf)
 {
 	int i = 0;
 	int tx_count = 0;
 
-	i = vportid & VETH_MASK;
+	i = vports[vportid].veth.index;
 	/* Spinlocks not needed here as veth only used for OFTest currently. This
 	 * may change in the future */
 	tx_count = rte_kni_tx_burst(rte_veth_list[i], &buf, 1);
@@ -398,23 +481,54 @@ send_to_veth(uint8_t vportid, struct rte_mbuf *buf)
 	return 0;
 }
 
+int
+send_to_vport(uint8_t vportid, struct rte_mbuf *buf)
+{
+	if (vportid >= MAX_VPORTS) {
+		RTE_LOG(WARNING, APP,
+			"sending to invalid vport: %u\n", vportid);
+		goto drop;
+	}
+
+	switch (vports[vportid].type) {
+	case VPORT_TYPE_PHY:
+		return send_to_port(vportid, buf);
+	case VPORT_TYPE_CLIENT:
+		return send_to_client(vportid, buf);
+	case VPORT_TYPE_KNI:
+		return send_to_kni(vportid, buf);
+	case VPORT_TYPE_VETH:
+		return send_to_veth(vportid, buf);
+	case VPORT_TYPE_VSWITCHD:
+		/* DPDK vSwitch cannot handle it now, ignore */
+		break;
+	default:
+		RTE_LOG(WARNING, APP, "unknown vport %u type %u\n",
+			vportid, vports[vportid].type);
+		break;
+	}
+drop:
+	rte_pktmbuf_free(buf);
+	return -1;
+}
+
 /*
  * Receive burst of packets from a vETH fifo
  */
-uint16_t
+static uint16_t
 receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs)
 {
 	int i = 0;
 	uint16_t rx_count = 0;
 
-	i = vportid & VETH_MASK;
+	i = vports[vportid].veth.index;
 	rx_count = rte_kni_rx_burst(rte_veth_list[i], bufs, PKT_BURST_SIZE);
 
 	if (likely(rx_count != 0))
 		stats_vport_tx_increment(vportid, rx_count);
 
 	/* handle callbacks, i.e. ifconfig */
-	rte_kni_handle_request(rte_veth_list[vportid & VETH_MASK]);
+	rte_kni_handle_request(rte_veth_list[i]);
 
 	return rx_count;
 }
@@ -422,13 +536,13 @@ receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs)
 /*
  * Receive burst of packets from a KNI fifo
  */
-inline uint16_t
+static inline uint16_t
 receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs)
 {
 	int i = 0;
 	uint16_t rx_count = 0;
 
-	i = vportid & KNI_MASK;
+	i = vports[vportid].kni.index;
 	rx_count = rte_kni_rx_burst(&rte_kni_list[i], bufs, PKT_BURST_SIZE);
 
 	if (likely(rx_count > 0))
@@ -440,13 +554,13 @@ receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs)
 /*
  * Receive burst of packets from client
  */
-inline uint16_t
+static inline uint16_t
 receive_from_client(uint8_t client, struct rte_mbuf **bufs)
 {
 	uint16_t rx_count = PKT_BURST_SIZE;
-	struct client *cl = NULL;
+	struct vport_client *cl;
 
-	cl = &clients[client];
+	cl = &vports[client].client;
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
 	while (rx_count > 0 &&
@@ -465,13 +579,13 @@ receive_from_client(uint8_t client, struct rte_mbuf **bufs)
 /*
  * Receive burst of packets from physical port.
  */
-inline uint16_t
+static inline uint16_t
 receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
 {
 	uint16_t rx_count = 0;
 
 	/* Read a port */
-	rx_count = rte_eth_rx_burst(ports->id[vportid & PORT_MASK], 0, \
+	rx_count = rte_eth_rx_burst( vports[vportid].phy.index, 0,
 			bufs, PKT_BURST_SIZE);
 
 	/* Now process the NIC packets read */
@@ -479,4 +593,81 @@ receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
 		stats_vport_rx_increment(vportid, rx_count);
 
 	return rx_count;
+}
+
+uint16_t
+receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs)
+{
+	if (vportid >= MAX_VPORTS) {
+		RTE_LOG(WARNING, APP,
+			"receiving from invalid vport %u\n", vportid);
+		return 0;
+	}
+
+	switch (vports[vportid].type) {
+	case VPORT_TYPE_PHY:
+		return receive_from_port(vportid, bufs);
+	case VPORT_TYPE_CLIENT:
+		return receive_from_client(vportid, bufs);
+	case VPORT_TYPE_KNI:
+		return receive_from_kni(vportid, bufs);
+	case VPORT_TYPE_VETH:
+		return receive_from_veth(vportid, bufs);
+	default:
+		RTE_LOG(WARNING, APP,
+			"receiving from unknown vport %u type %u\n",
+			vportid, vports[vportid].type);
+		break;
+	}
+	return 0;
+}
+
+/*
+ * Flush packets scheduled for transmit on ports
+ */
+void flush_pkts(unsigned action)
+{
+	unsigned i = 0;
+	struct rte_mbuf *pkts[PKT_BURST_SIZE] =  {0};
+	struct vport_phy *phy = &vports[action].phy;
+	uint8_t portid = phy->index;
+	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+	uint64_t diff_tsc = 0;
+	static uint64_t prev_tsc[MAX_PHYPORTS] = {0};
+	uint64_t cur_tsc = rte_rdtsc();
+	unsigned num_pkts;
+
+	diff_tsc = cur_tsc - prev_tsc[portid];
+
+	num_pkts = rte_ring_count(phy->tx_q);
+
+	/* If queue idles with less than PKT_BURST packets, drain it*/
+	if ((num_pkts < PKT_BURST_SIZE))
+		if(unlikely(diff_tsc < drain_tsc))
+			return;
+
+	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
+	if (unlikely(num_pkts >= PKT_BURST_SIZE))
+		num_pkts = PKT_BURST_SIZE;
+
+	if (unlikely(rte_ring_dequeue_bulk(phy->tx_q, (void **)pkts, num_pkts) != 0))
+		return;
+
+	const uint16_t sent = rte_eth_tx_burst(portid, 0, pkts, num_pkts);
+
+	prev_tsc[action & PORT_MASK] = cur_tsc;
+
+	if (unlikely(sent < num_pkts))
+	{
+		for (i = sent; i < num_pkts; i++)
+			rte_pktmbuf_free(pkts[i]);
+
+		stats_vport_tx_drop_increment(action, num_pkts - sent);
+	}
+	stats_vport_tx_increment(action, sent);
+}
+
+const char *vport_name(unsigned vportid)
+{
+	return vports[vportid].name;
 }

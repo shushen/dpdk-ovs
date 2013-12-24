@@ -61,13 +61,8 @@
  */
 #define PREFETCH_OFFSET     3
 #define BYTES_TO_PRINT      256
-#define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
 #define RUN_ON_THIS_THREAD  1
 
-extern struct cfg_params *cfg_params;
-extern uint16_t nb_cfg_params;
-
-static void flush_pkts(unsigned);
 static const char *get_printable_mac_addr(uint8_t port);
 static void stats_display(void);
 
@@ -137,19 +132,10 @@ stats_display(void)
 		     "Interface       rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "-------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		if (i == CLIENT0) {
-			printf("vswitchd     ");
-		} else if (IS_CLIENT_PORT(i)) {
-			printf("Client    %2u", i);
-		} else if (IS_PHY_PORT(i)) {
-			printf("Port      %2u", i & PORT_MASK);
-		} else if (IS_KNI_PORT(i)) {
-			printf("KNI Port  %2u", i & KNI_MASK);
-		} else if (IS_VETH_PORT(i)) {
-			printf("vEth Port %2u", i & VETH_MASK);
-		} else {  /* fallthrough */
+		const char *name = vport_name(i);
+		if (*name == 0)
 			continue;
-		}
+		printf("%-12s ", name);
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 		       stats_vport_rx_get(i),
 		       stats_vport_rx_drop_get(i),
@@ -198,7 +184,7 @@ do_client_switching(void)
 
 	/* Client ports */
 
-	rx_count = receive_from_client(client, &bufs[0]);
+	rx_count = receive_from_vport(client, &bufs[0]);
 
 	/* Prefetch first packets */
 	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
@@ -225,7 +211,7 @@ do_client_switching(void)
 
 	/* KNI ports */
 
-	rx_count = receive_from_kni(kni_vportid, &bufs[0]);
+	rx_count = receive_from_vport(kni_vportid, &bufs[0]);
 
 	/* Prefetch first packets */
 	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
@@ -252,7 +238,7 @@ do_client_switching(void)
 
 	/* vETH Devices */
 	if (unlikely(num_veth > 0)) {  /* vEth devices are optional */
-		rx_count = receive_from_veth(veth_vportid, &bufs[0]);
+		rx_count = receive_from_vport(veth_vportid, &bufs[0]);
 
 		/* Prefetch first packets */
 		for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
@@ -288,7 +274,7 @@ do_port_switching(unsigned vportid)
 	struct rte_mbuf *bufs[PKT_BURST_SIZE] = {0};
 	struct flow_key key;
 
-	rx_count = receive_from_port(vportid, &bufs[0]);
+	rx_count = receive_from_vport(vportid, &bufs[0]);
 
 	/* Prefetch first packets */
 	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
@@ -309,52 +295,6 @@ do_port_switching(unsigned vportid)
 	}
 
 	flush_pkts(vportid);
-}
-
-/*
- * Flush packets scheduled for transmit on ports
- */
-static inline void  __attribute__((always_inline))
-flush_pkts(unsigned action)
-{
-	unsigned i = 0;
-	struct rte_mbuf *pkts[PKT_BURST_SIZE] =  {0};
-	struct port_queue *pq =  &port_queues[action & PORT_MASK];
-	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
-	uint64_t diff_tsc = 0;
-	static uint64_t prev_tsc[MAX_PHYPORTS] = {0};
-	uint64_t cur_tsc = rte_rdtsc();
-	unsigned num_pkts;
-
-	diff_tsc = cur_tsc - prev_tsc[action & PORT_MASK];
-
-	num_pkts = rte_ring_count(pq->tx_q);
-
-	/* If queue idles with less than PKT_BURST packets, drain it*/
-	if ((num_pkts < PKT_BURST_SIZE))
-		if(unlikely(diff_tsc < drain_tsc))
-			return;
-
-	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
-	if (unlikely(num_pkts >= PKT_BURST_SIZE))
-		num_pkts = PKT_BURST_SIZE;
-
-	if (unlikely(rte_ring_dequeue_bulk(pq->tx_q, (void **)pkts, num_pkts) != 0))
-		return;
-
-	const uint16_t sent = rte_eth_tx_burst(
-				 ports->id[action & PORT_MASK], 0, pkts, num_pkts);
-
-	prev_tsc[action & PORT_MASK] = cur_tsc;
-
-	if (unlikely(sent < num_pkts))
-	{
-		for (i = sent; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
-
-		stats_vport_tx_drop_increment(action, num_pkts - sent);
-	}
-	stats_vport_tx_increment(action, sent);
 }
 
 /* Get CPU frequency */

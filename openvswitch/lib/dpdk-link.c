@@ -21,15 +21,16 @@
 #include <rte_config.h>
 #include <rte_mbuf.h>
 #include <rte_memcpy.h>
+#include <rte_log.h>
 
 #include "dpdk-link.h"
 #include "dpif-dpdk.h"
 #include "common.h"
-#include <rte_log.h>
-
-#include <assert.h>
 
 #include "vlog.h"
+
+#include <assert.h>
+#include <sys/syscall.h>
 
 VLOG_DEFINE_THIS_MODULE(dpdk_link);
 
@@ -85,6 +86,9 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
             return ENOBUFS;
         }
 
+        if (request->type == DPIF_DPDK_FLOW_FAMILY)
+            request[i].flow_msg.id = (uint32_t) syscall(SYS_gettid);
+
         mbuf_data = rte_pktmbuf_mtod(mbufs[i], uint8_t *);
         rte_memcpy(mbuf_data, &request[i], sizeof(request[i]));
 
@@ -109,7 +113,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
         }
     }
 
-    ret = rte_ring_sp_enqueue_bulk(message_ring, (void * const *)mbufs, num_pkts);
+    ret = rte_ring_mp_enqueue_bulk(message_ring, (void * const *)mbufs, num_pkts);
     if (ret == -ENOBUFS) {
         for (i = 0; i < num_pkts; i++) {
             rte_pktmbuf_free(mbufs[i]);
@@ -133,10 +137,22 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 
     DPDK_DEBUG()
 
-    while (rte_ring_sc_dequeue(reply_ring, (void **)&mbuf) != 0);
+    for (;;) {
+        while (rte_ring_mc_dequeue(reply_ring, (void **)&mbuf) != 0)
+            ;
 
-    pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
-    pktmbuf_len = rte_pktmbuf_data_len(mbuf);
+        pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
+        pktmbuf_len = rte_pktmbuf_data_len(mbuf);
+
+        if (((struct dpif_dpdk_message *)pktmbuf_data)->flow_msg.id != (uint32_t)syscall(SYS_gettid) ){
+            while (rte_ring_mp_enqueue(reply_ring, (void *)mbuf) != 0)
+                ;
+        } else {
+           break;
+        }
+    }
+
+
     rte_memcpy(reply, pktmbuf_data, pktmbuf_len);
 
     rte_pktmbuf_free(mbuf);

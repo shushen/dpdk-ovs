@@ -51,6 +51,8 @@ struct cfg_params {
 	uint8_t lcore_id;
 } __rte_cache_aligned;
 
+extern struct cfg_params *cfg_params;
+extern uint16_t nb_cfg_params;
 
 int parse_app_args(uint8_t max_ports, int argc, char *argv[]);
 int parse_config(const char *q_arg);

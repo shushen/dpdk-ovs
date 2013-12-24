@@ -136,16 +136,7 @@ static inline void
 action_output(const struct action_output *action,
                           struct rte_mbuf *mbuf)
 {
-	uint8_t vport = action->port;
-
-	if (IS_PHY_PORT(vport))                   /* Physical port */
-		send_to_port(vport, mbuf);
-	else if (IS_KNI_PORT(vport))              /* KNI FIFO */
-		send_to_kni(vport, mbuf);
-	else if (unlikely(IS_VETH_PORT(vport)))   /* vEth FIFO */
-		send_to_veth(vport, mbuf);
-	else                                      /* Client ring */
-		send_to_client(vport, mbuf);
+	send_to_vport(action->port, mbuf);
 }
 
 /*

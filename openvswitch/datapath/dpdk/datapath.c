@@ -71,6 +71,7 @@
 #define DPIF_SOCKNAME "\0dpif-dpdk"
 
 struct dpdk_flow_message {
+	uint32_t id;
 	uint8_t cmd;
 	uint32_t flags;
 	struct flow_key key;
@@ -190,7 +191,7 @@ handle_request_from_vswitchd(void)
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
 	while (dq_pkt > 0 &&
-	       unlikely(rte_ring_sc_dequeue_bulk(
+	       unlikely(rte_ring_mc_dequeue_bulk(
 	       vswitchd_message_ring, (void **)buf, dq_pkt) != 0))
 		dq_pkt = (uint16_t)RTE_MIN(rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
 

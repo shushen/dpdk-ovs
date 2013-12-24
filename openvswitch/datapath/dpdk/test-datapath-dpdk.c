@@ -69,12 +69,13 @@
 
 /* Try to execute action with a client interface, which should succeed */
 static void
-test_action_execute_output__client(int argc, char *argv[])
+test_action_execute_output(int argc, char *argv[])
 {
 	struct rte_mbuf buf_multiple[5];
 	struct rte_mbuf *buf_p_multiple[5];
 	struct action action_multiple[MAX_ACTIONS] = {0};
 	int count = 0;
+	uint8_t vportid = 3;
 
 	buf_p_multiple[0] = &buf_multiple[0];
 	buf_p_multiple[1] = &buf_multiple[1];
@@ -84,60 +85,10 @@ test_action_execute_output__client(int argc, char *argv[])
 
 	/* client */
 	vport_init();
-	action_output_build(&action_multiple[0], 3);
+	action_output_build(&action_multiple[0], vportid);
 	action_null_build(&action_multiple[1]);
 	action_execute(action_multiple, buf_multiple);
-	count = receive_from_client(3, buf_p_multiple);
-	assert(count == 1);
-	assert(buf_p_multiple[1] == &buf_multiple[1]);
-}
-
-/* Try to execute action with a KNI interface, which should succeed */
-static void
-test_action_execute_output__kni(int argc, char *argv[])
-{
-	struct rte_mbuf buf_multiple[5];
-	struct rte_mbuf *buf_p_multiple[5];
-	struct action action_multiple[MAX_ACTIONS] = {0};
-	int count = 0;
-
-	buf_p_multiple[0] = &buf_multiple[0];
-	buf_p_multiple[1] = &buf_multiple[1];
-	buf_p_multiple[2] = &buf_multiple[2];
-	buf_p_multiple[3] = &buf_multiple[3];
-	buf_p_multiple[4] = &buf_multiple[4];
-
-	/* kni */
-	vport_init();
-	action_output_build(&action_multiple[0], 33);
-	action_null_build(&action_multiple[1]);
-	action_execute(action_multiple, buf_multiple);
-	count = receive_from_kni(1, buf_p_multiple);
-	assert(count == 1);
-	assert(buf_p_multiple[1] == &buf_multiple[1]);
-}
-
-/* Try to execute action with a port interface, which should succeed */
-static void
-test_action_execute_output__port(int argc, char *argv[])
-{
-	struct rte_mbuf buf_multiple[5];
-	struct rte_mbuf *buf_p_multiple[5];
-	struct action action_multiple[MAX_ACTIONS] = {0};
-	int count = 0;
-
-	buf_p_multiple[0] = &buf_multiple[0];
-	buf_p_multiple[1] = &buf_multiple[1];
-	buf_p_multiple[2] = &buf_multiple[2];
-	buf_p_multiple[3] = &buf_multiple[3];
-	buf_p_multiple[4] = &buf_multiple[4];
-
-	/* port */
-	vport_init();
-	action_output_build(&action_multiple[0], 17);
-	action_null_build(&action_multiple[1]);
-	action_execute(action_multiple, buf_multiple);
-	count = receive_from_port(1, buf_p_multiple);
+	count = receive_from_vport(vportid, buf_p_multiple);
 	assert(count == 1);
 	assert(buf_p_multiple[1] == &buf_multiple[1]);
 }
@@ -367,11 +318,11 @@ test_action_execute_multiple_actions__three_output(int argc, char *argv[])
 
 	action_execute(action_multiple, mbuf_output);
 
-	count = receive_from_client(3, &mbuf_output);
+	count = receive_from_vport(3, &mbuf_output);
 	assert(count == 1);
-	count = receive_from_kni(33, &mbuf_output);
+	count = receive_from_vport(33, &mbuf_output);
 	assert(count == 1);
-	count = receive_from_port(17, &mbuf_output);
+	count = receive_from_vport(17, &mbuf_output);
 	assert(count == 1);
 }
 
@@ -417,7 +368,7 @@ test_action_execute_multiple_actions__pop_vlan_and_output(int argc, char *argv[]
 	pktmbuf_data = rte_pktmbuf_mtod(vlan_output_buf, int *);
 	assert(*(pktmbuf_data + 3) != 0x00000081);
 	assert(*(pktmbuf_data + 3) == 0xBABEFACE);
-	count = receive_from_port(17, &vlan_output_buf);
+	count = receive_from_vport(17, &vlan_output_buf);
 	pktmbuf_data = rte_pktmbuf_mtod(vlan_output_buf, int *);
 	assert(count == 1);
 	assert(*(pktmbuf_data + 3) != 0x00000081);
@@ -606,24 +557,29 @@ test_flow_table_get_next_flow(int argc, char *argv[])
 	flow_table_del_all();
 	action_output_build(&action_multiple[0], 1);
 	action_null_build(&action_multiple[1]);
-	flow_table_add_flow(&key1, action_multiple);
-	flow_table_add_flow(&key2, action_multiple);
+	ret = flow_table_add_flow(&key1, action_multiple);
+	assert(ret >= 0);
+	ret = flow_table_add_flow(&key2, action_multiple);
+	assert(ret >= 0);
 
 	ret = flow_table_get_first_flow(&key_check, action_check, &stats_check);
 	assert(ret >= 0);
-	if (memcmp(&key1, &key_check, sizeof(struct flow_key) == 0)) {
+	if (memcmp(&key1, &key_check, sizeof(struct flow_key)) == 0 ) {
+		ret = flow_table_get_next_flow(&key_check, &key_check, action_check, &stats_check);
+		assert(ret >= 0);
+		assert(memcmp(action_multiple, action_check, sizeof(struct action)) == 0);
+		assert(memcmp(&stats_zero, &stats_check, sizeof(struct flow_stats)) == 0 );
+		assert(memcmp(&key2, &key_check, sizeof(struct flow_key)) == 0 );
+	} else if (memcmp(&key2, &key_check, sizeof(struct flow_key) == 0)) {
 		ret = flow_table_get_next_flow(&key_check, &key_check, action_check, &stats_check);
 		assert(ret >= 0);
 		assert(memcmp(action_multiple, action_check, sizeof(struct action)) == 0);
 		assert(memcmp(&stats_zero, &stats_check, sizeof(struct flow_stats)) == 0 );
 		assert(memcmp(&key1, &key_check, sizeof(struct flow_key)) == 0 );
 	} else {
-		ret = flow_table_get_next_flow(&key_check, &key_check, action_check, &stats_check);
-		assert(ret >= 0);
-		assert(memcmp(action_multiple, action_check, sizeof(struct action)) == 0);
-		assert(memcmp(&stats_zero, &stats_check, sizeof(struct flow_stats)) == 0 );
-		assert(memcmp(&key1, &key_check, sizeof(struct flow_key)) == 0 );
+		assert(1==0);
 	}
+
 }
 
 /* Try to increment stats for all vport counters, which should
@@ -765,9 +721,7 @@ test_stats_vswitch_clear(int argc, char *argv[])
 }
 
 static const struct command commands[] = {
-	{"action_execute_output__client", 0, 0, test_action_execute_output__client},
-	{"action_execute_output__kni", 0, 0, test_action_execute_output__kni},
-	{"action_execute_output__port", 0, 0, test_action_execute_output__port},
+	{"action_execute_output", 0, 0, test_action_execute_output},
 	{"action_execute_output__invalid_params", 0, 0, test_action_execute_output__invalid_params},
 	{"action_execute_output__corrupt_action", 0, 0, test_action_execute_output__corrupt_action},
 	{"action_execute_drop", 0, 0, test_action_execute_drop},

@@ -88,6 +88,7 @@ struct dpif_dpdk_action {
 };
 
 struct dpif_dpdk_flow_message {
+	uint32_t id;
 	uint8_t cmd;
 	uint32_t flags;
 	struct dpif_dpdk_flow_key key;
