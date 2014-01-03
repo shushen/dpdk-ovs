@@ -1,5 +1,6 @@
 NEWS.md
 README.md
+SubmittingPatches
 filelist
 guest/kni/kni_client/Makefile
 guest/kni/kni_client/kni_client.c
