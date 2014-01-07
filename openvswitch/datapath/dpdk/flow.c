@@ -150,8 +150,6 @@ flow_table_init(void)
 static int
 flow_table_clear_stats(int pos)
 {
-	rte_spinlock_init((rte_spinlock_t *)&(flow_table[pos].stats.lock));
-
 	flow_table[pos].stats.used = 0;
 	flow_table[pos].stats.tcp_flags = 0;
 	flow_table[pos].stats.packet_count = 0;
@@ -409,12 +407,10 @@ flow_table_update_stats(int pos, const struct rte_mbuf *pkt)
 		tcp_flags = tcp->tcp_flags & TCP_FLAG_MASK;
 	}
 
-	rte_spinlock_lock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 	flow_table[pos].stats.used = curr_tsc;
 	flow_table[pos].stats.packet_count++;
 	flow_table[pos].stats.byte_count += rte_pktmbuf_data_len(pkt);
 	flow_table[pos].stats.tcp_flags |= tcp_flags;
-	rte_spinlock_unlock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 
 	return 0;
 }

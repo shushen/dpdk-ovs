@@ -364,7 +364,7 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	struct dpdk_message reply = {0};
 	struct flow_key empty = {0};
 	struct flow_key key = {0};
-	struct flow_stats stats = {{0}};
+	struct flow_stats stats = {0};
 
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*

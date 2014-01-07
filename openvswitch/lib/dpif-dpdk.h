@@ -19,7 +19,6 @@
 
 #include <stdbool.h>
 
-#include <rte_spinlock.h>
 #include <rte_ether.h>
 
 #include "ofpbuf.h"
@@ -46,7 +45,6 @@ struct dpif_dpdk_flow_key {
 } __attribute__((__packed__));
 
 struct dpif_dpdk_flow_stats {
-	rte_spinlock_t lock;
 	uint64_t packet_count;
 	uint64_t byte_count;
 	uint64_t used;

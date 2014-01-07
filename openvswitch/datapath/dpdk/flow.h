@@ -39,7 +39,6 @@
 #include <stdbool.h>
 #include <rte_mbuf.h>
 #include <rte_ether.h>
-#include <rte_spinlock.h>
 
 #include "action.h"
 
@@ -72,7 +71,6 @@ struct flow_key {
 } __attribute__((__packed__));
 
 struct flow_stats {
-	rte_spinlock_t lock;	/* Lock for values below. */
 	uint64_t packet_count;	/* Number of packets matched. */
 	uint64_t byte_count;	/* Number of bytes matched. */
 	uint64_t used;			/* Last used time (in hpet cycles). */
