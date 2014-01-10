@@ -74,6 +74,8 @@ uint16_t receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs);
 void flush_pkts(unsigned vportid);
 const char *vport_name(unsigned vportid);
 
+void flush_clients(void);
+
 #endif /* __VPORT_H_ */
 
 

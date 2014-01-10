@@ -80,6 +80,11 @@
 #define IP_FMT "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8
 #define IP_ARGS(ip) ((ip >> 24) & 0xFF), ((ip >> 16) & 0xFF), ((ip >> 8) & 0xFF), (ip & 0xFF)
 
+#define TCP_HDR_FROM_PKT(pkt) (struct tcp_hdr*)\
+	(rte_pktmbuf_mtod(pkt, unsigned char *) + \
+			sizeof(struct ether_hdr) + \
+			sizeof(struct ipv4_hdr))
+
 struct flow_table_entry {
 	rte_rwlock_t lock;   /* Lock to allow multiple readers and one writer */
 	struct flow_key key;     /* Flow key. */
@@ -397,20 +402,15 @@ flow_table_del_all(void)
 static inline int __attribute__((always_inline))
 flow_table_update_stats(int pos, const struct rte_mbuf *pkt)
 {
-	uint8_t tcp_flags = 0;
-
 	if (flow_table[pos].key.ether_type == ETHER_TYPE_IPv4 &&
 	    flow_table[pos].key.ip_proto == IPPROTO_TCP) {
-		uint8_t *pkt_data = rte_pktmbuf_mtod(pkt, unsigned char *);
-		pkt_data += sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr);
-		struct tcp_hdr *tcp = (struct tcp_hdr *) pkt_data;
-		tcp_flags = tcp->tcp_flags & TCP_FLAG_MASK;
+		struct tcp_hdr *tcp_hdr = TCP_HDR_FROM_PKT(pkt);
+		flow_table[pos].stats.tcp_flags |= tcp_hdr->tcp_flags & TCP_FLAG_MASK;
 	}
 
 	flow_table[pos].stats.used = curr_tsc;
 	flow_table[pos].stats.packet_count++;
 	flow_table[pos].stats.byte_count += rte_pktmbuf_data_len(pkt);
-	flow_table[pos].stats.tcp_flags |= tcp_flags;
 
 	return 0;
 }
@@ -449,6 +449,8 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	unsigned char *pkt_data = NULL;
 	uint16_t vlan_tci = 0;
 	uint16_t be_offset = 0;
+
+	memset(key, 0, sizeof(struct flow_key));
 
 	key->in_port = in_port;
 
@@ -575,13 +577,11 @@ switch_packet(struct rte_mbuf *pkt, struct flow_key *key)
 			flow_table_update_stats(pos, pkt);
 		}
 		rte_rwlock_read_unlock(&flow_table[pos].lock);
-	} else {
-		struct dpdk_upcall info;
-		/* flow table miss, send unmatched packet to the daemon */
-		info.cmd = PACKET_CMD_MISS;
-		info.key = *key;
-		send_packet_to_vswitchd(pkt, &info);
+		return;
 	}
-
-	return;
+	struct dpdk_upcall info;
+	/* flow table miss, send unmatched packet to the daemon */
+	info.cmd = PACKET_CMD_MISS;
+	info.key = *key;
+	send_packet_to_vswitchd(pkt, &info);
 }

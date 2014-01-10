@@ -54,6 +54,7 @@
 /* define common names for structures shared between server and client */
 #define MP_CLIENT_RXQ_NAME "MProc_Client_%u_RX"
 #define MP_CLIENT_TXQ_NAME "MProc_Client_%u_TX"
+#define MP_CLIENT_FREE_Q_NAME "MProc_Client_%u_FREE_Q"
 #define MP_PORT_TXQ_NAME "MProc_PORT_%u_TX"
 
 /* Ethernet port TX/RX ring sizes */
@@ -63,13 +64,9 @@
 #define CLIENT_QUEUE_RINGSIZE     4096
 
 #define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
-
-/*
- * This is the maximum number of digits that are required to represent
- * the largest possible unsigned int on a 64-bit machine. It will be used
- * to calculate the length of the strings above when %u is substituted.
- */
-#define MAX_DIGITS_UNSIGNED_INT 20
+#define CLIENT_MBUF_CACHE_SIZE 32
+#define CACHE_NAME_LEN 32
+#define MAX_QUEUE_NAME_SIZE 32
 
 /*
  * RX and TX Prefetch, Host, and Write-back threshold values should be
@@ -123,6 +120,15 @@ struct vport_phy {
 struct vport_client {
 	struct rte_ring *rx_q;
 	struct rte_ring *tx_q;
+	struct rte_ring *free_q;
+};
+
+/*
+ * Local cache used to buffer the mbufs before enqueueing to the client's TX
+ */
+struct mbuf_cache {
+	struct rte_mbuf *cache[CLIENT_MBUF_CACHE_SIZE];
+	unsigned count;
 };
 
 struct vport_kni {
@@ -133,6 +139,13 @@ struct vport_veth {
 	uint8_t index;
 };
 
+/*
+ * Per-core per-client buffer to cache mbufs before sending them in bursts.
+ * It uses a two dimensions array. One list of all clients per each used lcore.
+ * Since it's based on the idea that all working threads use different cores
+ * no concurrency issues should occur.
+ */
+static struct mbuf_cache **client_mbuf_cache = NULL;
 #define VPORT_INFO_NAMESZ	(32)
 
 struct vport_info {
@@ -169,33 +182,91 @@ static void set_vport_name(unsigned i, const char *fmt, ...)
 }
 
 /*
- * Given the rx queue name template above, get the queue name
+ * Given the queue name template, get the queue name
  */
+static inline const char *
+get_queue_name(unsigned id, const char *queue_name_template)
+{
+	static char buffer[MAX_QUEUE_NAME_SIZE];
+	rte_snprintf(buffer, sizeof(buffer), queue_name_template, id);
+	return buffer;
+}
+
 static inline const char *
 get_rx_queue_name(unsigned id)
 {
-	static char buffer[sizeof(MP_CLIENT_RXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
-
-	rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_RXQ_NAME, id);
-	return buffer;
+	return get_queue_name(id, MP_CLIENT_RXQ_NAME);
 }
 
 static inline const char *
 get_tx_queue_name(unsigned id)
 {
-	static char buffer[sizeof(MP_CLIENT_TXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
+	return get_queue_name(id, MP_CLIENT_TXQ_NAME);
+}
 
-	rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_TXQ_NAME, id);
-	return buffer;
+static inline const char *
+get_free_queue_name(unsigned id)
+{
+	return get_queue_name(id, MP_CLIENT_FREE_Q_NAME);
 }
 
 static inline const char *
 get_port_tx_queue_name(unsigned id)
 {
-	static char buffer[sizeof(MP_PORT_TXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
+	return get_queue_name(id, MP_PORT_TXQ_NAME);
+}
 
-	rte_snprintf(buffer, sizeof(buffer), MP_PORT_TXQ_NAME, id);
-	return buffer;
+/*
+ * Attempts to create a ring or exit
+ */
+static inline struct rte_ring *
+queue_create(const char *ring_name, int flags)
+{
+	struct rte_ring *ring;
+
+	ring = rte_ring_create(ring_name, CLIENT_QUEUE_RINGSIZE, SOCKET0, flags);
+	if (ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create '%s' ring \n", ring_name);
+	return ring;
+}
+
+/*
+ * Flushes all the per-client mbuf cache for the current lcore.
+ */
+inline void
+flush_clients(void)
+{
+	struct vport_client *cl = NULL;
+	struct mbuf_cache *per_core_cache = NULL;
+	struct mbuf_cache *per_cl_cache = NULL;
+	int tx_count;
+	unsigned clientid, i;
+
+	per_core_cache = client_mbuf_cache[rte_lcore_id()];
+
+	for (i = 0; i < num_clients; i++) {
+		per_cl_cache = &per_core_cache[i];
+		if (per_cl_cache->count == 0)
+			continue;
+		clientid = CLIENT1 + i;
+		cl = &vports[clientid].client;
+
+		tx_count = rte_ring_mp_enqueue_burst(cl->rx_q,
+				(void **)per_cl_cache->cache, per_cl_cache->count);
+
+		if (unlikely(tx_count < (int)per_cl_cache->count)) {
+			uint8_t dropped = per_cl_cache->count - tx_count;
+			stats_vswitch_tx_drop_increment(dropped);
+			stats_vport_rx_drop_increment(clientid, dropped);
+			/* TODO: stats_vport_overrun_increment */
+		}
+		else {
+			stats_vport_rx_increment(clientid, tx_count);
+		}
+
+		per_cl_cache->count = 0;
+	}
+
 }
 
 /**
@@ -263,6 +334,18 @@ init_port(uint8_t port_num)
 	return 0;
 }
 
+static void *
+secure_rte_zmalloc(const char *type, size_t size, unsigned align)
+{
+	void *addr;
+
+	addr = rte_zmalloc(type, size, align);
+	if (addr == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot allocate memory for %s \n", type);
+
+	return addr;
+}
+
 /**
  * Set up the DPDK rings which will be used to pass packets, via
  * pointers, between the multi-process server and client processes.
@@ -271,35 +354,33 @@ init_port(uint8_t port_num)
 static int
 init_shm_rings(void)
 {
-	unsigned i;
-	const unsigned ringsize = CLIENT_QUEUE_RINGSIZE;
+	unsigned i, clientid;
+	char cache_name[CACHE_NAME_LEN];
 
-	for (i = CLIENT1; i < num_clients; i++) {
-		struct vport_client *cl = &vports[i].client;
+	client_mbuf_cache = secure_rte_zmalloc("per-core-client cache",
+			sizeof(*client_mbuf_cache) * rte_lcore_count(), 0);
 
-		/* Create an RX queue for each client */
-		cl->rx_q = rte_ring_create(get_rx_queue_name(i),
-				ringsize, SOCKET0,
-				NO_FLAGS); /* multi producer multi consumer*/
-		if (cl->rx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create rx ring for client %u\n", i);
+	for (i = 0; i < rte_lcore_count(); i++) {
+		rte_snprintf(cache_name, sizeof(cache_name), "core%u cache", i);
+		client_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
+				sizeof(**client_mbuf_cache) * num_clients, 0);
+	}
 
-		cl->tx_q = rte_ring_create(get_tx_queue_name(i),
-				ringsize, SOCKET0,
-				NO_FLAGS); /* multi producer multi consumer*/
-		if (cl->tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring for client %u\n", i);
+	for (i = 0; i < num_clients; i++) {
+	  clientid = CLIENT1 + i;
+		struct vport_client *cl = &vports[clientid].client;
+		RTE_LOG(INFO, APP, "Initialising Client %d\n", clientid);
+		/* Create a "multi producer multi consumer" queue for each client */
+		cl->rx_q = queue_create(get_rx_queue_name(clientid), NO_FLAGS);
+		cl->tx_q = queue_create(get_tx_queue_name(clientid),NO_FLAGS);
+		cl->free_q = queue_create(get_free_queue_name(clientid),NO_FLAGS);
 	}
 
 	for (i = 0; i < ports->num_ports; i++) {
 		struct vport_phy *phy = &vports[PHYPORT0 + i].phy;
-
+		RTE_LOG(INFO, APP, "Initialising Port %d\n", i);
 		/* Create an RX queue for each ports */
-		phy->tx_q = rte_ring_create(get_port_tx_queue_name(i),
-				ringsize, SOCKET0,
-				RING_F_SC_DEQ); /* multi producer single consumer*/
-		if (phy->tx_q == NULL)
-			rte_exit(EXIT_FAILURE, "Cannot create tx ring for port %u\n", i);
+		phy->tx_q = queue_create(get_port_tx_queue_name(i),RING_F_SC_DEQ);
 	}
 
 	return 0;
@@ -388,25 +469,22 @@ void vport_init(void)
 static inline int
 send_to_client(uint8_t client, struct rte_mbuf *buf)
 {
-	struct vport_client *cl;
-	int tx_count = 0;
+	int ret, i;
+	struct rte_mbuf *freebufs[PKT_BURST_SIZE];
+	struct vport_client *cl = NULL;
+	struct mbuf_cache *per_cl_cache = NULL;
+
+	per_cl_cache = &client_mbuf_cache[rte_lcore_id()][client - CLIENT1];
+
+	per_cl_cache->cache[per_cl_cache->count++] = buf;
+
+	if (unlikely(per_cl_cache->count == CLIENT_MBUF_CACHE_SIZE - 1))
+		flush_clients();
 
 	cl = &vports[client].client;
-
-	tx_count = rte_ring_mp_enqueue(cl->rx_q, (void *)buf);
-
-	if (tx_count < 0) {
-		if (tx_count == -ENOBUFS) {
-			rte_pktmbuf_free(buf);
-			stats_vswitch_tx_drop_increment(INC_BY_1);
-			stats_vport_rx_drop_increment(client, INC_BY_1);
-		} else {
-			stats_vport_rx_increment(client, INC_BY_1);
-			stats_vport_overrun_increment(client, INC_BY_1);
-		}
-	} else {
-		stats_vport_rx_increment(client, INC_BY_1);
-	}
+	ret = rte_ring_sc_dequeue_burst(cl->free_q, (void *)freebufs, PKT_BURST_SIZE);
+	for (i = 0; i < ret; i++)
+		rte_pktmbuf_free(freebufs[i]);
 
 	return 0;
 }
@@ -481,10 +559,10 @@ send_to_veth(uint8_t vportid, struct rte_mbuf *buf)
 	return 0;
 }
 
-int
+inline int
 send_to_vport(uint8_t vportid, struct rte_mbuf *buf)
 {
-	if (vportid >= MAX_VPORTS) {
+	if (unlikely(vportid >= MAX_VPORTS)) {
 		RTE_LOG(WARNING, APP,
 			"sending to invalid vport: %u\n", vportid);
 		goto drop;
@@ -562,19 +640,13 @@ receive_from_client(uint8_t client, struct rte_mbuf **bufs)
 
 	cl = &vports[client].client;
 
-	/* Attempt to dequeue maximum available number of mbufs from ring */
-	while (rx_count > 0 &&
-			unlikely(rte_ring_sc_dequeue_bulk(
-					cl->tx_q, (void **)bufs, rx_count) != 0))
-		rx_count = (uint16_t)RTE_MIN(
-				rte_ring_count(cl->tx_q), PKT_BURST_SIZE);
+	rx_count = rte_ring_sc_dequeue_burst(cl->tx_q, (void **)bufs, PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by client */
 	stats_vport_tx_increment(client, rx_count);
 
 	return rx_count;
 }
-
 
 /*
  * Receive burst of packets from physical port.
@@ -595,10 +667,10 @@ receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
 	return rx_count;
 }
 
-uint16_t
+inline uint16_t
 receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs)
 {
-	if (vportid >= MAX_VPORTS) {
+	if (unlikely(vportid >= MAX_VPORTS)) {
 		RTE_LOG(WARNING, APP,
 			"receiving from invalid vport %u\n", vportid);
 		return 0;

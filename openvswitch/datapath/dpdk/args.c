@@ -79,7 +79,7 @@ static void
 usage(void)
 {
 	printf(
-	    "%s [EAL options] -- -p PORTMASK -n NUM_CLIENTS -k NUM_KNI [-v NUM_VETH]\n"
+	    "%s [EAL options] -- -p PORTMASK -n NUM_CLIENTS [-k NUM_KNI] [-v NUM_VETH]\n"
 	    " -p PORTMASK: hexadecimal bitmask of ports to use\n"
 	    " -n NUM_CLIENTS: number of client processes to use\n"
 	    " -k NUM_KNI: number of kni ports to use\n"
@@ -223,6 +223,9 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 
 	progname = argv[0];
 
+	/* Initialize the three counters to "not used" */
+	num_clients = num_kni = num_veth = 0;
+
 	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:", lgopts,
 		&option_index)) != EOF) {
 		switch (opt) {
@@ -284,7 +287,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		return -1;
 	}
 
-	if (num_kni == 0 || num_kni > MAX_KNI_PORTS) {
+	if (num_kni > MAX_KNI_PORTS) {
 		printf ("Number of KNI ports is invalid\n");
 		usage();
 		return -1;

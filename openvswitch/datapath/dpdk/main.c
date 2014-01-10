@@ -62,6 +62,7 @@
 #define PREFETCH_OFFSET     3
 #define BYTES_TO_PRINT      256
 #define RUN_ON_THIS_THREAD  1
+#define VSWITCHD_FLUSH_CLIENTS_PERIOD_MS 1000
 
 static const char *get_printable_mac_addr(uint8_t port);
 static void stats_display(void);
@@ -157,6 +158,9 @@ static inline void
 do_vswitchd(void)
 {
 	static uint64_t last_stats_display_tsc = 0;
+	static uint64_t last_flush_client = 0;
+  const uint64_t flush_clients_period = (rte_get_tsc_hz() + MS_PER_S - 1) /
+      MS_PER_S * VSWITCHD_FLUSH_CLIENTS_PERIOD_MS;
 
 	/* handle any packets from vswitchd */
 	handle_request_from_vswitchd();
@@ -169,6 +173,38 @@ do_vswitchd(void)
 		last_stats_display_tsc = curr_tsc;
 		stats_display();
 	}
+
+	/* force a flush_clients call every 'FLUSH_CLIENTS_PERIOD_MS' ms just in
+	 * case packets from vswitchd are still cached */
+	if (curr_tsc - last_flush_client > flush_clients_period) {
+		last_flush_client = curr_tsc;
+		flush_clients();
+	}
+
+}
+
+static inline void __attribute__((always_inline))
+do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
+{
+	int j;
+	struct flow_key key;
+
+	/* Prefetch first packets */
+	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++)
+		rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
+
+	/* Prefetch new packets and forward already prefetched packets */
+	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
+		flow_key_extract(bufs[j], vportid, &key);
+		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
+		switch_packet(bufs[j], &key);
+	}
+
+	/* Forward remaining prefetched packets */
+	for (; j < rx_count; j++) {
+		flow_key_extract(bufs[j], vportid, &key);
+		switch_packet(bufs[j], &key);
+	}
 }
 
 static inline void __attribute__((always_inline))
@@ -178,31 +214,14 @@ do_client_switching(void)
 	static unsigned kni_vportid = KNI0;
 	static unsigned veth_vportid = VETH0;
 	int rx_count = 0;
-	int j = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE] = {0};
-	struct flow_key key;
 
 	/* Client ports */
 
 	rx_count = receive_from_vport(client, &bufs[0]);
+	do_switch_packets(client, bufs, rx_count);
 
-	/* Prefetch first packets */
-	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
-	}
-
-	/* Prefetch and forward already prefetched packets */
-	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], client, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
-	}
-
-	/* Forward remaining prefetched packets */
-	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], client, &key);
-		switch_packet(bufs[j], &key);
-	}
+	flush_clients();
 
 	/* move to next client and dont handle client 0*/
 	if (++client == num_clients) {
@@ -210,54 +229,20 @@ do_client_switching(void)
 	}
 
 	/* KNI ports */
+	if (num_kni) {
+		rx_count = receive_from_vport(kni_vportid, &bufs[0]);
+		do_switch_packets(kni_vportid, bufs, rx_count);
 
-	rx_count = receive_from_vport(kni_vportid, &bufs[0]);
-
-	/* Prefetch first packets */
-	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
-	}
-
-	/* Prefetch and forward already prefetched packets */
-	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], kni_vportid, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
-	}
-
-	/* Forward remaining prefetched packets */
-	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], kni_vportid, &key);
-		switch_packet(bufs[j], &key);
-	}
-
-	/* move to next kni port */
-	if (++kni_vportid == (unsigned)KNI0 + num_kni) {
-		kni_vportid = KNI0;
+		/* move to next kni port */
+		if (++kni_vportid == (unsigned)KNI0 + num_kni) {
+			kni_vportid = KNI0;
+		}
 	}
 
 	/* vETH Devices */
-	if (unlikely(num_veth > 0)) {  /* vEth devices are optional */
+	if (unlikely(num_veth)) {  /* vEth devices are optional */
 		rx_count = receive_from_vport(veth_vportid, &bufs[0]);
-
-		/* Prefetch first packets */
-		for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
-			rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
-		}
-
-		/* Prefetch and forward already prefetched packets */
-		for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-			flow_key_extract(bufs[j], veth_vportid, &key);
-			rte_prefetch0(rte_pktmbuf_mtod(bufs[
-						j + PREFETCH_OFFSET], void *));
-			switch_packet(bufs[j], &key);
-		}
-
-		/* Forward remaining prefetched packets */
-		for (; j < rx_count; j++) {
-			flow_key_extract(bufs[j], veth_vportid, &key);
-			switch_packet(bufs[j], &key);
-		}
+		do_switch_packets(veth_vportid, bufs, rx_count);
 
 		/* move to next veth port */
 		if (++veth_vportid == (unsigned)VETH0 + num_veth) {
@@ -270,29 +255,10 @@ static inline void __attribute__((always_inline))
 do_port_switching(unsigned vportid)
 {
 	int rx_count = 0;
-	int j = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE] = {0};
-	struct flow_key key;
 
 	rx_count = receive_from_vport(vportid, &bufs[0]);
-
-	/* Prefetch first packets */
-	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++) {
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j], void *));
-	}
-
-	/* Prefetch and forward already prefetched packets */
-	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], vportid, &key);
-		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
-	}
-
-	/* Forward remaining prefetched packets */
-	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], vportid, &key);
-		switch_packet(bufs[j], &key);
-	}
+	do_switch_packets(vportid, bufs, rx_count);
 
 	flush_pkts(vportid);
 }
