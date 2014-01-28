@@ -1,7 +1,12 @@
 #include <linux/netdevice.h>
 #include <linux/if_vlan.h>
 
+#ifdef HAVE_RHEL_OVS_HOOK
+int nr_bridges = 0;
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38)
+#ifndef HAVE_CAN_CHECKSUM_PROTOCOL
 static bool can_checksum_protocol(unsigned long features, __be16 protocol)
 {
 	return  ((features & NETIF_F_GEN_CSUM) ||
@@ -12,6 +17,7 @@ static bool can_checksum_protocol(unsigned long features, __be16 protocol)
 		((features & NETIF_F_FCOE_CRC) &&
 				protocol == htons(ETH_P_FCOE)));
 }
+#endif
 
 static inline int illegal_highdma(struct net_device *dev, struct sk_buff *skb)
 {
@@ -43,11 +49,7 @@ static u32 harmonize_features(struct sk_buff *skb, __be16 protocol, u32 features
 
 u32 rpl_netif_skb_features(struct sk_buff *skb)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-	unsigned long vlan_features = 0;
-#else
 	unsigned long vlan_features = skb->dev->vlan_features;
-#endif /* kernel version < 2.6.26 */
 
 	__be16 protocol = skb->protocol;
 	u32 features = skb->dev->features;

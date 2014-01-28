@@ -1,4 +1,4 @@
-/* Copyright (c) 2011 Nicira Networks.
+/* Copyright (c) 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 #include <stdlib.h>
 
 #include "flow.h"
+#include "ofp-actions.h"
 #include "ofpbuf.h"
 #include "random.h"
 
@@ -30,7 +31,7 @@
 #define MAX_SLAVES 8 /* Maximum supported by this test framework. */
 
 struct slave {
-    uint16_t slave_id;
+    ofp_port_t slave_id;
 
     bool enabled;
     size_t flow_count;
@@ -42,7 +43,7 @@ struct slave_group {
 };
 
 static struct slave *
-slave_lookup(struct slave_group *sg, uint16_t slave_id)
+slave_lookup(struct slave_group *sg, ofp_port_t slave_id)
 {
     size_t i;
 
@@ -56,7 +57,7 @@ slave_lookup(struct slave_group *sg, uint16_t slave_id)
 }
 
 static bool
-slave_enabled_cb(uint16_t slave_id, void *aux)
+slave_enabled_cb(ofp_port_t slave_id, void *aux)
 {
     struct slave *slave;
 
@@ -64,22 +65,29 @@ slave_enabled_cb(uint16_t slave_id, void *aux)
     return slave ? slave->enabled : false;
 }
 
-static struct nx_action_bundle *
+static struct ofpact_bundle *
 parse_bundle_actions(char *actions)
 {
-    struct nx_action_bundle *nab;
-    struct ofpbuf b;
+    struct ofpact_bundle *bundle;
+    struct ofpbuf ofpacts;
+    struct ofpact *action;
+    char *error;
 
-    ofpbuf_init(&b, 0);
-    bundle_parse_load(&b, actions);
-    nab = ofpbuf_steal_data(&b);
-    ofpbuf_uninit(&b);
+    ofpbuf_init(&ofpacts, 0);
+    error = bundle_parse_load(actions, &ofpacts);
+    if (error) {
+        ovs_fatal(0, "%s", error);
+    }
 
-    if (ntohs(nab->n_slaves) > MAX_SLAVES) {
+    action = ofpacts.data;
+    bundle = ofpact_get_BUNDLE(xmemdup(action, action->len));
+    ofpbuf_uninit(&ofpacts);
+
+    if (bundle->n_slaves > MAX_SLAVES) {
         ovs_fatal(0, "At most %u slaves are supported", MAX_SLAVES);
     }
 
-    return nab;
+    return bundle;
 }
 
 static const char *
@@ -101,7 +109,7 @@ int
 main(int argc, char *argv[])
 {
     bool ok = true;
-    struct nx_action_bundle *nab;
+    struct ofpact_bundle *bundle;
     struct flow *flows;
     size_t i, n_permute, old_n_enabled;
     struct slave_group sg;
@@ -114,12 +122,12 @@ main(int argc, char *argv[])
         ovs_fatal(0, "usage: %s bundle_action", program_name);
     }
 
-    nab = parse_bundle_actions(argv[1]);
+    bundle = parse_bundle_actions(argv[1]);
 
     /* Generate 'slaves' array. */
     sg.n_slaves = 0;
-    for (i = 0; i < ntohs(nab->n_slaves); i++) {
-        uint16_t slave_id = bundle_get_slave(nab, i);
+    for (i = 0; i < bundle->n_slaves; i++) {
+        ofp_port_t slave_id = bundle->slaves[i];
 
         if (slave_lookup(&sg, slave_id)) {
             ovs_fatal(0, "Redundant slaves are not supported. ");
@@ -133,11 +141,9 @@ main(int argc, char *argv[])
     flows = xmalloc(N_FLOWS * sizeof *flows);
     for (i = 0; i < N_FLOWS; i++) {
         random_bytes(&flows[i], sizeof flows[i]);
-        flows[i].regs[0] = OFPP_NONE;
-    }
-
-    if (bundle_check(nab, 1024, flows)) {
-        ovs_fatal(0, "Bundle action fails to check.");
+        memset(flows[i].zeros, 0, sizeof flows[i].zeros);
+        flows[i].mpls_depth = 0;
+        flows[i].regs[0] = ofp_to_u16(OFPP_NONE);
     }
 
     /* Cycles through each possible liveness permutation for the given
@@ -185,26 +191,24 @@ main(int argc, char *argv[])
         changed = 0;
         for (j = 0; j < N_FLOWS; j++) {
             struct flow *flow = &flows[j];
-            uint16_t old_slave_id, ofp_port;
+            ofp_port_t old_slave_id, ofp_port;
+            struct flow_wildcards wc;
 
-            old_slave_id = flow->regs[0];
-            ofp_port = bundle_execute(nab, flow, slave_enabled_cb, &sg);
-            bundle_execute_load(nab, flow, slave_enabled_cb, &sg);
-            if (flow->regs[0] != ofp_port) {
-                ovs_fatal(0, "bundle_execute_load() and bundle_execute() "
-                          "disagree");
+            old_slave_id = u16_to_ofp(flow->regs[0]);
+            ofp_port = bundle_execute(bundle, flow, &wc, slave_enabled_cb,
+                                      &sg);
+            flow->regs[0] = ofp_to_u16(ofp_port);
+
+            if (ofp_port != OFPP_NONE) {
+                slave_lookup(&sg, ofp_port)->flow_count++;
             }
 
-            if (flow->regs[0] != OFPP_NONE) {
-                slave_lookup(&sg, flow->regs[0])->flow_count++;
-            }
-
-            if (old_slave_id != flow->regs[0]) {
+            if (old_slave_id != ofp_port) {
                 changed++;
             }
         }
 
-        if (nab->algorithm == htons(NX_BD_ALG_ACTIVE_BACKUP)) {
+        if (bundle->algorithm == NX_BD_ALG_ACTIVE_BACKUP) {
             perfect = active == old_active ? 0.0 : 1.0;
         } else {
             if (old_n_enabled || n_enabled) {
@@ -229,7 +233,7 @@ main(int argc, char *argv[])
             if (slave->enabled) {
                 double perfect_fp;
 
-                if (nab->algorithm == htons(NX_BD_ALG_ACTIVE_BACKUP)) {
+                if (bundle->algorithm == NX_BD_ALG_ACTIVE_BACKUP) {
                     perfect_fp = j == active ? 1.0 : 0.0;
                 } else {
                     perfect_fp = 1.0 / n_enabled;
@@ -262,7 +266,7 @@ main(int argc, char *argv[])
         old_n_enabled = n_enabled;
     }
 
-    free(nab);
+    free(bundle);
     free(flows);
     return ok ? 0 : 1;
 }

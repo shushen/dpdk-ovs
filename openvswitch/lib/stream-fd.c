@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <config.h>
 #include "stream-fd.h"
-#include <assert.h>
 #include <errno.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -25,10 +24,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "fatal-signal.h"
-#include "leak-checker.h"
 #include "poll-loop.h"
 #include "socket-util.h"
-#include "stress.h"
 #include "util.h"
 #include "stream-provider.h"
 #include "stream.h"
@@ -42,7 +39,6 @@ struct stream_fd
 {
     struct stream stream;
     int fd;
-    char *unlink_path;
 };
 
 static const struct stream_class stream_fd_class;
@@ -55,21 +51,17 @@ static void maybe_unlink_and_free(char *path);
  * and stores a pointer to the stream in '*streamp'.  Initial connection status
  * 'connect_status' is interpreted as described for stream_init().
  *
- * When '*streamp' is closed, then 'unlink_path' (if nonnull) will be passed to
- * fatal_signal_unlink_file_now() and then freed with free().
- *
  * Returns 0 if successful, otherwise a positive errno value.  (The current
  * implementation never fails.) */
 int
 new_fd_stream(const char *name, int fd, int connect_status,
-              char *unlink_path, struct stream **streamp)
+              struct stream **streamp)
 {
     struct stream_fd *s;
 
     s = xmalloc(sizeof *s);
     stream_init(&s->stream, &stream_fd_class, connect_status, name);
     s->fd = fd;
-    s->unlink_path = unlink_path;
     *streamp = &s->stream;
     return 0;
 }
@@ -86,7 +78,6 @@ fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
     close(s->fd);
-    maybe_unlink_and_free(s->unlink_path);
     free(s);
 }
 
@@ -97,37 +88,21 @@ fd_connect(struct stream *stream)
     return check_connection_completion(s->fd);
 }
 
-STRESS_OPTION(
-    stream_flaky_recv, "simulate failure of fd stream recvs",
-    100, 0, -1, 0);
-
 static ssize_t
 fd_recv(struct stream *stream, void *buffer, size_t n)
 {
     struct stream_fd *s = stream_fd_cast(stream);
     ssize_t retval;
 
-    if (STRESS(stream_flaky_recv)) {
-        return -EIO;
-    }
-
     retval = read(s->fd, buffer, n);
     return retval >= 0 ? retval : -errno;
 }
-
-STRESS_OPTION(
-    stream_flaky_send, "simulate failure of fd stream sends",
-    100, 0, -1, 0);
 
 static ssize_t
 fd_send(struct stream *stream, const void *buffer, size_t n)
 {
     struct stream_fd *s = stream_fd_cast(stream);
     ssize_t retval;
-
-    if (STRESS(stream_flaky_send)) {
-        return -EIO;
-    }
 
     retval = write(s->fd, buffer, n);
     return (retval > 0 ? retval
@@ -156,6 +131,7 @@ fd_wait(struct stream *stream, enum stream_wait_type wait)
 
 static const struct stream_class stream_fd_class = {
     "fd",                       /* name */
+    false,                      /* needs_probes */
     NULL,                       /* open */
     fd_close,                   /* close */
     fd_connect,                 /* connect */
@@ -174,10 +150,11 @@ struct fd_pstream
     int fd;
     int (*accept_cb)(int fd, const struct sockaddr *, size_t sa_len,
                      struct stream **);
+    int (*set_dscp_cb)(int fd, uint8_t dscp);
     char *unlink_path;
 };
 
-static struct pstream_class fd_pstream_class;
+static const struct pstream_class fd_pstream_class;
 
 static struct fd_pstream *
 fd_pstream_cast(struct pstream *pstream)
@@ -204,12 +181,14 @@ int
 new_fd_pstream(const char *name, int fd,
                int (*accept_cb)(int fd, const struct sockaddr *sa,
                                 size_t sa_len, struct stream **streamp),
+               int (*set_dscp_cb)(int fd, uint8_t dscp),
                char *unlink_path, struct pstream **pstreamp)
 {
     struct fd_pstream *ps = xmalloc(sizeof *ps);
     pstream_init(&ps->pstream, &fd_pstream_class, name);
     ps->fd = fd;
     ps->accept_cb = accept_cb;
+    ps->set_dscp_cb = set_dscp_cb;
     ps->unlink_path = unlink_path;
     *pstreamp = &ps->pstream;
     return 0;
@@ -237,7 +216,7 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)
     if (new_fd < 0) {
         retval = errno;
         if (retval != EAGAIN) {
-            VLOG_DBG_RL(&rl, "accept: %s", strerror(retval));
+            VLOG_DBG_RL(&rl, "accept: %s", ovs_strerror(retval));
         }
         return retval;
     }
@@ -259,12 +238,24 @@ pfd_wait(struct pstream *pstream)
     poll_fd_wait(ps->fd, POLLIN);
 }
 
-static struct pstream_class fd_pstream_class = {
+static int
+pfd_set_dscp(struct pstream *pstream, uint8_t dscp)
+{
+    struct fd_pstream *ps = fd_pstream_cast(pstream);
+    if (ps->set_dscp_cb) {
+        return ps->set_dscp_cb(ps->fd, dscp);
+    }
+    return 0;
+}
+
+static const struct pstream_class fd_pstream_class = {
     "pstream",
+    false,
     NULL,
     pfd_close,
     pfd_accept,
-    pfd_wait
+    pfd_wait,
+    pfd_set_dscp,
 };
 
 /* Helper functions. */

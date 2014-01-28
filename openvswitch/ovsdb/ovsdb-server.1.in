@@ -1,5 +1,10 @@
 .\" -*- nroff -*-
-.TH ovsdb\-server 1 "November 2009" "Open vSwitch" "Open vSwitch Manual"
+.de IQ
+.  br
+.  ns
+.  IP "\\$1"
+..
+.TH ovsdb\-server 1 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .\" This program's name:
 .ds PN ovsdb\-server
 .\" SSL peer program's name:
@@ -10,7 +15,7 @@ ovsdb\-server \- Open vSwitch database server
 .
 .SH SYNOPSIS
 \fBovsdb\-server\fR
-[\fIdatabase\fR]
+[\fIdatabase\fR]\&...
 [\fB\-\-remote=\fIremote\fR]\&...
 [\fB\-\-run=\fIcommand\fR]
 .so lib/daemon-syn.man
@@ -21,13 +26,13 @@ ovsdb\-server \- Open vSwitch database server
 .so lib/common-syn.man
 .
 .SH DESCRIPTION
-The \fBovsdb\-server\fR program provides RPC interfaces to an Open
-vSwitch database (OVSDB).  It supports JSON-RPC client connections
-over active or passive TCP/IP or Unix domain sockets.
+The \fBovsdb\-server\fR program provides RPC interfaces to one or more
+Open vSwitch databases (OVSDBs).  It supports JSON-RPC client
+connections over active or passive TCP/IP or Unix domain sockets.
 .PP
-The OVSDB file may be specified on the command line as \fIdatabase\fR.
-The default is \fB@sysconfdir@/openvswitch/conf.db\fR.  The database
-file must already have been created and initialized using, for
+Each OVSDB file may be specified on the command line as \fIdatabase\fR.
+If none is specified, the default is \fB@DBDIR@/conf.db\fR.  The database
+files must already have been created and initialized using, for
 example, \fBovsdb\-tool create\fR.
 .
 .SH OPTIONS
@@ -40,11 +45,10 @@ Adds \fIremote\fR as a connection method used by \fBovsdb\-server\fR.
 .so ovsdb/remote-passive.man
 .so ovsdb/remote-active.man
 .
-.IP "\fBdb:\fItable\fB,\fIcolumn\fR"
+.IP "\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR"
 Reads additional connection methods from \fIcolumn\fR in all of the
-rows in \fItable\fR.  As the contents of \fIcolumn\fR changes,
-\fBovsdb\-server\fR also adds and drops connection methods
-accordingly.
+rows in \fItable\fR within \fIdb\fR.  As the contents of \fIcolumn\fR changes,
+\fBovsdb\-server\fR also adds and drops connection methods accordingly.
 .IP
 If \fIcolumn\fR's type is string or set of strings, then the
 connection methods are taken directly from the column.  The connection
@@ -61,7 +65,7 @@ is mandatory: if it is missing or empty then no connection method can
 be configured.
 .IP "\fBmax_backoff\fR (integer)"
 Maximum number of milliseconds to wait between connection attempts.
-.IP "\fBinactivity_probe\fR (integer)
+.IP "\fBinactivity_probe\fR (integer)"
 Maximum number of milliseconds of idle time on connection to
 client before sending an inactivity probe message.
 .RE
@@ -92,11 +96,11 @@ configured remotes.
 The options described below for configuring the SSL public key
 infrastructure accept a special syntax for obtaining their
 configuration from the database.  If any of these options is given
-\fBdb:\fItable\fB,\fIcolumn\fR as its argument, then the actual file
-name is read from the specified \fIcolumn\fR in \fItable\fR within the
-\fBovsdb\-server\fR database.  The \fIcolumn\fR must have type string
-or set of strings.  The first nonempty string in the table is taken as
-the file name.  (This means that ordinarily there should be at most
+\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR as its argument, then the
+actual file name is read from the specified \fIcolumn\fR in \fItable\fR
+within the \fIdb\fR database.  The \fIcolumn\fR must have type
+string or set of strings.  The first nonempty string in the table is taken
+as the file name.  (This means that ordinarily there should be at most
 one row in \fItable\fR.)
 .so lib/ssl.man
 .so lib/ssl-bootstrap.man
@@ -111,9 +115,10 @@ described below.
 These commands are specific to \fBovsdb\-server\fR.
 .IP "\fBexit\fR"
 Causes \fBovsdb\-server\fR to gracefully terminate.
-.IP "\fBovsdb\-server/compact\fR"
-Compacts the database in-place.  The database is also automatically
-compacted occasionally.
+.IP "\fBovsdb\-server/compact\fR [\fIdb\fR]\&..."
+Compacts each database \fIdb\fR in-place.  If no \fIdb\fR is
+specified, compacts every database in-place.  Databases are also
+automatically compacted occasionally.
 .
 .IP "\fBovsdb\-server/reconnect\fR"
 Makes \fBovsdb\-server\fR drop all of the JSON\-RPC
@@ -122,8 +127,55 @@ connections to database clients and reconnect.
 This command might be useful for debugging issues with database
 clients.
 .
+.IP "\fBovsdb\-server/add\-remote \fIremote\fR"
+Adds a remote, as if \fB\-\-remote=\fIremote\fR had been specified on
+the \fBovsdb\-server\fR command line.  (If \fIremote\fR is already a
+remote, this command succeeds without changing the configuration.)
+.
+.IP "\fBovsdb\-server/remove\-remote \fIremote\fR"
+Removes the specified \fIremote\fR from the configuration, failing
+with an error if \fIremote\fR is not configured as a remote.  This
+command only works with remotes that were named on \fB\-\-remote\fR or
+\fBovsdb\-server/add\-remote\fR, that is, it will not remove remotes
+added indirectly because they were read from the database by
+configuring a \fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR remote.
+(You can remove a database source with \fBovsdb\-server/remove\-remote
+\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR, but not individual
+remotes found indirectly through the database.)
+.
+.IP "\fBovsdb\-server/list\-remotes"
+Outputs a list of the currently configured remotes named on
+\fB\-\-remote\fR or \fBovsdb\-server/add\-remote\fR, that is, it does
+not list remotes added indirectly because they were read from the
+database by configuring a
+\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR remote.
+.
+.IP "\fBovsdb\-server/add\-db \fIdatabase\fR"
+Adds the \fIdatabase\fR to the running \fBovsdb\-server\fR.  The database
+file must already have been created and initialized using, for example,
+\fBovsdb\-tool create\fR.
+.
+.IP "\fBovsdb\-server/remove\-db \fIdatabase\fR"
+Removes \fIdatabase\fR from the running \fBovsdb\-server\fR.  \fIdatabase\fR
+must be a database name as listed by \fBovsdb-server/list\-dbs\fR.
+.IP
+If a remote has been configured that points to the specified
+\fIdatabase\fR (e.g. \fB\-\-remote=db:\fIdatabase\fB,\fR... on the
+command line), then it will be disabled until another database with
+the same name is added again (with \fBovsdb\-server/add\-db\fR).
+.IP
+Any public key infrastructure options specified through this database
+(e.g. \fB\-\-private\-key=db:\fIdatabase,\fR... on the command line)
+will be disabled until another database with the same name is added
+again (with \fBovsdb\-server/add\-db\fR).
+.
+.IP "\fBovsdb\-server/list\-dbs"
+Outputs a list of the currently configured databases added either through
+the command line or through the \fBovsdb\-server/add\-db\fR command.
+.
 .so lib/vlog-unixctl.man
-.so lib/stress-unixctl.man
+.so lib/memory-unixctl.man
+.so lib/coverage-unixctl.man
 .SH "SEE ALSO"
 .
 .BR ovsdb\-tool (1).

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #include <config.h>
 #include "stream-ssl.h"
 #include "dhparams.h"
-#include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -26,6 +25,7 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 #include <poll.h>
@@ -34,7 +34,7 @@
 #include <unistd.h>
 #include "coverage.h"
 #include "dynamic-string.h"
-#include "leak-checker.h"
+#include "entropy.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "packets.h"
@@ -204,8 +204,8 @@ want_to_poll_events(int want)
 
 static int
 new_ssl_stream(const char *name, int fd, enum session_type type,
-              enum ssl_state state, const struct sockaddr_in *remote,
-              struct stream **streamp)
+               enum ssl_state state, const struct sockaddr_in *remote,
+               struct stream **streamp)
 {
     struct sockaddr_in local;
     socklen_t local_len = sizeof local;
@@ -228,7 +228,7 @@ new_ssl_stream(const char *name, int fd, enum session_type type,
         VLOG_ERR("CA certificate must be configured to use SSL");
         retval = ENOPROTOOPT;
     }
-    if (!SSL_CTX_check_private_key(ctx)) {
+    if (!retval && !SSL_CTX_check_private_key(ctx)) {
         VLOG_ERR("Private key does not match certificate public key: %s",
                  ERR_error_string(ERR_get_error(), NULL));
         retval = ENOPROTOOPT;
@@ -246,7 +246,7 @@ new_ssl_stream(const char *name, int fd, enum session_type type,
     /* Disable Nagle. */
     retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
     if (retval) {
-        VLOG_ERR("%s: setsockopt(TCP_NODELAY): %s", name, strerror(errno));
+        VLOG_ERR("%s: setsockopt(TCP_NODELAY): %s", name, ovs_strerror(errno));
         retval = errno;
         goto error;
     }
@@ -307,7 +307,7 @@ ssl_stream_cast(struct stream *stream)
 }
 
 static int
-ssl_open(const char *name, char *suffix, struct stream **streamp)
+ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
 {
     struct sockaddr_in sin;
     int error, fd;
@@ -317,12 +317,13 @@ ssl_open(const char *name, char *suffix, struct stream **streamp)
         return error;
     }
 
-    error = inet_open_active(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, &fd);
+    error = inet_open_active(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, &fd,
+                             dscp);
     if (fd >= 0) {
         int state = error ? STATE_TCP_CONNECTING : STATE_SSL_CONNECTING;
         return new_ssl_stream(name, fd, CLIENT, state, &sin, streamp);
     } else {
-        VLOG_ERR("%s: connect: %s", name, strerror(error));
+        VLOG_ERR("%s: connect: %s", name, ovs_strerror(error));
         return error;
     }
 }
@@ -368,7 +369,7 @@ do_ca_cert_bootstrap(struct stream *stream)
             return EPROTO;
         } else {
             VLOG_ERR("could not bootstrap CA cert: creating %s failed: %s",
-                     ca_cert.file_name, strerror(errno));
+                     ca_cert.file_name, ovs_strerror(errno));
             return errno;
         }
     }
@@ -377,7 +378,7 @@ do_ca_cert_bootstrap(struct stream *stream)
     if (!file) {
         error = errno;
         VLOG_ERR("could not bootstrap CA cert: fdopen failed: %s",
-                 strerror(error));
+                 ovs_strerror(error));
         unlink(ca_cert.file_name);
         return error;
     }
@@ -394,7 +395,7 @@ do_ca_cert_bootstrap(struct stream *stream)
     if (fclose(file)) {
         error = errno;
         VLOG_ERR("could not bootstrap CA cert: writing %s failed: %s",
-                 ca_cert.file_name, strerror(error));
+                 ca_cert.file_name, ovs_strerror(error));
         unlink(ca_cert.file_name);
         return error;
     }
@@ -440,7 +441,7 @@ ssl_connect(struct stream *stream)
 
     case STATE_SSL_CONNECTING:
         /* Capture the first few bytes of received data so that we can guess
-         * what kind of funny data we've been sent if SSL negotation fails. */
+         * what kind of funny data we've been sent if SSL negotiation fails. */
         if (sslv->n_head <= 0) {
             sslv->n_head = recv(sslv->fd, sslv->head, sizeof sslv->head,
                                 MSG_PEEK);
@@ -476,7 +477,7 @@ ssl_connect(struct stream *stream)
              * certificate, but that's more trouble than it's worth.  These
              * connections will succeed the next time they retry, assuming that
              * they have a certificate against the correct CA.) */
-            VLOG_ERR("rejecting SSL connection during bootstrap race window");
+            VLOG_INFO("rejecting SSL connection during bootstrap race window");
             return EPROTO;
         } else {
             return 0;
@@ -563,7 +564,7 @@ interpret_ssl_error(const char *function, int ret, int error,
             if (ret < 0) {
                 int status = errno;
                 VLOG_WARN_RL(&rl, "%s: system error (%s)",
-                             function, strerror(status));
+                             function, ovs_strerror(status));
                 return status;
             } else {
                 VLOG_WARN_RL(&rl, "%s: unexpected SSL connection close",
@@ -596,7 +597,7 @@ ssl_recv(struct stream *stream, void *buffer, size_t n)
     ssize_t ret;
 
     /* Behavior of zero-byte SSL_read is poorly defined. */
-    assert(n > 0);
+    ovs_assert(n > 0);
 
     old_state = SSL_get_state(sslv->ssl);
     ret = SSL_read(sslv->ssl, buffer, n);
@@ -672,7 +673,6 @@ ssl_send(struct stream *stream, const void *buffer, size_t n)
             ssl_clear_txbuf(sslv);
             return n;
         case EAGAIN:
-            leak_checker_claim(buffer);
             return n;
         default:
             sslv->txbuf = NULL;
@@ -754,6 +754,7 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
 
 const struct stream_class ssl_stream_class = {
     "ssl",                      /* name */
+    true,                       /* needs_probes */
     ssl_open,                   /* open */
     ssl_close,                  /* close */
     ssl_connect,                /* connect */
@@ -782,7 +783,8 @@ pssl_pstream_cast(struct pstream *pstream)
 }
 
 static int
-pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp)
+pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp,
+          uint8_t dscp)
 {
     struct pssl_pstream *pssl;
     struct sockaddr_in sin;
@@ -795,15 +797,16 @@ pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp)
         return retval;
     }
 
-    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin);
+    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, dscp);
     if (fd < 0) {
         return -fd;
     }
     sprintf(bound_name, "pssl:%"PRIu16":"IP_FMT,
-            ntohs(sin.sin_port), IP_ARGS(&sin.sin_addr.s_addr));
+            ntohs(sin.sin_port), IP_ARGS(sin.sin_addr.s_addr));
 
     pssl = xmalloc(sizeof *pssl);
     pstream_init(&pssl->pstream, &pssl_pstream_class, bound_name);
+    pstream_set_bound_port(&pssl->pstream, sin.sin_port);
     pssl->fd = fd;
     *pstreamp = &pssl->pstream;
     return 0;
@@ -831,7 +834,7 @@ pssl_accept(struct pstream *pstream, struct stream **new_streamp)
     if (new_fd < 0) {
         error = errno;
         if (error != EAGAIN) {
-            VLOG_DBG_RL(&rl, "accept: %s", strerror(error));
+            VLOG_DBG_RL(&rl, "accept: %s", ovs_strerror(error));
         }
         return error;
     }
@@ -842,12 +845,12 @@ pssl_accept(struct pstream *pstream, struct stream **new_streamp)
         return error;
     }
 
-    sprintf(name, "ssl:"IP_FMT, IP_ARGS(&sin.sin_addr));
+    sprintf(name, "ssl:"IP_FMT, IP_ARGS(sin.sin_addr.s_addr));
     if (sin.sin_port != htons(OFP_SSL_PORT)) {
         sprintf(strchr(name, '\0'), ":%"PRIu16, ntohs(sin.sin_port));
     }
     return new_ssl_stream(name, new_fd, SERVER, STATE_SSL_CONNECTING, &sin,
-                         new_streamp);
+                          new_streamp);
 }
 
 static void
@@ -857,12 +860,21 @@ pssl_wait(struct pstream *pstream)
     poll_fd_wait(pssl->fd, POLLIN);
 }
 
+static int
+pssl_set_dscp(struct pstream *pstream, uint8_t dscp)
+{
+    struct pssl_pstream *pssl = pssl_pstream_cast(pstream);
+    return set_dscp(pssl->fd, dscp);
+}
+
 const struct pstream_class pssl_pstream_class = {
     "pssl",
+    true,
     pssl_open,
     pssl_close,
     pssl_accept,
     pssl_wait,
+    pssl_set_dscp,
 };
 
 /*
@@ -883,7 +895,7 @@ ssl_init(void)
     static int init_status = -1;
     if (init_status < 0) {
         init_status = do_ssl_init();
-        assert(init_status >= 0);
+        ovs_assert(init_status >= 0);
     }
     return init_status;
 }
@@ -896,9 +908,39 @@ do_ssl_init(void)
     SSL_library_init();
     SSL_load_error_strings();
 
+    if (!RAND_status()) {
+        /* We occasionally see OpenSSL fail to seed its random number generator
+         * in heavily loaded hypervisors.  I suspect the following scenario:
+         *
+         * 1. OpenSSL calls read() to get 32 bytes from /dev/urandom.
+         * 2. The kernel generates 10 bytes of randomness and copies it out.
+         * 3. A signal arrives (perhaps SIGALRM).
+         * 4. The kernel interrupts the system call to service the signal.
+         * 5. Userspace gets 10 bytes of entropy.
+         * 6. OpenSSL doesn't read again to get the final 22 bytes.  Therefore
+         *    OpenSSL doesn't have enough entropy to consider itself
+         *    initialized.
+         *
+         * The only part I'm not entirely sure about is #6, because the OpenSSL
+         * code is so hard to read. */
+        uint8_t seed[32];
+        int retval;
+
+        VLOG_WARN("OpenSSL random seeding failed, reseeding ourselves");
+
+        retval = get_entropy(seed, sizeof seed);
+        if (retval) {
+            VLOG_ERR("failed to obtain entropy (%s)",
+                     ovs_retval_to_string(retval));
+            return retval > 0 ? retval : ENOPROTOOPT;
+        }
+
+        RAND_seed(seed, sizeof seed);
+    }
+
     /* New OpenSSL changed TLSv1_method() to return a "const" pointer, so the
      * cast is needed to avoid a warning with those newer versions. */
-    method = (SSL_METHOD *) TLSv1_method();
+    method = CONST_CAST(SSL_METHOD *, TLSv1_method());
     if (method == NULL) {
         VLOG_ERR("TLSv1_method: %s", ERR_error_string(ERR_get_error(), NULL));
         return ENOPROTOOPT;
@@ -973,7 +1015,8 @@ update_ssl_config(struct ssl_config_file *config, const char *file_name)
      * here. */
     error = get_mtime(file_name, &mtime);
     if (error && error != ENOENT) {
-        VLOG_ERR_RL(&rl, "%s: stat failed (%s)", file_name, strerror(error));
+        VLOG_ERR_RL(&rl, "%s: stat failed (%s)",
+                    file_name, ovs_strerror(error));
     }
     if (config->file_name
         && !strcmp(config->file_name, file_name)
@@ -1081,7 +1124,7 @@ read_cert_file(const char *file_name, X509 ***certs, size_t *n_certs)
     file = fopen(file_name, "r");
     if (!file) {
         VLOG_ERR("failed to open %s for reading: %s",
-                 file_name, strerror(errno));
+                 file_name, ovs_strerror(errno));
         return errno;
     }
 

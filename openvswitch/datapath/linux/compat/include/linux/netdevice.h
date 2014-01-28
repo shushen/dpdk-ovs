@@ -6,65 +6,14 @@
 struct net;
 
 #include <linux/version.h>
-/* Before 2.6.21, struct net_device has a "struct class_device" member named
- * class_dev.  Beginning with 2.6.21, struct net_device instead has a "struct
- * device" member named dev.  Otherwise the usage of these members is pretty
- * much the same. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,21)
-#define NETDEV_DEV_MEMBER class_dev
-#else
-#define NETDEV_DEV_MEMBER dev
-#endif
 
 #ifndef to_net_dev
 #define to_net_dev(class) container_of(class, struct net_device, NETDEV_DEV_MEMBER)
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-static inline
-struct net *dev_net(const struct net_device *dev)
-{
-#ifdef CONFIG_NET_NS
-	return dev->nd_net;
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25)
-	return &init_net;
-#else
-	return NULL;
-#endif
-}
-
-static inline
-void dev_net_set(struct net_device *dev, const struct net *net)
-{
-#ifdef CONFIG_NET_NS
-	dev->nd_dev = net;
-#endif
-}
-#endif /* linux kernel < 2.6.26 */
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-#define NETIF_F_NETNS_LOCAL 0
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
-#define proc_net init_net.proc_net
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
-typedef int netdev_tx_t;
-#endif
-
-#ifndef for_each_netdev
-/* Linux before 2.6.22 didn't have for_each_netdev at all. */
-#define for_each_netdev(net, d) for (d = dev_base; d; d = d->next)
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-/* Linux 2.6.24 added a network namespace pointer to the macro. */
-#undef for_each_netdev
-#define for_each_netdev(net, d) list_for_each_entry(d, &dev_base_head, dev_list)
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-#define net_xmit_eval(e)       ((e) == NET_XMIT_CN ? 0 : (e))
+#ifdef HAVE_RHEL_OVS_HOOK
+extern struct sk_buff *(*openvswitch_handle_frame_hook)(struct sk_buff *skb);
+extern int nr_bridges;
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
@@ -77,38 +26,34 @@ extern void unregister_netdevice_many(struct list_head *head);
 extern void dev_disable_lro(struct net_device *dev);
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-#define skb_checksum_help(skb) skb_checksum_help((skb), 0)
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36) || \
+    defined HAVE_RHEL_OVS_HOOK
 static inline int netdev_rx_handler_register(struct net_device *dev,
 					     void *rx_handler,
 					     void *rx_handler_data)
 {
+#ifdef HAVE_RHEL_OVS_HOOK
+	rcu_assign_pointer(dev->ax25_ptr, rx_handler_data);
+	nr_bridges++;
+	rcu_assign_pointer(openvswitch_handle_frame_hook, rx_handler);
+#else
 	if (dev->br_port)
 		return -EBUSY;
 	rcu_assign_pointer(dev->br_port, rx_handler_data);
+#endif
 	return 0;
 }
 static inline void netdev_rx_handler_unregister(struct net_device *dev)
 {
+#ifdef HAVE_RHEL_OVS_HOOK
+	rcu_assign_pointer(dev->ax25_ptr, NULL);
+
+	if (--nr_bridges <= 0)
+		rcu_assign_pointer(openvswitch_handle_frame_hook, NULL);
+#else
 	rcu_assign_pointer(dev->br_port, NULL);
+#endif
 }
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-#undef SET_ETHTOOL_OPS
-#define SET_ETHTOOL_OPS(netdev, ops) \
-	((netdev)->ethtool_ops = (struct ethtool_ops *)(ops))
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-#define dev_get_by_name(net, name) dev_get_by_name(name)
-#define dev_get_by_index(net, ifindex) dev_get_by_index(ifindex)
-#define __dev_get_by_name(net, name) __dev_get_by_name(name)
-#define __dev_get_by_index(net, ifindex) __dev_get_by_index(ifindex)
-#define dev_get_by_index_rcu(net, ifindex) dev_get_by_index_rcu(ifindex)
 #endif
 
 #ifndef HAVE_DEV_GET_BY_INDEX_RCU
@@ -128,17 +73,6 @@ static inline struct net_device *dev_get_by_index_rcu(struct net *net, int ifind
 #define NETIF_F_FSO 0
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,30)
-#define NETIF_F_FCOE_CRC	(1 << 24) /* FCoE CRC32 */
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23)
-#define NETIF_F_IPV6_CSUM	16      /* Can checksum TCP/UDP over IPV6 */
-
-#define NETIF_F_V4_CSUM		(NETIF_F_GEN_CSUM | NETIF_F_IP_CSUM)
-#define NETIF_F_V6_CSUM		(NETIF_F_GEN_CSUM | NETIF_F_IPV6_CSUM)
-#endif
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,38)
 #define skb_gso_segment rpl_skb_gso_segment
 struct sk_buff *rpl_skb_gso_segment(struct sk_buff *skb, u32 features);
@@ -151,6 +85,38 @@ static inline int rpl_netif_needs_gso(struct sk_buff *skb, int features)
 {
 	return skb_is_gso(skb) && (!skb_gso_ok(skb, features) ||
 		unlikely(skb->ip_summed != CHECKSUM_PARTIAL));
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0)
+typedef u32 netdev_features_t;
+#endif
+
+#ifndef HAVE___SKB_GSO_SEGMENT
+static inline struct sk_buff *__skb_gso_segment(struct sk_buff *skb,
+						netdev_features_t features,
+						bool tx_path)
+{
+	return skb_gso_segment(skb, features);
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
+
+/* XEN dom0 networking assumes dev->master is bond device
+ * and it tries to access bond private structure from dev->master
+ * ptr on receive path. This causes panic. Therefore it is better
+ * not to backport this API.
+ **/
+static inline int netdev_master_upper_dev_link(struct net_device *dev,
+					       struct net_device *upper_dev)
+{
+	return 0;
+}
+
+static inline void netdev_upper_dev_unlink(struct net_device *dev,
+					   struct net_device *upper_dev)
+{
 }
 #endif
 

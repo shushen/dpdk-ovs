@@ -1,4 +1,9 @@
-.TH ovs\-dpctl 8 "August 2009" "Open vSwitch" "Open vSwitch Manual"
+.de IQ
+.  br
+.  ns
+.  IP "\\$1"
+..
+.TH ovs\-dpctl 8 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .ds PN ovs\-dpctl
 .
 .SH NAME
@@ -11,8 +16,7 @@ ovs\-dpctl \- administer Open vSwitch datapaths
 .SH DESCRIPTION
 .PP
 The \fBovs\-dpctl\fR program can create, modify, and delete Open vSwitch
-datapaths.  A single machine may host up to 256 datapaths (numbered 0
-to 255).
+datapaths.  A single machine may host any number of datapaths.
 .PP
 A newly created datapath is associated with only one network device, a
 virtual network device sometimes called the datapath's ``local port''.
@@ -62,6 +66,9 @@ The following options are currently supported:
 .RS
 .IP "\fBtype=\fItype\fR"
 Specifies the type of port to add.  The default type is \fBsystem\fR.
+.IP "\fBport_no=\fIport\fR"
+Requests a specific port number within the datapath.  If this option is
+not specified then one will be automatically assigned.
 .IP "\fIkey\fB=\fIvalue\fR"
 Adds an arbitrary key-value option to the port's configuration.
 .RE
@@ -74,9 +81,9 @@ Reconfigures each \fIport\fR in \fIdp\fR as specified.  An
 \fIoption\fR of the form \fIkey\fB=\fIvalue\fR adds the specified
 key-value option to the port or overrides an existing key's value.  An
 \fIoption\fR of the form \fIkey\fB=\fR, that is, without a value,
-deletes the key-value named \fIkey\fR.  The type of a port cannot be
-changed, so \fBtype=\fItype\fR is only allowed if \fItype\fR is the
-port's existing type.
+deletes the key-value named \fIkey\fR.  The type and port number of a
+port cannot be changed, so \fBtype\fR and \fBport_no\fR are only allowed if
+they match the existing configuration.
 .TP
 \fBdel\-if \fIdp netdev\fR...
 Removes each \fInetdev\fR from the list of network devices datapath
@@ -97,29 +104,69 @@ port.
 If one or more datapaths are specified, information on only those
 datapaths are displayed.  Otherwise, \fBovs\-dpctl\fR displays information
 about all configured datapaths.
+.SS "DEBUGGING COMMANDS"
+The following commands are primarily useful for debugging Open
+vSwitch.  The flow table entries (both matches and actions) that they
+work with are not OpenFlow flow entries.  Instead, they are different
+and considerably simpler flows maintained by the Open vSwitch kernel
+module.  Use \fBovs\-ofctl\fR(8), instead, to work with OpenFlow flow
+entries.
 .
-.IP "\fBdump\-flows \fIdp\fR"
-Prints to the console all flow entries in datapath \fIdp\fR's
-flow table.
+.PP
+The \fIdp\fR argument to each of these commands is optional when
+exactly one datapath exists, in which case that datapath is the
+default.  When multiple datapaths exist, then a datapath name is
+required.
+.
+.IP "[\fB\-m \fR| \fB\-\-more\fR] \fBdump\-flows\fR [\fIdp\fR]"
+Prints to the console all flow entries in datapath \fIdp\fR's flow
+table.  Without \fB\-m\fR or \fB\-\-more\fR, output omits match fields
+that a flow wildcards entirely; with \fB\-m\fR or \fB\-\-more\fR,
+output includes all wildcarded fields.
+.
+.IP "\fBadd\-flow\fR [\fIdp\fR] \fIflow actions\fR"
+.IQ "[\fB\-\-clear\fR] [\fB\-\-may-create\fR] [\fB\-s\fR | \fB\-\-statistics\fR] \fBmod\-flow\fR [\fIdp\fR] \fIflow actions\fR"
+Adds or modifies a flow in \fIdp\fR's flow table that, when a packet
+matching \fIflow\fR arrives, causes \fIactions\fR to be executed.
 .IP
-This command is primarily useful for debugging Open vSwitch.  The flow
-table entries that it displays are not
-OpenFlow flow entries.  Instead, they are different and considerably
-simpler flows maintained by the Open vSwitch kernel module.
-.IP "\fBdel\-flows \fIdp\fR"
+The \fBadd\-flow\fR command succeeds only if \fIflow\fR does not
+already exist in \fIdp\fR.  Contrariwise, \fBmod\-flow\fR without
+\fB\-\-may\-create\fR only modifies the actions for an existing flow.
+With \fB\-\-may\-create\fR, \fBmod\-flow\fR will add a new flow or
+modify an existing one.
+.IP
+If \fB\-s\fR or \fB\-\-statistics\fR is specified, then
+\fBmod\-flows\fR prints the modified flow's statistics.  A flow's
+statistics are the number of packets and bytes that have passed
+through the flow, the elapsed time since the flow last processed a
+packet (if ever), and (for TCP flows) the union of the TCP flags
+processed through the flow.
+.IP
+With \fB\-\-clear\fR, \fBmod\-flows\fR zeros out the flow's
+statistics.  The statistics printed if \fB\-s\fR or
+\fB\-\-statistics\fR is also specified are those from just before
+clearing the statistics.
+.
+.IP "[\fB\-s\fR | \fB\-\-statistics\fR] \fBdel\-flow\fR [\fIdp\fR] \fIflow\fR"
+Deletes the flow from \fIdp\fR's flow table that matches \fIflow\fR.
+If \fB\-s\fR or \fB\-\-statistics\fR is specified, then
+\fBmod\-flows\fR prints the deleted flow's statistics.
+.
+.IP "\fBdel\-flows\fR [\fIdp\fR]"
 Deletes all flow entries from datapath \fIdp\fR's flow table.
-.IP
-This command is primarily useful for debugging Open vSwitch.  As
-discussed in \fBdump\-flows\fR, these entries are
-not OpenFlow flow entries.  By deleting them, the process that set them
-up may be confused about their disappearance.
 .
 .SH OPTIONS
-.IP "\fB\-s\fR, \fB\-\-statistics\fR"
+.IP "\fB\-s\fR"
+.IQ "\fB\-\-statistics\fR"
 Causes the \fBshow\fR command to print packet and byte counters for
 each port within the datapaths that it shows.
-.TP
-\fB\-t\fR, \fB\-\-timeout=\fIsecs\fR
+.
+.IP "\fB\-m\fR"
+.IQ "\fB\-\-more\fR"
+Increases the verbosity of \fBdump\-flows\fR output.
+.
+.IP "\fB\-t\fR"
+.IQ "\fB\-\-timeout=\fIsecs\fR"
 Limits \fBovs\-dpctl\fR runtime to approximately \fIsecs\fR seconds.  If
 the timeout expires, \fBovs\-dpctl\fR will exit with a \fBSIGALRM\fR
 signal.

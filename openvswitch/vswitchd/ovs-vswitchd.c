@@ -1,5 +1,5 @@
-/* Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <config.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
@@ -34,37 +33,41 @@
 #include "dirs.h"
 #include "dpif.h"
 #include "dummy.h"
-#include "leak-checker.h"
+#include "memory.h"
 #include "netdev.h"
 #include "openflow/openflow.h"
 #include "ovsdb-idl.h"
 #include "poll-loop.h"
 #include "process.h"
 #include "signals.h"
+#include "simap.h"
 #include "stream-ssl.h"
 #include "stream.h"
-#include "stress.h"
 #include "svec.h"
 #include "timeval.h"
 #include "unixctl.h"
 #include "util.h"
 #include "vconn.h"
 #include "vlog.h"
-#include "vswitchd/vswitch-idl.h"
+#include "lib/vswitch-idl.h"
 
 VLOG_DEFINE_THIS_MODULE(vswitchd);
 
+/* --mlockall: If set, locks all process memory into physical RAM, preventing
+ * the kernel from paging any of its memory to disk. */
+static bool want_mlockall;
+
 static unixctl_cb_func ovs_vswitchd_exit;
 
-static char *parse_options(int argc, char *argv[]);
+static char *parse_options(int argc, char *argv[], char **unixctl_path);
 static void usage(void) NO_RETURN;
 
 extern int
 rte_eal_init(int argc, char **argv);
-
 int
 main(int argc, char *argv[])
 {
+    char *unixctl_path = NULL;
     struct unixctl_server *unixctl;
     struct signal *sighup;
     char *remote;
@@ -75,11 +78,9 @@ main(int argc, char *argv[])
         return -1;
     argc -= retval;
     argv += retval;
-
     proctitle_init(argc, argv);
     set_program_name(argv[0]);
-    stress_init_command();
-    remote = parse_options(argc, argv);
+    remote = parse_options(argc, argv, &unixctl_path);
     signal(SIGPIPE, SIG_IGN);
     sighup = signal_register(SIGHUP);
     process_init();
@@ -87,7 +88,17 @@ main(int argc, char *argv[])
 
     daemonize_start();
 
-    retval = unixctl_server_create(NULL, &unixctl);
+    if (want_mlockall) {
+#ifdef HAVE_MLOCKALL
+        if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
+            VLOG_ERR("mlockall failed: %s", ovs_strerror(errno));
+        }
+#else
+        VLOG_ERR("mlockall not supported on this system");
+#endif
+    }
+
+    retval = unixctl_server_create(unixctl_path, &unixctl);
     if (retval) {
         exit(EXIT_FAILURE);
     }
@@ -101,6 +112,15 @@ main(int argc, char *argv[])
         if (signal_poll(sighup)) {
             vlog_reopen_log_file();
         }
+        memory_run();
+        if (memory_should_report()) {
+            struct simap usage;
+
+            simap_init(&usage);
+            bridge_get_memory_usage(&usage);
+            memory_report(&usage);
+            simap_destroy(&usage);
+        }
         bridge_run_fast();
         bridge_run();
         bridge_run_fast();
@@ -108,6 +128,7 @@ main(int argc, char *argv[])
         netdev_run();
 
         signal_wait(sighup);
+        memory_wait();
         bridge_wait();
         unixctl_server_wait(unixctl);
         netdev_wait();
@@ -118,35 +139,34 @@ main(int argc, char *argv[])
     }
     bridge_exit();
     unixctl_server_destroy(unixctl);
-    signal_unregister(sighup);
 
     return 0;
 }
 
 static char *
-parse_options(int argc, char *argv[])
+parse_options(int argc, char *argv[], char **unixctl_pathp)
 {
     enum {
         OPT_PEER_CA_CERT = UCHAR_MAX + 1,
         OPT_MLOCKALL,
+        OPT_UNIXCTL,
         VLOG_OPTION_ENUMS,
-        LEAK_CHECKER_OPTION_ENUMS,
         OPT_BOOTSTRAP_CA_CERT,
         OPT_ENABLE_DUMMY,
         OPT_DISABLE_SYSTEM,
         DAEMON_OPTION_ENUMS
     };
-    static struct option long_options[] = {
+    static const struct option long_options[] = {
         {"help",        no_argument, NULL, 'h'},
         {"version",     no_argument, NULL, 'V'},
         {"mlockall",    no_argument, NULL, OPT_MLOCKALL},
+        {"unixctl",     required_argument, NULL, OPT_UNIXCTL},
         DAEMON_LONG_OPTIONS,
         VLOG_LONG_OPTIONS,
-        LEAK_CHECKER_LONG_OPTIONS,
         STREAM_SSL_LONG_OPTIONS,
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
-        {"enable-dummy", no_argument, NULL, OPT_ENABLE_DUMMY},
+        {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},
         {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},
         {NULL, 0, NULL, 0},
     };
@@ -165,22 +185,19 @@ parse_options(int argc, char *argv[])
             usage();
 
         case 'V':
-            ovs_print_version(OFP_VERSION, OFP_VERSION);
+            ovs_print_version(OFP10_VERSION, OFP10_VERSION);
             exit(EXIT_SUCCESS);
 
         case OPT_MLOCKALL:
-#ifdef HAVE_MLOCKALL
-            if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
-                VLOG_ERR("mlockall failed: %s", strerror(errno));
-            }
-#else
-            VLOG_ERR("mlockall not supported on this system");
-#endif
+            want_mlockall = true;
+            break;
+
+        case OPT_UNIXCTL:
+            *unixctl_pathp = optarg;
             break;
 
         VLOG_OPTION_HANDLERS
         DAEMON_OPTION_HANDLERS
-        LEAK_CHECKER_OPTION_HANDLERS
         STREAM_SSL_OPTION_HANDLERS
 
         case OPT_PEER_CA_CERT:
@@ -192,7 +209,7 @@ parse_options(int argc, char *argv[])
             break;
 
         case OPT_ENABLE_DUMMY:
-            dummy_enable();
+            dummy_enable(optarg && !strcmp(optarg, "override"));
             break;
 
         case OPT_DISABLE_SYSTEM:
@@ -236,9 +253,9 @@ usage(void)
     daemon_usage();
     vlog_usage();
     printf("\nOther options:\n"
+           "  --unixctl=SOCKET        override default control socket name\n"
            "  -h, --help              display this help message\n"
            "  -V, --version           display version information\n");
-    leak_checker_usage();
     exit(EXIT_SUCCESS);
 }
 
@@ -248,5 +265,5 @@ ovs_vswitchd_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
 {
     bool *exiting = exiting_;
     *exiting = true;
-    unixctl_command_reply(conn, 200, NULL);
+    unixctl_command_reply(conn, NULL);
 }

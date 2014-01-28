@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Nicira Networks.
+ * Copyright (c) 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,10 +23,10 @@
 
 /* LACP Protocol Implementation. */
 
-enum lacp_time {
-    LACP_TIME_FAST,                   /* LACP fast mode. */
-    LACP_TIME_SLOW,                   /* LACP slow mode. */
-    LACP_TIME_CUSTOM                  /* Nonstandard custom mode. */
+enum lacp_status {
+    LACP_NEGOTIATED,                  /* Successful LACP negotations. */
+    LACP_CONFIGURED,                  /* LACP is enabled but not negotiated. */
+    LACP_DISABLED                     /* LACP is not enabled. */
 };
 
 struct lacp_settings {
@@ -34,21 +34,20 @@ struct lacp_settings {
     uint8_t id[ETH_ADDR_LEN];         /* System ID. Must be nonzero. */
     uint16_t priority;                /* System priority. */
     bool active;                      /* Active or passive mode? */
-    enum lacp_time lacp_time;         /* Probe rate. */
-    long long int custom_time;        /* Probe interval if LACP_TIME_CUSTOM. */
-    bool heartbeat;                   /* Heartbeat mode. */
+    bool fast;                        /* Fast or slow probe interval. */
 };
 
 void lacp_init(void);
 struct lacp *lacp_create(void);
-void lacp_destroy(struct lacp *);
+void lacp_unref(struct lacp *);
+struct lacp *lacp_ref(const struct lacp *);
 
 void lacp_configure(struct lacp *, const struct lacp_settings *);
 bool lacp_is_active(const struct lacp *);
 
 void lacp_process_packet(struct lacp *, const void *slave,
                          const struct ofpbuf *packet);
-bool lacp_negotiated(const struct lacp *);
+enum lacp_status lacp_status(const struct lacp *);
 
 struct lacp_slave_settings {
     char *name;                       /* Name (for debugging). */
@@ -62,7 +61,6 @@ void lacp_slave_register(struct lacp *, void *slave_,
 void lacp_slave_unregister(struct lacp *, const void *slave);
 void lacp_slave_carrier_changed(const struct lacp *, const void *slave);
 bool lacp_slave_may_enable(const struct lacp *, const void *slave);
-uint16_t lacp_slave_get_port_id(const struct lacp *, const void *slave);
 bool lacp_slave_is_current(const struct lacp *, const void *slave_);
 
 /* Callback function for lacp_run() for sending a LACP PDU. */

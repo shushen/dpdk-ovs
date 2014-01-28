@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -33,6 +33,7 @@
  */
 
 #include <stdio.h>
+#include <rte_ether.h>
 #include "packets.h"
 #include "action.h"
 #include "vport.h"
@@ -52,6 +53,14 @@ static void action_pop_vlan(struct rte_mbuf *mbuf);
 static void action_push_vlan(const struct action_push_vlan *action,
                              struct rte_mbuf *mbuf);
 static int check_for_multiple_output(const struct action *actions);
+static void action_set_ethernet(const struct ovs_key_ethernet *ethernet_key,
+                    struct rte_mbuf *mbuf);
+static void action_set_ipv4(const struct ovs_key_ipv4 *ipv4_key,
+                    struct rte_mbuf *mbuf);
+static void action_set_tcp(const struct ovs_key_tcp *tcp_key,
+                    struct rte_mbuf *mbuf);
+static void action_set_udp(const struct ovs_key_udp *udp_key,
+                    struct rte_mbuf *mbuf);
 
 /*
  * Do 'action' of action_type 'type' on 'mbuf'
@@ -96,6 +105,18 @@ action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 		case ACTION_PUSH_VLAN:
 			action_push_vlan(&actions[i].data.vlan, mbuf);
 			break;
+		case ACTION_SET_ETHERNET:
+			action_set_ethernet(&actions[i].data.ethernet, mbuf);
+			break;
+		case ACTION_SET_IPV4:
+			action_set_ipv4(&actions[i].data.ipv4, mbuf);
+			break;
+		case ACTION_SET_TCP:
+			action_set_tcp(&actions[i].data.tcp, mbuf);
+			break;
+		case ACTION_SET_UDP:
+			action_set_udp(&actions[i].data.udp, mbuf);
+			break;
 		default:
 			printf("action_execute(): action not currently"
 			       " implemented\n");
@@ -136,16 +157,7 @@ static inline void
 action_output(const struct action_output *action,
                           struct rte_mbuf *mbuf)
 {
-	uint8_t vport = action->port;
-
-	if (IS_PHY_PORT(vport))                   /* Physical port */
-		send_to_port(vport, mbuf);
-	else if (IS_KNI_PORT(vport))              /* KNI FIFO */
-		send_to_kni(vport, mbuf);
-	else if (unlikely(IS_VETH_PORT(vport)))   /* vEth FIFO */
-		send_to_veth(vport, mbuf);
-	else                                      /* Client ring */
-		send_to_client(vport, mbuf);
+	send_to_vport(action->port, mbuf);
 }
 
 /*
@@ -186,3 +198,62 @@ action_push_vlan(const struct action_push_vlan *action,
 	update_mbuf(ovs_pkt, mbuf);
 }
 
+/*
+ * Modify the ethernet header as specified in the key
+ */
+static void
+action_set_ethernet(const struct ovs_key_ethernet *ethernet_key,
+                    struct rte_mbuf *mbuf)
+{
+	struct ether_hdr *ether_hdr;
+	/* Note, there is no function in openvswitch.h to modify
+	 * the ethernet addresses
+	 */
+	ether_hdr = mbuf->pkt.data;
+	memcpy(&ether_hdr->d_addr, ethernet_key->eth_dst, sizeof(struct ether_addr));
+	memcpy(&ether_hdr->s_addr, ethernet_key->eth_src, sizeof(struct ether_addr));
+}
+
+/*
+ * Modify the IPV4 header as specified in the key
+ */
+static void
+action_set_ipv4(const struct ovs_key_ipv4 *ipv4_key,
+                    struct rte_mbuf *mbuf)
+{
+	struct ofpbuf *ovs_pkt = NULL;
+
+	ovs_pkt = overlay_ofpbuf(mbuf);
+	packet_set_ipv4(ovs_pkt, ipv4_key->ipv4_src, ipv4_key->ipv4_dst,
+	                ipv4_key->ipv4_tos, ipv4_key->ipv4_ttl);
+	update_mbuf(ovs_pkt, mbuf);
+}
+
+/*
+ * Modify the TCP header as specified in the key
+ */
+static void
+action_set_tcp(const struct ovs_key_tcp *tcp_key,
+                    struct rte_mbuf *mbuf)
+{
+	struct ofpbuf *ovs_pkt = NULL;
+
+	ovs_pkt = overlay_ofpbuf(mbuf);
+	packet_set_tcp_port(ovs_pkt, tcp_key->tcp_src, tcp_key->tcp_dst);
+	update_mbuf(ovs_pkt, mbuf);
+}
+
+/*
+ * Modify the UDP header as specified in the key
+ */
+static void
+action_set_udp(const struct ovs_key_udp *udp_key,
+                    struct rte_mbuf *mbuf)
+{
+	struct ofpbuf *ovs_pkt = NULL;
+
+	ovs_pkt = overlay_ofpbuf(mbuf);
+	packet_set_udp_port(ovs_pkt, udp_key->udp_src, udp_key->udp_dst);
+	update_mbuf(ovs_pkt, mbuf);
+
+}

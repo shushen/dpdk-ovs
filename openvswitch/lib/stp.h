@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,11 +55,13 @@ typedef uint64_t stp_identifier;
 
 /* Basic STP functionality. */
 #define STP_MAX_PORTS 255
+void stp_init(void);
 struct stp *stp_create(const char *name, stp_identifier bridge_id,
                        void (*send_bpdu)(struct ofpbuf *bpdu, int port_no,
                                          void *aux),
                        void *aux);
-void stp_destroy(struct stp *);
+struct stp *stp_ref(const struct stp *);
+void stp_unref(struct stp *);
 void stp_tick(struct stp *, int ms);
 void stp_set_bridge_id(struct stp *, stp_identifier bridge_id);
 void stp_set_bridge_priority(struct stp *, uint16_t new_priority);
@@ -76,6 +78,7 @@ int stp_get_root_path_cost(const struct stp *);
 int stp_get_hello_time(const struct stp *);
 int stp_get_max_age(const struct stp *);
 int stp_get_forward_delay(const struct stp *);
+bool stp_check_and_reset_fdb_flush(struct stp *);
 
 /* Obtaining STP ports. */
 struct stp_port *stp_get_port(struct stp *, int port_no);

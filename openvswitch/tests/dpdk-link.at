@@ -29,7 +29,7 @@
 m4_define([CHECK_DPDK_LINK],
 [AT_BANNER([dpdk-link tests])
 AT_SETUP([Check negative cases for dpdk-link.c])
-AT_CHECK([sudo -E test-dpdk-link -c 1 -n 4], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-dpdk-link -c 1 -n 4], [0], [ignore], [])
 AT_CLEANUP
 ])
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,18 +46,21 @@
 
 #define VLAN_CFI 0x1000
 
-#ifdef PG_DEBUG
-#define DPDK_DEBUG() printf("DPIF-DPDK.c %s Line %d\n", __FUNCTION__, __LINE__);
-#else
-#define DPDK_DEBUG()
-#endif
-
+#define DPDK_DEBUG() VLOG_DBG_RL(&dpmsg_rl, "%s: %s Line %d\n", __FILE__, __FUNCTION__, __LINE__);
+#define BR_PREFIX_LEN   2
+#define BR_PREFIX       "br"
 #define DPIF_SOCKNAME "\0dpif-dpdk"
+
+#define SIGNAL_HANDLED(sock_fd, sock_msg) \
+    do { \
+        recvfrom(sock_fd, &sock_msg, sizeof(sock_msg), 0, NULL, NULL); \
+    } while (0)
 
 VLOG_DEFINE_THIS_MODULE(dpif_dpdk);
 
 static int dpdk_sock = -1;
-static int polling;
+
+static struct vlog_rate_limit dpmsg_rl = VLOG_RATE_LIMIT_INIT(600, 600);
 
 static void dpif_dpdk_flow_init(struct dpif_dpdk_flow_message *);
 static int dpif_dpdk_flow_transact(struct dpif_dpdk_flow_message *request,
@@ -83,6 +86,8 @@ static void flow_message_put_create(struct dpif *dpif OVS_UNUSED,
 static void flow_message_del_create(struct dpif_dpdk_flow_message *request,
                                     const struct nlattr *key, size_t key_len);
 static void flow_message_flush_create(struct dpif_dpdk_flow_message *request);
+static void create_action_set_datapath(struct dpif_dpdk_action *dpif_actions,
+                           const struct nlattr *actions, const int actions_index);
 
 static int
 dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
@@ -146,31 +151,6 @@ dpif_dpdk_destroy(struct dpif *dpif_ OVS_UNUSED)
     return 0;
 }
 
-static void
-dpif_dpdk_run(struct dpif *dpif OVS_UNUSED)
-{
-    DPDK_DEBUG()
-
-    for (;;) {
-        int n;
-
-        if (recvfrom(dpdk_sock, &n, sizeof(n), 0, NULL, NULL) <= 0)
-            break;
-    }
-
-    polling = 0;
-}
-
-static void
-dpif_dpdk_wait(struct dpif *dpif OVS_UNUSED)
-{
-    DPDK_DEBUG()
-
-    if (!polling)
-        poll_fd_wait(dpdk_sock, POLLIN);
-    polling = 1;
-}
-
 static int
 dpif_dpdk_get_stats(const struct dpif *dpif_ OVS_UNUSED,
                     struct dpif_dp_stats *stats)
@@ -191,7 +171,7 @@ dpif_dpdk_get_stats(const struct dpif *dpif_ OVS_UNUSED,
 
 static int
 dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
-                   uint16_t *port_no)
+                   odp_port_t *port_no)
 {
     const char *name = NULL;
     dpif_assert_class(dpif_, &dpif_dpdk_class);
@@ -213,7 +193,15 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (!strncmp(name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
         *port_no = strtoumax(name + DPDK_PORT_PREFIX_LEN,
                              NULL, BASE10);
-    } else if (!strcmp(name, dpif_base_name(dpif_))) {
+    /*
+     * TODO: It should be possible to use an arbitrary name for bridges
+     * currently this is not possible
+     */
+    } else if (!strncmp(name, BR_PREFIX, BR_PREFIX_LEN)) {
+        /*
+         * TODO: This will need to be changed in future to accommodate
+         * multi-bridge support.
+         */
         *port_no = 0;
     } else {
         return ENODEV;
@@ -223,7 +211,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
 }
 
 static int
-dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, uint16_t port_no OVS_UNUSED)
+dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, odp_port_t port_no OVS_UNUSED)
 {
     DPDK_DEBUG()
 
@@ -232,7 +220,7 @@ dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, uint16_t port_no OVS_UNUSED)
 
 static int
 dpif_dpdk_port_query_by_number(const struct dpif *dpif OVS_UNUSED,
-                               uint16_t port_no OVS_UNUSED,
+                               odp_port_t port_no OVS_UNUSED,
                                struct dpif_port *dpif_port OVS_UNUSED)
 {
     DPDK_DEBUG()
@@ -245,30 +233,43 @@ dpif_dpdk_port_query_by_name(const struct dpif *dpif, const char *devname,
                              struct dpif_port *dpif_port)
 {
     uint16_t port_no = 0;
+    char *type = NULL;
     dpif_assert_class(dpif, &dpif_dpdk_class);
 
     DPDK_DEBUG()
-    if((dpif_port == NULL) || (devname == NULL)) {
+    if(devname == NULL) {
         return EINVAL;
     }
     if (!strncmp(devname, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
         port_no = strtoumax(devname + DPDK_PORT_PREFIX_LEN,
                             NULL, BASE10);
-        dpif_port->type = xstrdup("dpdk");
-    } else if (!strcmp(devname, dpif->base_name)) {
-        port_no = 0;
-        dpif_port->type = xstrdup("internal");
+        type = "dpdk";
+    /*
+     * TODO: It should be possible to use an arbitrary name for bridges
+     * currently this is not possible
+     */
+    } else if (!strncmp(devname, BR_PREFIX, BR_PREFIX_LEN)) {
+        /*
+         * TODO: This will need to be changed in future to accommodate
+         * multi-bridge support.
+         */
+            type = "internal";
     } else {
         return ENODEV;
     }
 
-    dpif_port->name = xstrdup(devname);
-    dpif_port->port_no = port_no;
+    if(dpif_port != NULL){
+        dpif_port->type = xstrdup(type);
+        dpif_port->name = xstrdup(devname);
+        dpif_port->port_no = port_no;
+    } else {
+        VLOG_DBG_RL(&dpmsg_rl,"port_query_by_name() did not populate a dpif_port");
+    }
 
     return 0;
 }
 
-static int
+static uint32_t
 dpif_dpdk_get_max_ports(const struct dpif *dpif OVS_UNUSED)
 {
     DPDK_DEBUG()
@@ -346,6 +347,9 @@ dpif_dpdk_flow_get(const struct dpif *dpif_,
     int error = 0;
     dpif_assert_class(dpif_, &dpif_dpdk_class);
 
+    memset(&request, 0, sizeof(request));
+    memset(&reply, 0, sizeof(request));
+
     DPDK_DEBUG()
 
     if (key == NULL) {
@@ -372,6 +376,7 @@ dpif_dpdk_create_actions(struct dpif_dpdk_action *dpif_actions,
                          const struct nlattr *actions, size_t actions_len)
 {
     const struct nlattr *a;
+    struct ovs_action_push_vlan *vlan = NULL;
     size_t len;
     int i = 0;
 
@@ -394,10 +399,14 @@ dpif_dpdk_create_actions(struct dpif_dpdk_action *dpif_actions,
                     break;
                 case OVS_ACTION_ATTR_PUSH_VLAN:
                     dpif_actions[i].type = ACTION_PUSH_VLAN;
-                    struct ovs_action_push_vlan *vlan = (struct ovs_action_push_vlan *)
+                    vlan = (struct ovs_action_push_vlan *)
                         nl_attr_get_unspec(a, sizeof(struct ovs_action_push_vlan));
                     dpif_actions[i].data.vlan.tpid = vlan->vlan_tpid;
                     dpif_actions[i].data.vlan.tci = vlan->vlan_tci;
+                    ++i;
+                    break;
+                case OVS_ACTION_ATTR_SET:
+                    create_action_set_datapath(dpif_actions, nl_attr_get(a), i);
                     ++i;
                     break;
                 default:
@@ -410,6 +419,66 @@ dpif_dpdk_create_actions(struct dpif_dpdk_action *dpif_actions,
     dpif_actions[i].type = ACTION_NULL;
 }
 
+static void
+create_action_set_datapath(struct dpif_dpdk_action *dpif_actions,
+                           const struct nlattr *actions, const int action_index)
+{
+    const int i = action_index;
+    enum ovs_key_attr type = nl_attr_type(actions);
+
+    switch (type) {
+    case OVS_KEY_ATTR_PRIORITY:
+    case OVS_KEY_ATTR_IPV6:
+        /* not implemented */
+        break;
+
+    case OVS_KEY_ATTR_ETHERNET:
+        dpif_actions[i].type = ACTION_SET_ETHERNET;
+        dpif_actions[i].data.ethernet =
+                  *(struct ovs_key_ethernet *)(nl_attr_get_unspec(actions,
+                                             sizeof(struct ovs_key_ethernet)));
+        break;
+
+    case OVS_KEY_ATTR_IPV4:
+        dpif_actions[i].type = ACTION_SET_IPV4;
+        dpif_actions[i].data.ipv4 =
+                *(struct ovs_key_ipv4 *)(nl_attr_get_unspec(actions,
+                                             sizeof(struct ovs_key_ipv4)));
+        break;
+
+    case OVS_KEY_ATTR_TCP:
+        dpif_actions[i].type = ACTION_SET_TCP;
+        dpif_actions[i].data.tcp =
+                *(struct ovs_key_tcp *)(nl_attr_get_unspec(actions,
+                                             sizeof(struct ovs_key_tcp)));
+        break;
+
+     case OVS_KEY_ATTR_UDP:
+        dpif_actions[i].type = ACTION_SET_UDP;
+        dpif_actions[i].data.udp =
+                *(struct ovs_key_udp *)(nl_attr_get_unspec(actions,
+                                             sizeof(struct ovs_key_udp)));
+        break;
+
+     case OVS_KEY_ATTR_UNSPEC:
+     case OVS_KEY_ATTR_ENCAP:
+     case OVS_KEY_ATTR_ETHERTYPE:
+     case OVS_KEY_ATTR_IN_PORT:
+     case OVS_KEY_ATTR_VLAN:
+     case OVS_KEY_ATTR_ICMP:
+     case OVS_KEY_ATTR_ICMPV6:
+     case OVS_KEY_ATTR_ARP:
+     case OVS_KEY_ATTR_ND:
+     case OVS_KEY_ATTR_SKB_MARK:
+     case OVS_KEY_ATTR_TUNNEL:
+     case OVS_KEY_ATTR_SCTP:
+     case OVS_KEY_ATTR_MPLS:
+     case __OVS_KEY_ATTR_MAX:
+     default:
+        NOT_REACHED();
+    }
+
+}
 /*
  * This function will initialize a dpif_dpdk_flow_message for put.
  */
@@ -448,10 +517,7 @@ flow_message_put_create(struct dpif *dpif OVS_UNUSED,
 }
 
 static int
-dpif_dpdk_flow_put(struct dpif *dpif_, enum dpif_flow_put_flags flags,
-                   const struct nlattr *key, size_t key_len,
-                   const struct nlattr *actions, size_t actions_len,
-                   struct dpif_flow_stats *stats)
+dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
 {
     struct dpif_dpdk_flow_message request;
     struct dpif_dpdk_flow_message reply;
@@ -460,15 +526,16 @@ dpif_dpdk_flow_put(struct dpif *dpif_, enum dpif_flow_put_flags flags,
 
     DPDK_DEBUG()
 
-    if (key == NULL) {
+    if (put->key == NULL) {
         return EINVAL;
     }
 
-    flow_message_put_create(dpif_, flags, key, key_len, actions, actions_len,
-                            &request);
-    error = dpif_dpdk_flow_transact(&request, stats ? &reply : NULL);
-    if (!error && stats) {
-        dpif_dpdk_flow_get_stats(&reply, stats);
+    flow_message_put_create(dpif_, put->flags, put->key,
+                            put->key_len, put->actions,
+                            put->actions_len, &request);
+    error = dpif_dpdk_flow_transact(&request, put->stats ? &reply : NULL);
+    if (!error && put->stats) {
+        dpif_dpdk_flow_get_stats(&reply, put->stats);
     }
 
     return error;
@@ -492,8 +559,7 @@ flow_message_del_create(struct dpif_dpdk_flow_message *request,
 
 static int
 dpif_dpdk_flow_del(struct dpif *dpif_ OVS_UNUSED,
-                   const struct nlattr *key, size_t key_len,
-                   struct dpif_flow_stats *stats)
+                   const struct dpif_flow_del *del)
 {
     struct dpif_dpdk_flow_message request;
     struct dpif_dpdk_flow_message reply;
@@ -501,16 +567,16 @@ dpif_dpdk_flow_del(struct dpif *dpif_ OVS_UNUSED,
 
     DPDK_DEBUG()
 
-    if (key == NULL) {
+    if (del->key == NULL) {
         return EINVAL;
     }
 
-    flow_message_del_create(&request, key, key_len);
+    flow_message_del_create(&request, del->key, del->key_len);
 
     error = dpif_dpdk_flow_transact(&request,
-                                    stats ? &reply : NULL);
-    if (!error && stats) {
-        dpif_dpdk_flow_get_stats(&reply, stats);
+                                   del->stats ? &reply : NULL);
+    if (!error && del->stats) {
+        dpif_dpdk_flow_get_stats(&reply, del->stats);
     }
 
     return error;
@@ -568,6 +634,8 @@ dpif_dpdk_flow_dump_start(const struct dpif *dpif_ OVS_UNUSED, void **statep)
 static int
 dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
                          const struct nlattr **key, size_t *key_len,
+                         const struct nlattr **mask,
+                         size_t *mask_len,
                          const struct nlattr **actions, size_t *actions_len,
                          const struct dpif_flow_stats **stats)
 {
@@ -601,15 +669,24 @@ dpif_dpdk_flow_dump_next(const struct dpif *dpif_ OVS_UNUSED, void *state_,
         *actions_len = state->actions_buf.size;
     }
     if (key) {
-       ofpbuf_reinit(&state->key_buf, 0); /* zero buf again */
-       dpif_dpdk_flow_key_to_flow(&reply.key, &flow);
-       odp_flow_key_from_flow(&state->key_buf, &flow);
-       *key = state->key_buf.data;
-       *key_len = state->key_buf.size;
+        ofpbuf_reinit(&state->key_buf, 0); /* zero buf again */
+        dpif_dpdk_flow_key_to_flow(&reply.key, &flow);
+        odp_flow_key_from_flow(&state->key_buf, &flow, flow.in_port.odp_port);
+        *key = state->key_buf.data;
+        *key_len = state->key_buf.size;
     }
     if (stats) {
         dpif_dpdk_flow_get_stats(&reply, &state->stats);
         *stats = &state->stats;
+    }
+
+    /*
+     * Must explicitly set mask to null here otherwise key attributes are not
+     * handled by other functions as they are incorrectly masked out.
+     */
+    if (mask) {
+        *mask = NULL;
+        *mask_len = 0;
     }
 
     return error;
@@ -637,34 +714,35 @@ dpif_dpdk_flow_dump_done(const struct dpif *dpif OVS_UNUSED, void *state_)
 
 static int
 dpif_dpdk_execute(struct dpif *dpif_ OVS_UNUSED,
-                  const struct nlattr *key OVS_UNUSED,
-                  size_t key_len OVS_UNUSED,
-                  const struct nlattr *actions,
-                  size_t actions_len OVS_UNUSED,
-                  const struct ofpbuf *packet)
+                  const struct dpif_execute *execute)
 {
     struct dpif_dpdk_message request;
     int error = 0;
 
     DPDK_DEBUG()
 
-    if(packet == NULL) {
+    if(execute->packet == NULL) {
         return EINVAL;
     }
 
     request.type = DPIF_DPDK_PACKET_FAMILY;
-    dpif_dpdk_create_actions(request.packet_msg.actions, actions, actions_len);
+    dpif_dpdk_create_actions(request.packet_msg.actions,
+                             execute->actions,
+                             execute->actions_len);
 
-    error = dpdk_link_send(&request, packet);
+    error = dpdk_link_send(&request, execute->packet);
 
     return error;
 }
 
 static void
-dpif_dpdk_operate(struct dpif *dpif_, union dpif_op **ops, size_t n_ops)
+dpif_dpdk_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
 {
     struct dpif_dpdk_message requests[n_ops];
     const struct ofpbuf *packets[n_ops];
+    struct dpif_flow_put *put = NULL;
+    struct dpif_flow_del *del = NULL;
+    struct dpif_execute *execute = NULL;
     size_t i = 0;
     size_t exec = 0;
     dpif_assert_class(dpif_, &dpif_dpdk_class);
@@ -673,24 +751,28 @@ dpif_dpdk_operate(struct dpif *dpif_, union dpif_op **ops, size_t n_ops)
 
     if(!((dpif_ == NULL) || (ops == NULL))) {
         for (i = 0; i < n_ops; i++) {
-            union dpif_op *op = ops[i];
+            struct dpif_op *op = ops[i];
 
-            if (op->type == DPIF_OP_FLOW_PUT) {
-                struct dpif_flow_put *put = &op->flow_put;
-
-                put->error = dpif_dpdk_flow_put(dpif_, put->flags, put->key,
-                                                put->key_len, put->actions,
-                                                put->actions_len, put->stats);
-            } else if (op->type == DPIF_OP_EXECUTE) {
-                struct dpif_execute *execute = &op->execute;
-
+            switch (op->type) {
+            case DPIF_OP_FLOW_PUT :
+                put = &op->u.flow_put;
+                dpif_dpdk_flow_put(dpif_, put);
+                break;
+            case DPIF_OP_EXECUTE :
+                execute = &op->u.execute;
                 requests[exec].type = DPIF_DPDK_PACKET_FAMILY;
                 dpif_dpdk_create_actions(requests[exec].packet_msg.actions,
                                          execute->actions, execute->actions_len);
                 packets[exec] = execute->packet;
                 exec++;
-            } else {
+                break;
+            case DPIF_OP_FLOW_DEL :
+                del = &op->u.flow_del;
+                dpif_dpdk_flow_del(dpif_, del);
+                break;
+            default :
                 NOT_REACHED();
+                break;
             }
         }
 
@@ -699,17 +781,8 @@ dpif_dpdk_operate(struct dpif *dpif_, union dpif_op **ops, size_t n_ops)
 }
 
 static int
-dpif_dpdk_recv_get_mask(const struct dpif *dpif_ OVS_UNUSED,
-                        int *listen_mask OVS_UNUSED)
-{
-    DPDK_DEBUG()
-
-    return 0;
-}
-
-static int
-dpif_dpdk_recv_set_mask(struct dpif *dpif_ OVS_UNUSED,
-                        int listen_mask OVS_UNUSED)
+dpif_dpdk_recv_set(struct dpif *dpif_ OVS_UNUSED,
+                   bool enable OVS_UNUSED)
 {
     DPDK_DEBUG()
 
@@ -727,7 +800,9 @@ dpif_dpdk_queue_to_priority(const struct dpif *dpif OVS_UNUSED,
 }
 
 static int
-dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED, struct dpif_upcall *upcall)
+dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
+               struct dpif_upcall *upcall,
+               struct ofpbuf *ofpbuf OVS_UNUSED)
 {
     struct ofpbuf *buf = NULL;
     struct ofpbuf key;
@@ -735,6 +810,7 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED, struct dpif_upcall *upcall)
     struct dpif_dpdk_upcall info;
     int type = 0;
     int error = 0;
+    int sock_msg = 0;
 
     DPDK_DEBUG()
 
@@ -760,7 +836,12 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED, struct dpif_upcall *upcall)
 
         dpif_dpdk_flow_key_to_flow(&info.key, &flow);
         ofpbuf_init(&key, 0);
-        odp_flow_key_from_flow(&key, &flow);
+        /* There are two port numbering schemes, odp_port and ofp_port for
+         * the datapath and OpenFlow layer respectively. Rather than having
+         * conversion logic here we require that you use ofport_request when
+         * adding ports to ensure the odp_port and ofp_port will be the same
+         */
+        odp_flow_key_from_flow(&key, &flow, flow.in_port.odp_port);
         ofpbuf_put(buf, key.data, key.size);
         buf->size -= key.size;
 
@@ -772,6 +853,8 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED, struct dpif_upcall *upcall)
         upcall->userdata = 0;
     }
 
+    SIGNAL_HANDLED(dpdk_sock, sock_msg);
+
     return error;
 }
 
@@ -779,6 +862,13 @@ static void
 dpif_dpdk_recv_wait(struct dpif *dpif_ OVS_UNUSED)
 {
     DPDK_DEBUG()
+
+    /*
+     * Register the calling function to listen on the dpdk_sock for
+     * POLLIN signal which will be triggered by the dpdk datapath
+     * when a packet is availiable for reading by dpif_dpdk_recv.
+     */
+    poll_fd_wait(dpdk_sock, POLLIN);
 }
 
 static void
@@ -791,11 +881,12 @@ const struct dpif_class dpif_dpdk_class =
 {
     "dpdk",
     NULL,
+    NULL,
     dpif_dpdk_open,
     dpif_dpdk_close,
     dpif_dpdk_destroy,
-    dpif_dpdk_run,
-    dpif_dpdk_wait,
+    NULL,
+    NULL,
     dpif_dpdk_get_stats,
     dpif_dpdk_port_add,
     dpif_dpdk_port_del,
@@ -817,14 +908,12 @@ const struct dpif_class dpif_dpdk_class =
     dpif_dpdk_flow_dump_done,
     dpif_dpdk_execute,
     dpif_dpdk_operate,
-    dpif_dpdk_recv_get_mask,
-    dpif_dpdk_recv_set_mask,
+    dpif_dpdk_recv_set,
     dpif_dpdk_queue_to_priority,
     dpif_dpdk_recv,
     dpif_dpdk_recv_wait,
-    dpif_dpdk_recv_purge
+    dpif_dpdk_recv_purge 
 };
-
 
 static int
 dpif_dpdk_init(void)
@@ -881,10 +970,10 @@ dpif_dpdk_flow_transact(struct dpif_dpdk_flow_message *request,
         return error;
     }
 
-    error = dpdk_link_recv_reply(&request_buf);
-    if (error) {
-        return error;
-    }
+    /* dpdk_link_recv_reply is blocking and cannot
+     * return an error
+     */
+    dpdk_link_recv_reply(&request_buf);
 
     if (reply) {
         *reply = request_buf.flow_msg;
@@ -919,7 +1008,7 @@ dpif_dpdk_flow_key_from_flow(struct dpif_dpdk_flow_key *key,
     uint16_t vlan_tci = 0;
 
     memset(key, 0, sizeof(*key));
-    key->in_port = flow->in_port;
+    key->in_port = flow->in_port.odp_port;
     memcpy(key->ether_dst.addr_bytes, flow->dl_dst, ETHER_ADDR_LEN);
     memcpy(key->ether_src.addr_bytes, flow->dl_src, ETHER_ADDR_LEN);
     key->ether_type = rte_be_to_cpu_16(flow->dl_type);
@@ -931,6 +1020,9 @@ dpif_dpdk_flow_key_from_flow(struct dpif_dpdk_flow_key *key,
     key->ip_proto = flow->nw_proto;
     key->ip_tos = flow->nw_tos;
     key->ip_ttl = flow->nw_ttl;
+    key->ip_frag = flow->nw_frag == 0 ? OVS_FRAG_TYPE_NONE
+                 : flow->nw_frag == FLOW_NW_FRAG_ANY ? OVS_FRAG_TYPE_FIRST
+                 : OVS_FRAG_TYPE_LATER;
     key->tran_src_port = rte_be_to_cpu_16(flow->tp_src);
     key->tran_dst_port = rte_be_to_cpu_16(flow->tp_dst);
 }
@@ -943,7 +1035,7 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
                            struct flow *flow)
 {
     memset(flow, 0, sizeof(*flow));
-    flow->in_port = key->in_port;
+    flow->in_port.odp_port = key->in_port;
     memcpy(flow->dl_dst, key->ether_dst.addr_bytes, ETHER_ADDR_LEN);
     memcpy(flow->dl_src, key->ether_src.addr_bytes, ETHER_ADDR_LEN);
     flow->dl_type = rte_cpu_to_be_16(key->ether_type);
@@ -954,6 +1046,13 @@ dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *key,
     flow->nw_proto = key->ip_proto;
     flow->nw_tos = key->ip_tos;
     flow->nw_ttl = key->ip_ttl;
+    flow->nw_frag = 0;
+    if (key->ip_frag != OVS_FRAG_TYPE_NONE) {
+        flow->nw_frag |= FLOW_NW_FRAG_ANY;
+        if (key->ip_frag == OVS_FRAG_TYPE_LATER) {
+            flow->nw_frag |= FLOW_NW_FRAG_LATER;
+        }
+    }
     flow->tp_src = rte_cpu_to_be_16(key->tran_src_port);
     flow->tp_dst = rte_cpu_to_be_16(key->tran_dst_port);
 }
@@ -965,7 +1064,8 @@ static void
 dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *actions,
                                   struct ofpbuf *actionsp)
 {
-    int i;
+    int i = 0;
+    size_t offset = 0;
 
     for (i = 0; i < MAX_ACTIONS && actions[i].type != ACTION_NULL; i++) {
         switch (actions[i].type) {
@@ -980,6 +1080,34 @@ dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *actions,
                 nl_msg_put_unspec(actionsp, OVS_ACTION_ATTR_PUSH_VLAN,
                                   &actions[i].data.vlan,
                                   sizeof(struct dpif_action_push_vlan));
+                break;
+            case ACTION_SET_ETHERNET:
+                offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_SET);
+                nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_ETHERNET,
+                                  &actions[i].data.ethernet,
+                                  sizeof(struct ovs_key_ethernet));
+                nl_msg_end_nested(actionsp, offset);
+                break;
+            case ACTION_SET_IPV4:
+                offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_SET);
+                nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_IPV4,
+                                  &actions[i].data.ipv4,
+                                  sizeof(struct ovs_key_ipv4));
+                nl_msg_end_nested(actionsp, offset);
+                break;
+            case ACTION_SET_TCP:
+                offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_SET);
+                nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_TCP,
+                                  &actions[i].data.tcp,
+                                  sizeof(struct ovs_key_tcp));
+                nl_msg_end_nested(actionsp, offset);
+                break;
+            case ACTION_SET_UDP:
+                offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_SET);
+                nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_UDP,
+                                  &actions[i].data.udp,
+                                  sizeof(struct ovs_key_udp)); 
+                nl_msg_end_nested(actionsp, offset);
                 break;
             case ACTION_NULL:
             case ACTION_MAX:

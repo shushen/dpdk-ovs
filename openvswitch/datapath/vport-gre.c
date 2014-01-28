@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Nicira Networks.
+ * Copyright (c) 2007-2012 Nicira, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -16,6 +16,8 @@
  * 02110-1301, USA
  */
 
+#include <linux/kconfig.h>
+#if IS_ENABLED(CONFIG_NET_IPGRE_DEMUX)
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/if.h>
@@ -24,40 +26,28 @@
 #include <linux/if_tunnel.h>
 #include <linux/if_vlan.h>
 #include <linux/in.h>
+#include <linux/if_vlan.h>
+#include <linux/in.h>
+#include <linux/in_route.h>
+#include <linux/inetdevice.h>
+#include <linux/jhash.h>
+#include <linux/list.h>
+#include <linux/kernel.h>
+#include <linux/workqueue.h>
+#include <linux/rculist.h>
+#include <net/net_namespace.h>
+#include <net/netns/generic.h>
+#include <net/route.h>
+#include <net/xfrm.h>
 
 #include <net/icmp.h>
 #include <net/ip.h>
+#include <net/ip_tunnels.h>
+#include <net/gre.h>
 #include <net/protocol.h>
 
-#include "tunnel.h"
+#include "datapath.h"
 #include "vport.h"
-#include "vport-generic.h"
-
-/*
- * The GRE header is composed of a series of sections: a base and then a variable
- * number of options.
- */
-#define GRE_HEADER_SECTION 4
-
-struct gre_base_hdr {
-	__be16 flags;
-	__be16 protocol;
-};
-
-static int gre_hdr_len(const struct tnl_mutable_config *mutable)
-{
-	int len;
-
-	len = GRE_HEADER_SECTION;
-
-	if (mutable->flags & TNL_F_CSUM)
-		len += GRE_HEADER_SECTION;
-
-	if (mutable->out_key || mutable->flags & TNL_F_OUT_KEY_ACTION)
-		len += GRE_HEADER_SECTION;
-
-	return len;
-}
 
 /* Returns the least-significant 32 bits of a __be64. */
 static __be32 be64_get_low32(__be64 x)
@@ -69,326 +59,150 @@ static __be32 be64_get_low32(__be64 x)
 #endif
 }
 
-static void gre_build_header(const struct vport *vport,
-			     const struct tnl_mutable_config *mutable,
-			     void *header)
+static __be16 filter_tnl_flags(__be16 flags)
 {
-	struct gre_base_hdr *greh = header;
-	__be32 *options = (__be32 *)(greh + 1);
-
-	greh->protocol = htons(ETH_P_TEB);
-	greh->flags = 0;
-
-	if (mutable->flags & TNL_F_CSUM) {
-		greh->flags |= GRE_CSUM;
-		*options = 0;
-		options++;
-	}
-
-	if (mutable->out_key || mutable->flags & TNL_F_OUT_KEY_ACTION)
-		greh->flags |= GRE_KEY;
-
-	if (mutable->out_key)
-		*options = be64_get_low32(mutable->out_key);
+	return flags & (TUNNEL_CSUM | TUNNEL_KEY);
 }
 
-static struct sk_buff *gre_update_header(const struct vport *vport,
-					 const struct tnl_mutable_config *mutable,
-					 struct dst_entry *dst,
-					 struct sk_buff *skb)
+static struct sk_buff *__build_header(struct sk_buff *skb,
+				      int tunnel_hlen,
+				      __be32 seq, __be16 gre64_flag)
 {
-	__be32 *options = (__be32 *)(skb_network_header(skb) + mutable->tunnel_hlen
-					       - GRE_HEADER_SECTION);
+	const struct ovs_key_ipv4_tunnel *tun_key = OVS_CB(skb)->tun_key;
+	struct tnl_ptk_info tpi;
 
-	/* Work backwards over the options so the checksum is last. */
-	if (mutable->flags & TNL_F_OUT_KEY_ACTION)
-		*options = be64_get_low32(OVS_CB(skb)->tun_id);
+	skb = gre_handle_offloads(skb, !!(tun_key->tun_flags & TUNNEL_CSUM));
+	if (IS_ERR(skb))
+		return NULL;
 
-	if (mutable->out_key || mutable->flags & TNL_F_OUT_KEY_ACTION)
-		options--;
+	tpi.flags = filter_tnl_flags(tun_key->tun_flags) | gre64_flag;
 
-	if (mutable->flags & TNL_F_CSUM)
-		*(__sum16 *)options = csum_fold(skb_checksum(skb,
-						skb_transport_offset(skb),
-						skb->len - skb_transport_offset(skb),
-						0));
-	/*
-	 * Allow our local IP stack to fragment the outer packet even if the
-	 * DF bit is set as a last resort.  We also need to force selection of
-	 * an IP ID here because Linux will otherwise leave it at 0 if the
-	 * packet originally had DF set.
-	 */
-	skb->local_df = 1;
-	__ip_select_ident(ip_hdr(skb), dst, 0);
+	tpi.proto = htons(ETH_P_TEB);
+	tpi.key = be64_get_low32(tun_key->tun_id);
+	tpi.seq = seq;
+	gre_build_header(skb, &tpi, tunnel_hlen);
 
 	return skb;
 }
 
-/* Zero-extends a __be32 into the least-significant 32 bits of a __be64. */
-static __be64 be32_extend_to_be64(__be32 x)
+static __be64 key_to_tunnel_id(__be32 key, __be32 seq)
 {
 #ifdef __BIG_ENDIAN
-	return (__force __be64)x;
+	return (__force __be64)((__force u64)seq << 32 | (__force u32)key);
 #else
-	return (__force __be64)((__force u64)x << 32);
+	return (__force __be64)((__force u64)key << 32 | (__force u32)seq);
 #endif
-}
-
-static int parse_header(struct iphdr *iph, __be16 *flags, __be64 *key)
-{
-	/* IP and ICMP protocol handlers check that the IHL is valid. */
-	struct gre_base_hdr *greh = (struct gre_base_hdr *)((u8 *)iph + (iph->ihl << 2));
-	__be32 *options = (__be32 *)(greh + 1);
-	int hdr_len;
-
-	*flags = greh->flags;
-
-	if (unlikely(greh->flags & (GRE_VERSION | GRE_ROUTING)))
-		return -EINVAL;
-
-	if (unlikely(greh->protocol != htons(ETH_P_TEB)))
-		return -EINVAL;
-
-	hdr_len = GRE_HEADER_SECTION;
-
-	if (greh->flags & GRE_CSUM) {
-		hdr_len += GRE_HEADER_SECTION;
-		options++;
-	}
-
-	if (greh->flags & GRE_KEY) {
-		hdr_len += GRE_HEADER_SECTION;
-
-		*key = be32_extend_to_be64(*options);
-		options++;
-	} else
-		*key = 0;
-
-	if (unlikely(greh->flags & GRE_SEQ))
-		hdr_len += GRE_HEADER_SECTION;
-
-	return hdr_len;
 }
 
 /* Called with rcu_read_lock and BH disabled. */
-static void gre_err(struct sk_buff *skb, u32 info)
+static int gre_rcv(struct sk_buff *skb,
+		   const struct tnl_ptk_info *tpi)
 {
+	struct ovs_key_ipv4_tunnel tun_key;
+	struct ovs_net *ovs_net;
 	struct vport *vport;
-	const struct tnl_mutable_config *mutable;
-	const int type = icmp_hdr(skb)->type;
-	const int code = icmp_hdr(skb)->code;
-	int mtu = ntohs(icmp_hdr(skb)->un.frag.mtu);
-
-	struct iphdr *iph;
-	__be16 flags;
-	__be64 key;
-	int tunnel_hdr_len, tot_hdr_len;
-	unsigned int orig_mac_header;
-	unsigned int orig_nw_header;
-
-	if (type != ICMP_DEST_UNREACH || code != ICMP_FRAG_NEEDED)
-		return;
-
-	/*
-	 * The mimimum size packet that we would actually be able to process:
-	 * encapsulating IP header, minimum GRE header, Ethernet header,
-	 * inner IPv4 header.
-	 */
-	if (!pskb_may_pull(skb, sizeof(struct iphdr) + GRE_HEADER_SECTION +
-				ETH_HLEN + sizeof(struct iphdr)))
-		return;
-
-	iph = (struct iphdr *)skb->data;
-	if (ipv4_is_multicast(iph->daddr))
-		return;
-
-	tunnel_hdr_len = parse_header(iph, &flags, &key);
-	if (tunnel_hdr_len < 0)
-		return;
-
-	vport = ovs_tnl_find_port(iph->saddr, iph->daddr, key, TNL_T_PROTO_GRE,
-				  &mutable);
-	if (!vport)
-		return;
-
-	/*
-	 * Packets received by this function were previously sent by us, so
-	 * any comparisons should be to the output values, not the input.
-	 * However, it's not really worth it to have a hash table based on
-	 * output keys (especially since ICMP error handling of tunneled packets
-	 * isn't that reliable anyways).  Therefore, we do a lookup based on the
-	 * out key as if it were the in key and then check to see if the input
-	 * and output keys are the same.
-	 */
-	if (mutable->key.in_key != mutable->out_key)
-		return;
-
-	if (!!(mutable->flags & TNL_F_IN_KEY_MATCH) !=
-	    !!(mutable->flags & TNL_F_OUT_KEY_ACTION))
-		return;
-
-	if ((mutable->flags & TNL_F_CSUM) && !(flags & GRE_CSUM))
-		return;
-
-	tunnel_hdr_len += iph->ihl << 2;
-
-	orig_mac_header = skb_mac_header(skb) - skb->data;
-	orig_nw_header = skb_network_header(skb) - skb->data;
-	skb_set_mac_header(skb, tunnel_hdr_len);
-
-	tot_hdr_len = tunnel_hdr_len + ETH_HLEN;
-
-	skb->protocol = eth_hdr(skb)->h_proto;
-	if (skb->protocol == htons(ETH_P_8021Q)) {
-		tot_hdr_len += VLAN_HLEN;
-		skb->protocol = vlan_eth_hdr(skb)->h_vlan_encapsulated_proto;
-	}
-
-	skb_set_network_header(skb, tot_hdr_len);
-	mtu -= tot_hdr_len;
-
-	if (skb->protocol == htons(ETH_P_IP))
-		tot_hdr_len += sizeof(struct iphdr);
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	else if (skb->protocol == htons(ETH_P_IPV6))
-		tot_hdr_len += sizeof(struct ipv6hdr);
-#endif
-	else
-		goto out;
-
-	if (!pskb_may_pull(skb, tot_hdr_len))
-		goto out;
-
-	if (skb->protocol == htons(ETH_P_IP)) {
-		if (mtu < IP_MIN_MTU) {
-			if (ntohs(ip_hdr(skb)->tot_len) >= IP_MIN_MTU)
-				mtu = IP_MIN_MTU;
-			else
-				goto out;
-		}
-
-	}
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	else if (skb->protocol == htons(ETH_P_IPV6)) {
-		if (mtu < IPV6_MIN_MTU) {
-			unsigned int packet_length = sizeof(struct ipv6hdr) +
-					      ntohs(ipv6_hdr(skb)->payload_len);
-
-			if (packet_length >= IPV6_MIN_MTU
-			    || ntohs(ipv6_hdr(skb)->payload_len) == 0)
-				mtu = IPV6_MIN_MTU;
-			else
-				goto out;
-		}
-	}
-#endif
-
-	__skb_pull(skb, tunnel_hdr_len);
-	ovs_tnl_frag_needed(vport, mutable, skb, mtu, key);
-	__skb_push(skb, tunnel_hdr_len);
-
-out:
-	skb_set_mac_header(skb, orig_mac_header);
-	skb_set_network_header(skb, orig_nw_header);
-	skb->protocol = htons(ETH_P_IP);
-}
-
-static bool check_checksum(struct sk_buff *skb)
-{
-	struct iphdr *iph = ip_hdr(skb);
-	struct gre_base_hdr *greh = (struct gre_base_hdr *)(iph + 1);
-	__sum16 csum = 0;
-
-	if (greh->flags & GRE_CSUM) {
-		switch (skb->ip_summed) {
-		case CHECKSUM_COMPLETE:
-			csum = csum_fold(skb->csum);
-
-			if (!csum)
-				break;
-			/* Fall through. */
-
-		case CHECKSUM_NONE:
-			skb->csum = 0;
-			csum = __skb_checksum_complete(skb);
-			skb->ip_summed = CHECKSUM_COMPLETE;
-			break;
-		}
-	}
-
-	return (csum == 0);
-}
-
-/* Called with rcu_read_lock and BH disabled. */
-static int gre_rcv(struct sk_buff *skb)
-{
-	struct vport *vport;
-	const struct tnl_mutable_config *mutable;
-	int hdr_len;
-	struct iphdr *iph;
-	__be16 flags;
 	__be64 key;
 
-	if (unlikely(!pskb_may_pull(skb, sizeof(struct gre_base_hdr) + ETH_HLEN)))
-		goto error;
+	ovs_net = net_generic(dev_net(skb->dev), ovs_net_id);
+	if ((tpi->flags & TUNNEL_KEY) && (tpi->flags & TUNNEL_SEQ))
+		vport = rcu_dereference(ovs_net->vport_net.gre64_vport);
+	else
+		vport = rcu_dereference(ovs_net->vport_net.gre_vport);
+	if (unlikely(!vport))
+		return PACKET_REJECT;
 
-	if (unlikely(!check_checksum(skb)))
-		goto error;
+	key = key_to_tunnel_id(tpi->key, tpi->seq);
+	ovs_flow_tun_key_init(&tun_key, ip_hdr(skb), key, filter_tnl_flags(tpi->flags));
 
-	hdr_len = parse_header(ip_hdr(skb), &flags, &key);
-	if (unlikely(hdr_len < 0))
-		goto error;
+	ovs_vport_receive(vport, skb, &tun_key);
+	return PACKET_RCVD;
+}
 
-	if (unlikely(!pskb_may_pull(skb, hdr_len + ETH_HLEN)))
-		goto error;
+static int __send(struct vport *vport, struct sk_buff *skb,
+		  int tunnel_hlen,
+		  __be32 seq, __be16 gre64_flag)
+{
+	struct net *net = ovs_dp_get_net(vport->dp);
+	struct rtable *rt;
+	int min_headroom;
+	__be16 df;
+	__be32 saddr;
+	int err;
 
-	iph = ip_hdr(skb);
-	vport = ovs_tnl_find_port(iph->daddr, iph->saddr, key, TNL_T_PROTO_GRE,
-				  &mutable);
-	if (unlikely(!vport)) {
-		icmp_send(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH, 0);
+	/* Route lookup */
+	saddr = OVS_CB(skb)->tun_key->ipv4_src;
+	rt = find_route(ovs_dp_get_net(vport->dp),
+			&saddr,
+			OVS_CB(skb)->tun_key->ipv4_dst,
+			IPPROTO_GRE,
+			OVS_CB(skb)->tun_key->ipv4_tos,
+			skb->mark);
+	if (IS_ERR(rt)) {
+		err = PTR_ERR(rt);
 		goto error;
 	}
 
-	if (mutable->flags & TNL_F_IN_KEY_MATCH)
-		OVS_CB(skb)->tun_id = key;
-	else
-		OVS_CB(skb)->tun_id = 0;
+	min_headroom = LL_RESERVED_SPACE(rt_dst(rt).dev) + rt_dst(rt).header_len
+			+ tunnel_hlen + sizeof(struct iphdr)
+			+ (vlan_tx_tag_present(skb) ? VLAN_HLEN : 0);
 
-	__skb_pull(skb, hdr_len);
-	skb_postpull_rcsum(skb, skb_transport_header(skb), hdr_len + ETH_HLEN);
+	if (skb_headroom(skb) < min_headroom || skb_header_cloned(skb)) {
+		int head_delta = SKB_DATA_ALIGN(min_headroom -
+						skb_headroom(skb) +
+						16);
+		err = pskb_expand_head(skb, max_t(int, head_delta, 0),
+					0, GFP_ATOMIC);
+		if (unlikely(err))
+			goto err_free_rt;
+	}
 
-	ovs_tnl_rcv(vport, skb, iph->tos);
-	return 0;
+	if (vlan_tx_tag_present(skb)) {
+		if (unlikely(!__vlan_put_tag(skb,
+					     skb->vlan_proto,
+					     vlan_tx_tag_get(skb)))) {
+			err = -ENOMEM;
+			goto err_free_rt;
+		}
+		vlan_set_tci(skb, 0);
+	}
 
+	/* Push Tunnel header. */
+	skb = __build_header(skb, tunnel_hlen, seq, gre64_flag);
+	if (unlikely(!skb)) {
+		err = 0;
+		goto err_free_rt;
+	}
+
+	df = OVS_CB(skb)->tun_key->tun_flags & TUNNEL_DONT_FRAGMENT ?
+		htons(IP_DF) : 0;
+
+	skb->local_df = 1;
+
+	return iptunnel_xmit(net, rt, skb, saddr,
+			     OVS_CB(skb)->tun_key->ipv4_dst, IPPROTO_GRE,
+			     OVS_CB(skb)->tun_key->ipv4_tos,
+			     OVS_CB(skb)->tun_key->ipv4_ttl, df);
+err_free_rt:
+	ip_rt_put(rt);
 error:
-	kfree_skb(skb);
-	return 0;
+	return err;
 }
 
-static const struct tnl_ops gre_tnl_ops = {
-	.tunnel_type	= TNL_T_PROTO_GRE,
-	.ipproto	= IPPROTO_GRE,
-	.hdr_len	= gre_hdr_len,
-	.build_header	= gre_build_header,
-	.update_header	= gre_update_header,
+static struct gre_cisco_protocol gre_protocol = {
+	.handler	= gre_rcv,
+	.priority	= 1,
 };
 
-static struct vport *gre_create(const struct vport_parms *parms)
-{
-	return ovs_tnl_create(parms, &ovs_gre_vport_ops, &gre_tnl_ops);
-}
-
-static const struct net_protocol gre_protocol_handlers = {
-	.handler	=	gre_rcv,
-	.err_handler	=	gre_err,
-};
-
+static int gre_ports;
 static int gre_init(void)
 {
 	int err;
 
-	err = inet_add_protocol(&gre_protocol_handlers, IPPROTO_GRE);
+	gre_ports++;
+	if (gre_ports > 1)
+		return 0;
+
+	err = gre_cisco_register(&gre_protocol);
 	if (err)
 		pr_warn("cannot register gre protocol handler\n");
 
@@ -397,23 +211,153 @@ static int gre_init(void)
 
 static void gre_exit(void)
 {
-	inet_del_protocol(&gre_protocol_handlers, IPPROTO_GRE);
+	gre_ports--;
+	if (gre_ports > 0)
+		return;
+
+	gre_cisco_unregister(&gre_protocol);
+}
+
+static const char *gre_get_name(const struct vport *vport)
+{
+	return vport_priv(vport);
+}
+
+static struct vport *gre_create(const struct vport_parms *parms)
+{
+	struct net *net = ovs_dp_get_net(parms->dp);
+	struct ovs_net *ovs_net;
+	struct vport *vport;
+	int err;
+
+	err = gre_init();
+	if (err)
+		return ERR_PTR(err);
+
+	ovs_net = net_generic(net, ovs_net_id);
+	if (ovsl_dereference(ovs_net->vport_net.gre_vport)) {
+		vport = ERR_PTR(-EEXIST);
+		goto error;
+	}
+
+	vport = ovs_vport_alloc(IFNAMSIZ, &ovs_gre_vport_ops, parms);
+	if (IS_ERR(vport))
+		goto error;
+
+	strncpy(vport_priv(vport), parms->name, IFNAMSIZ);
+	rcu_assign_pointer(ovs_net->vport_net.gre_vport, vport);
+	return vport;
+
+error:
+	gre_exit();
+	return vport;
+}
+
+static void gre_tnl_destroy(struct vport *vport)
+{
+	struct net *net = ovs_dp_get_net(vport->dp);
+	struct ovs_net *ovs_net;
+
+	ovs_net = net_generic(net, ovs_net_id);
+
+	rcu_assign_pointer(ovs_net->vport_net.gre_vport, NULL);
+	ovs_vport_deferred_free(vport);
+	gre_exit();
+}
+
+static int gre_send(struct vport *vport, struct sk_buff *skb)
+{
+	int hlen;
+
+	if (unlikely(!OVS_CB(skb)->tun_key))
+		return -EINVAL;
+
+	hlen = ip_gre_calc_hlen(OVS_CB(skb)->tun_key->tun_flags);
+
+	return __send(vport, skb, hlen, 0, 0);
 }
 
 const struct vport_ops ovs_gre_vport_ops = {
 	.type		= OVS_VPORT_TYPE_GRE,
-	.flags		= VPORT_F_TUN_ID,
-	.init		= gre_init,
-	.exit		= gre_exit,
 	.create		= gre_create,
-	.destroy	= ovs_tnl_destroy,
-	.set_addr	= ovs_tnl_set_addr,
-	.get_name	= ovs_tnl_get_name,
-	.get_addr	= ovs_tnl_get_addr,
-	.get_options	= ovs_tnl_get_options,
-	.set_options	= ovs_tnl_set_options,
-	.get_dev_flags	= ovs_vport_gen_get_dev_flags,
-	.is_running	= ovs_vport_gen_is_running,
-	.get_operstate	= ovs_vport_gen_get_operstate,
-	.send		= ovs_tnl_send,
+	.destroy	= gre_tnl_destroy,
+	.get_name	= gre_get_name,
+	.send		= gre_send,
 };
+
+/* GRE64 vport. */
+static struct vport *gre64_create(const struct vport_parms *parms)
+{
+	struct net *net = ovs_dp_get_net(parms->dp);
+	struct ovs_net *ovs_net;
+	struct vport *vport;
+	int err;
+
+	err = gre_init();
+	if (err)
+		return ERR_PTR(err);
+
+	ovs_net = net_generic(net, ovs_net_id);
+	if (ovsl_dereference(ovs_net->vport_net.gre64_vport)) {
+		vport = ERR_PTR(-EEXIST);
+		goto error;
+	}
+
+	vport = ovs_vport_alloc(IFNAMSIZ, &ovs_gre64_vport_ops, parms);
+	if (IS_ERR(vport))
+		goto error;
+
+	strncpy(vport_priv(vport), parms->name, IFNAMSIZ);
+	rcu_assign_pointer(ovs_net->vport_net.gre64_vport, vport);
+	return vport;
+error:
+	gre_exit();
+	return vport;
+}
+
+static void gre64_tnl_destroy(struct vport *vport)
+{
+	struct net *net = ovs_dp_get_net(vport->dp);
+	struct ovs_net *ovs_net;
+
+	ovs_net = net_generic(net, ovs_net_id);
+
+	rcu_assign_pointer(ovs_net->vport_net.gre64_vport, NULL);
+	ovs_vport_deferred_free(vport);
+	gre_exit();
+}
+
+static __be32 be64_get_high32(__be64 x)
+{
+#ifdef __BIG_ENDIAN
+	return (__force __be32)((__force u64)x >> 32);
+#else
+	return (__force __be32)x;
+#endif
+}
+
+static int gre64_send(struct vport *vport, struct sk_buff *skb)
+{
+	int hlen = GRE_HEADER_SECTION +		/* GRE Hdr */
+		   GRE_HEADER_SECTION +		/* GRE Key */
+		   GRE_HEADER_SECTION;		/* GRE SEQ */
+	__be32 seq;
+
+	if (unlikely(!OVS_CB(skb)->tun_key))
+		return -EINVAL;
+
+	if (OVS_CB(skb)->tun_key->tun_flags & TUNNEL_CSUM)
+		hlen += GRE_HEADER_SECTION;
+
+	seq = be64_get_high32(OVS_CB(skb)->tun_key->tun_id);
+	return __send(vport, skb, hlen, seq, (TUNNEL_KEY|TUNNEL_SEQ));
+}
+
+const struct vport_ops ovs_gre64_vport_ops = {
+	.type		= OVS_VPORT_TYPE_GRE64,
+	.create		= gre64_create,
+	.destroy	= gre64_tnl_destroy,
+	.get_name	= gre_get_name,
+	.send		= gre64_send,
+};
+#endif

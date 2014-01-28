@@ -4,7 +4,7 @@
 .  ns
 .  IP "\\$1"
 ..
-.TH ovs\-vswitchd 8 "June 2009" "Open vSwitch" "Open vSwitch Manual"
+.TH ovs\-vswitchd 8 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .\" This program's name:
 .ds PN ovs\-vswitchd
 .\" SSL peer program's name:
@@ -98,7 +98,6 @@ configuration.
 .so lib/ssl-bootstrap.man
 .so lib/vlog.man
 .so lib/common.man
-.so lib/leak-checker.man
 .
 .SH "RUNTIME MANAGEMENT COMMANDS"
 \fBovs\-appctl\fR(8) can send commands to a running
@@ -108,11 +107,18 @@ how to configure Open vSwitch.
 .SS "GENERAL COMMANDS"
 .IP "\fBexit\fR"
 Causes \fBovs\-vswitchd\fR to gracefully terminate.
-.IP "\fBcoverage/log\fR"
-Logs coverage counters at level warn.
 .IP "\fBqos/show\fR \fIinterface\fR"
 Queries the kernel for Quality of Service configuration and statistics
 associated with the given \fIinterface\fR.
+.IP "\fBbfd/show\fR [\fIinterface\fR]"
+Displays detailed information about Bidirectional Forwarding Detection
+configured on \fIinterface\fR.  If \fIinterface\fR is not specified,
+then displays detailed information about all interfaces with BFD
+enabled.
+.IP "\fBbfd/set-forwarding\fR [\fIinterface\fR] \fIstatus\fR"
+Force the fault status of the BFD module on \fIinterface\fR (or all
+interfaces if none is given) to be \fIstatus\fR.  \fIstatus\fR can be
+"true", "false", or "normal" which reverts to the standard behavior.
 .IP "\fBcfm/show\fR [\fIinterface\fR]"
 Displays detailed information about Connectivity Fault Management
 configured on \fIinterface\fR.  If \fIinterface\fR is not specified,
@@ -160,15 +166,15 @@ value are then assigned to a single slave.
 .IP "\fBbond/list\fR"
 Lists all of the bonds, and their slaves, on each bridge.
 .
-.IP "\fBbond/show\fR \fIport\fR"
-Lists all of the bond-specific information about the given bonded
-\fIport\fR: updelay, downdelay, time until the next rebalance.  Also
-lists information about each slave: whether it is enabled or disabled,
-the time to completion of an updelay or downdelay if one is in
-progress, whether it is the active slave, the MAC hashes assigned to
-the slave, and the MAC learning table entries that hash to each MAC.
-Any LACP information related to this bond may be found using the
-\fBlacp/show\fR command.
+.IP "\fBbond/show\fR [\fIport\fR]"
+Lists all of the bond-specific information (updelay, downdelay, time
+until the next rebalance) about the given bonded \fIport\fR, or all
+bonded ports if no \fIport\fR is given.  Also lists information about
+each slave: whether it is enabled or disabled, the time to completion
+of an updelay or downdelay if one is in progress, whether it is the
+active slave, the hashes assigned to the slave.  Any LACP information
+related to this bond may be found using the \fBlacp/show\fR command.
+.
 .IP "\fBbond/migrate\fR \fIport\fR \fIhash\fR \fIslave\fR"
 Only valid for SLB bonds.  Assigns a given MAC hash to a new slave.
 \fIport\fR specifies the bond port, \fIhash\fR the MAC hash to be
@@ -206,11 +212,76 @@ information, and partner information.  If \fIport\fR is not specified,
 then displays detailed information about all interfaces with CFM
 enabled.
 .
+.so ofproto/ofproto-dpif-unixctl.man
 .so ofproto/ofproto-unixctl.man
 .so lib/vlog-unixctl.man
-.so lib/stress-unixctl.man
+.so lib/memory-unixctl.man
+.so lib/coverage-unixctl.man
+.
+.SH "OPENFLOW IMPLEMENTATION"
+.
+.PP
+This section documents aspects of OpenFlow for which the OpenFlow
+specification requires documentation.
+.
+.SS "Packet buffering."
+The OpenFlow specification, version 1.2, says:
+.
+.IP
+Switches that implement buffering are expected to expose, through
+documentation, both the amount of available buffering, and the length
+of time before buffers may be reused.
+.
+.PP
+Open vSwitch maintains a separate set of 256 packet buffers for each
+OpenFlow connection.  Any given packet buffer is preserved until it is
+referenced by an \fBOFPT_FLOW_MOD\fR or \fBOFPT_PACKET_OUT\fR request
+or for 5 seconds, whichever comes first.
+.
+.SH "LIMITS"
+.
+.PP
+We believe these limits to be accurate as of this writing.  These
+limits assume the use of the Linux kernel datapath.
+.
+.IP \(bu
+\fBovs\-vswitchd\fR started through \fBovs\-ctl\fR(8) provides a limit of 7500
+file descriptors.  The limits on the number of bridges and ports is decided by
+the availability of file descriptors.  With the Linux kernel datapath, creation
+of a single bridge consumes 3 file descriptors and adding a port consumes
+1 file descriptor.  Performance will degrade beyond 1,024 ports per bridge due
+to fixed hash table sizing.  Other platforms may have different limitations.
+.
+.IP \(bu
+2,048 MAC learning entries per bridge, by default.  (This is
+configurable via \fBother\-config:mac\-table\-size\fR in the
+\fBBridge\fR table.  See \fBovs\-vswitchd.conf.db\fR(5) for details.)
+.
+.IP \(bu
+Kernel flows are limited only by memory available to the kernel.
+Performance will degrade beyond 1,048,576 kernel flows per bridge with
+a 32-bit kernel, beyond 262,144 with a 64-bit kernel.
+(\fBovs\-vswitchd\fR should never install anywhere near that many
+flows.)
+.
+.IP \(bu
+OpenFlow flows are limited only by available memory.  Performance is
+linear in the number of unique wildcard patterns.  That is, an
+OpenFlow table that contains many flows that all match on the same
+fields in the same way has a constant-time lookup, but a table that
+contains many flows that match on different fields requires lookup
+time linear in the number of flows.
+.
+.IP \(bu
+255 ports per bridge participating in 802.1D Spanning Tree Protocol.
+.
+.IP \(bu
+32 mirrors per bridge.
+.
+.IP \(bu
+15 bytes for the name of a port.  (This is a Linux kernel limitation.)
+.
 .SH "SEE ALSO"
 .BR ovs\-appctl (8),
-.BR ovs\-brcompatd (8),
 .BR ovsdb\-server (1),
 \fBINSTALL.Linux\fR in the Open vSwitch distribution.

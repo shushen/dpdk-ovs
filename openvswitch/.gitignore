@@ -11,9 +11,11 @@
 *.pyc
 *.so
 *~
+*,cover
 .#*
 .*.cmd
 .*.swp
+.coverage
 .deps
 .dirstamp
 .libs
@@ -47,3 +49,4 @@ Module.symvers
 TAGS
 cscope.*
 tags
+_debian

@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -70,9 +70,8 @@
 
 #define DPIF_SOCKNAME "\0dpif-dpdk"
 
-#define DPIF_SEND_US 100000
-
 struct dpdk_flow_message {
+	uint32_t id;
 	uint8_t cmd;
 	uint32_t flags;
 	struct flow_key key;
@@ -136,12 +135,8 @@ inline void __attribute__((always_inline))
 send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 {
 	int rslt = 0;
+	int cnt = 0;
 	void *mbuf_ptr = NULL;
-	const uint64_t dpif_send_tsc =
-		(rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * DPIF_SEND_US;
-	uint64_t cur_tsc = 0;
-	uint64_t diff_tsc = 0;
-	static uint64_t prev_tsc = 0;
 
 	/* send one packet, delete information about segments */
 	rte_pktmbuf_pkt_len(mbuf) = rte_pktmbuf_data_len(mbuf);
@@ -159,6 +154,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 
 	rte_memcpy(mbuf_ptr, info, sizeof(*info));
 
+	cnt = rte_ring_count(vswitchd_packet_ring);
+
 	/* send the packet and the upcall info to the daemon */
 	rslt = rte_ring_mp_enqueue(vswitchd_packet_ring, mbuf);
 	if (rslt < 0) {
@@ -174,11 +171,12 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 
 	stats_vport_tx_increment(VSWITCHD, INC_BY_1);
 
-	cur_tsc = rte_rdtsc();
-	diff_tsc = cur_tsc - prev_tsc;
-	prev_tsc = cur_tsc;
-	/* Only signal the daemon after 100 milliseconds */
-	if (unlikely(diff_tsc > dpif_send_tsc))
+	/*
+	 * cnt == 0 means vswitchd is in poll_block, and needed to wake up.
+	 * However, current rte_ring_count == 0 means, queued packet has
+	 * been processed in vswitchd, then no signaling is needed.
+	 */
+	if (cnt == 0 && rte_ring_count(vswitchd_packet_ring) > 0)
 		send_signal_to_dpif();
 }
 
@@ -194,7 +192,7 @@ handle_request_from_vswitchd(void)
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
 	while (dq_pkt > 0 &&
-	       unlikely(rte_ring_sc_dequeue_bulk(
+	       unlikely(rte_ring_mc_dequeue_bulk(
 	       vswitchd_message_ring, (void **)buf, dq_pkt) != 0))
 		dq_pkt = (uint16_t)RTE_MIN(rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
 
@@ -367,7 +365,7 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	struct dpdk_message reply = {0};
 	struct flow_key empty = {0};
 	struct flow_key key = {0};
-	struct flow_stats stats = {{0}};
+	struct flow_stats stats = {0};
 
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,59 +26,69 @@
 extern "C" {
 #endif
 
-/* This is the public domain lookup3 hash by Bob Jenkins from
- * http://burtleburtle.net/bob/c/lookup3.c, modified for style. */
+static inline uint32_t
+hash_rot(uint32_t x, int k)
+{
+    return (x << k) | (x >> (32 - k));
+}
 
-#define HASH_ROT(x, k) (((x) << (k)) | ((x) >> (32 - (k))))
-
-#define HASH_MIX(a, b, c)                       \
-    do {                                        \
-      a -= c; a ^= HASH_ROT(c,  4); c += b;     \
-      b -= a; b ^= HASH_ROT(a,  6); a += c;     \
-      c -= b; c ^= HASH_ROT(b,  8); b += a;     \
-      a -= c; a ^= HASH_ROT(c, 16); c += b;     \
-      b -= a; b ^= HASH_ROT(a, 19); a += c;     \
-      c -= b; c ^= HASH_ROT(b,  4); b += a;     \
-    } while (0)
-
-#define HASH_FINAL(a, b, c)                     \
-    do {                                        \
-      c ^= b; c -= HASH_ROT(b, 14);             \
-      a ^= c; a -= HASH_ROT(c, 11);             \
-      b ^= a; b -= HASH_ROT(a, 25);             \
-      c ^= b; c -= HASH_ROT(b, 16);             \
-      a ^= c; a -= HASH_ROT(c,  4);             \
-      b ^= a; b -= HASH_ROT(a, 14);             \
-      c ^= b; c -= HASH_ROT(b, 24);             \
-    } while (0)
-
-uint32_t hash_words(const uint32_t *, size_t n_word, uint32_t basis);
-uint32_t hash_2words(uint32_t, uint32_t);
-uint32_t hash_3words(uint32_t, uint32_t, uint32_t);
+uint32_t hash_words(const uint32_t data[], size_t n_words, uint32_t basis);
 uint32_t hash_bytes(const void *, size_t n_bytes, uint32_t basis);
+
+static inline uint32_t hash_int(uint32_t x, uint32_t basis);
+static inline uint32_t hash_2words(uint32_t, uint32_t);
+uint32_t hash_3words(uint32_t, uint32_t, uint32_t);
+
+static inline uint32_t hash_boolean(bool x, uint32_t basis);
+uint32_t hash_double(double, uint32_t basis);
+
+static inline uint32_t hash_pointer(const void *, uint32_t basis);
+static inline uint32_t hash_string(const char *, uint32_t basis);
+
+/* Murmurhash by Austin Appleby,
+ * from http://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp.
+ *
+ * The upstream license there says:
+ *
+ * // MurmurHash3 was written by Austin Appleby, and is placed in the public
+ * // domain. The author hereby disclaims copyright to this source code.
+ *
+ * See hash_words() for sample usage. */
+
+static inline uint32_t mhash_add__(uint32_t hash, uint32_t data)
+{
+    data *= 0xcc9e2d51;
+    data = hash_rot(data, 15);
+    data *= 0x1b873593;
+    return hash ^ data;
+}
+
+static inline uint32_t mhash_add(uint32_t hash, uint32_t data)
+{
+    hash = mhash_add__(hash, data);
+    hash = hash_rot(hash, 13);
+    return hash * 5 + 0xe6546b64;
+}
+
+static inline uint32_t mhash_finish(uint32_t hash, size_t n_bytes)
+{
+    hash ^= n_bytes;
+    hash ^= hash >> 16;
+    hash *= 0x85ebca6b;
+    hash ^= hash >> 13;
+    hash *= 0xc2b2ae35;
+    hash ^= hash >> 16;
+    return hash;
+}
 
 static inline uint32_t hash_string(const char *s, uint32_t basis)
 {
     return hash_bytes(s, strlen(s), basis);
 }
 
-/* This is Bob Jenkins' integer hash from
- * http://burtleburtle.net/bob/hash/integer.html, modified for style.
- *
- * This hash is faster than hash_2words(), but it isn't as good when 'basis' is
- * important.  So use this function for speed or hash_2words() for hash
- * quality. */
 static inline uint32_t hash_int(uint32_t x, uint32_t basis)
 {
-    x -= x << 6;
-    x ^= x >> 17;
-    x -= x << 9;
-    x ^= x << 4;
-    x += basis;
-    x -= x << 3;
-    x ^= x << 10;
-    x ^= x >> 15;
-    return x;
+    return hash_2words(x, basis);
 }
 
 /* An attempt at a useful 1-bit hash function.  Has not been analyzed for
@@ -87,16 +97,7 @@ static inline uint32_t hash_boolean(bool x, uint32_t basis)
 {
     const uint32_t P0 = 0xc2b73583;   /* This is hash_int(1, 0). */
     const uint32_t P1 = 0xe90f1258;   /* This is hash_int(2, 0). */
-    return (x ? P0 : P1) ^ HASH_ROT(basis, 1);
-}
-
-static inline uint32_t hash_double(double x, uint32_t basis)
-{
-    uint32_t value[2];
-    BUILD_ASSERT_DECL(sizeof x == sizeof value);
-
-    memcpy(value, &x, sizeof value);
-    return hash_3words(value[0], value[1], basis);
+    return (x ? P0 : P1) ^ hash_rot(basis, 1);
 }
 
 static inline uint32_t hash_pointer(const void *p, uint32_t basis)
@@ -110,6 +111,11 @@ static inline uint32_t hash_pointer(const void *p, uint32_t basis)
      * an integer to different size.  That's OK in this case, since most of the
      * entropy in the pointer is almost certainly in the lower 32 bits. */
     return hash_int((uint32_t) (uintptr_t) p, basis);
+}
+
+static inline uint32_t hash_2words(uint32_t x, uint32_t y)
+{
+    return mhash_finish(mhash_add(mhash_add(x, 0), y), 4);
 }
 
 #ifdef __cplusplus

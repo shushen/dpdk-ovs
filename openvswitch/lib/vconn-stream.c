@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 
 #include <config.h>
-#include <assert.h>
 #include <errno.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -23,7 +22,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "fatal-signal.h"
-#include "leak-checker.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "poll-loop.h"
@@ -47,20 +45,21 @@ struct vconn_stream
     int n_packets;
 };
 
-static struct vconn_class stream_vconn_class;
+static const struct vconn_class stream_vconn_class;
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 25);
 
 static void vconn_stream_clear_txbuf(struct vconn_stream *);
 
 static struct vconn *
-vconn_stream_new(struct stream *stream, int connect_status)
+vconn_stream_new(struct stream *stream, int connect_status,
+                 uint32_t allowed_versions)
 {
     struct vconn_stream *s;
 
     s = xmalloc(sizeof *s);
     vconn_init(&s->vconn, &stream_vconn_class, connect_status,
-               stream_get_name(stream));
+               stream_get_name(stream), allowed_versions);
     s->stream = stream;
     s->txbuf = NULL;
     s->rxbuf = NULL;
@@ -77,18 +76,18 @@ vconn_stream_new(struct stream *stream, int connect_status)
  *
  * Returns 0 if successful, otherwise a positive errno value. */
 static int
-vconn_stream_open(const char *name, char *suffix OVS_UNUSED,
-                  struct vconn **vconnp)
+vconn_stream_open(const char *name, uint32_t allowed_versions,
+                  char *suffix OVS_UNUSED, struct vconn **vconnp, uint8_t dscp)
 {
     struct stream *stream;
     int error;
 
     error = stream_open_with_default_ports(name, OFP_TCP_PORT, OFP_SSL_PORT,
-                                           &stream);
+                                           &stream, dscp);
     if (!error) {
         error = stream_connect(stream);
         if (!error || error == EAGAIN) {
-            *vconnp = vconn_stream_new(stream, error);
+            *vconnp = vconn_stream_new(stream, error, allowed_versions);
             return 0;
         }
     }
@@ -210,7 +209,6 @@ vconn_stream_send(struct vconn *vconn, struct ofpbuf *buffer)
         ofpbuf_delete(buffer);
         return 0;
     } else if (retval >= 0 || retval == -EAGAIN) {
-        leak_checker_claim(buffer);
         s->txbuf = buffer;
         if (retval > 0) {
             ofpbuf_pull(buffer, retval);
@@ -235,7 +233,7 @@ vconn_stream_run(struct vconn *vconn)
     retval = stream_send(s->stream, s->txbuf->data, s->txbuf->size);
     if (retval < 0) {
         if (retval != -EAGAIN) {
-            VLOG_ERR_RL(&rl, "send: %s", strerror(-retval));
+            VLOG_ERR_RL(&rl, "send: %s", ovs_strerror(-retval));
             vconn_stream_clear_txbuf(s);
             return;
         }
@@ -296,7 +294,7 @@ struct pvconn_pstream
     struct pstream *pstream;
 };
 
-static struct pvconn_class pstream_pvconn_class;
+static const struct pvconn_class pstream_pvconn_class;
 
 static struct pvconn_pstream *
 pvconn_pstream_cast(struct pvconn *pvconn)
@@ -310,21 +308,22 @@ pvconn_pstream_cast(struct pvconn *pvconn)
  * Returns 0 if successful, otherwise a positive errno value.  (The current
  * implementation never fails.) */
 static int
-pvconn_pstream_listen(const char *name, char *suffix OVS_UNUSED,
-                      struct pvconn **pvconnp)
+pvconn_pstream_listen(const char *name, uint32_t allowed_versions,
+                      char *suffix OVS_UNUSED, struct pvconn **pvconnp,
+                      uint8_t dscp)
 {
     struct pvconn_pstream *ps;
     struct pstream *pstream;
     int error;
 
     error = pstream_open_with_default_ports(name, OFP_TCP_PORT, OFP_SSL_PORT,
-                                            &pstream);
+                                            &pstream, dscp);
     if (error) {
         return error;
     }
 
     ps = xmalloc(sizeof *ps);
-    pvconn_init(&ps->pvconn, &pstream_pvconn_class, name);
+    pvconn_init(&ps->pvconn, &pstream_pvconn_class, name, allowed_versions);
     ps->pstream = pstream;
     *pvconnp = &ps->pvconn;
     return 0;
@@ -349,12 +348,12 @@ pvconn_pstream_accept(struct pvconn *pvconn, struct vconn **new_vconnp)
     if (error) {
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "%s: accept: %s",
-                        pstream_get_name(ps->pstream), strerror(error));
+                        pstream_get_name(ps->pstream), ovs_strerror(error));
         }
         return error;
     }
 
-    *new_vconnp = vconn_stream_new(stream, 0);
+    *new_vconnp = vconn_stream_new(stream, 0, pvconn->allowed_versions);
     return 0;
 }
 
@@ -389,16 +388,16 @@ pvconn_pstream_wait(struct pvconn *pvconn)
             pvconn_pstream_wait                     \
     }
 
-static struct vconn_class stream_vconn_class = STREAM_INIT("stream");
-static struct pvconn_class pstream_pvconn_class = PSTREAM_INIT("pstream");
+static const struct vconn_class stream_vconn_class = STREAM_INIT("stream");
+static const struct pvconn_class pstream_pvconn_class = PSTREAM_INIT("pstream");
 
-struct vconn_class tcp_vconn_class = STREAM_INIT("tcp");
-struct pvconn_class ptcp_pvconn_class = PSTREAM_INIT("ptcp");
+const struct vconn_class tcp_vconn_class = STREAM_INIT("tcp");
+const struct pvconn_class ptcp_pvconn_class = PSTREAM_INIT("ptcp");
 
-struct vconn_class unix_vconn_class = STREAM_INIT("unix");
-struct pvconn_class punix_pvconn_class = PSTREAM_INIT("punix");
+const struct vconn_class unix_vconn_class = STREAM_INIT("unix");
+const struct pvconn_class punix_pvconn_class = PSTREAM_INIT("punix");
 
 #ifdef HAVE_OPENSSL
-struct vconn_class ssl_vconn_class = STREAM_INIT("ssl");
-struct pvconn_class pssl_pvconn_class = PSTREAM_INIT("pssl");
+const struct vconn_class ssl_vconn_class = STREAM_INIT("ssl");
+const struct pvconn_class pssl_pvconn_class = PSTREAM_INIT("pssl");
 #endif

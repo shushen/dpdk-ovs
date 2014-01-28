@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Nicira Networks.
+ * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,79 +22,74 @@
 #include "flow.h"
 #include "odp-util.h"
 #include "ofpbuf.h"
+#include "util.h"
 #include "vlog.h"
 
-int
-main(void)
+static int
+parse_keys(bool wc_keys)
 {
     int exit_code = 0;
     struct ds in;
 
     ds_init(&in);
-    vlog_set_levels_from_string("odp_util:console:dbg");
-    while (!ds_get_line(&in, stdin)) {
+    vlog_set_levels_from_string_assert("odp_util:console:dbg");
+    while (!ds_get_test_line(&in, stdin)) {
         enum odp_key_fitness fitness;
         struct ofpbuf odp_key;
+        struct ofpbuf odp_mask;
         struct flow flow;
         struct ds out;
         int error;
-        char *s;
-
-        /* Delete comments, skip blank lines. */
-        s = ds_cstr(&in);
-        if (*s == '#') {
-            puts(s);
-            continue;
-        }
-        if (strchr(s, '#')) {
-            *strchr(s, '#') = '\0';
-        }
-        if (s[strspn(s, " ")] == '\0') {
-            putchar('\n');
-            continue;
-        }
 
         /* Convert string to OVS DP key. */
         ofpbuf_init(&odp_key, 0);
-        error = odp_flow_key_from_string(ds_cstr(&in), NULL, &odp_key);
+        ofpbuf_init(&odp_mask, 0);
+        error = odp_flow_from_string(ds_cstr(&in), NULL,
+                                     &odp_key, &odp_mask);
         if (error) {
-            printf("odp_flow_key_from_string: error\n");
+            printf("odp_flow_from_string: error\n");
             goto next;
         }
 
-        /* Convert odp_key to flow. */
-        fitness = odp_flow_key_to_flow(odp_key.data, odp_key.size, &flow);
-        switch (fitness) {
-        case ODP_FIT_PERFECT:
-            break;
+        if (!wc_keys) {
+            /* Convert odp_key to flow. */
+            fitness = odp_flow_key_to_flow(odp_key.data, odp_key.size, &flow);
+            switch (fitness) {
+                case ODP_FIT_PERFECT:
+                    break;
 
-        case ODP_FIT_TOO_LITTLE:
-            printf("ODP_FIT_TOO_LITTLE: ");
-            break;
+                case ODP_FIT_TOO_LITTLE:
+                    printf("ODP_FIT_TOO_LITTLE: ");
+                    break;
 
-        case ODP_FIT_TOO_MUCH:
-            printf("ODP_FIT_TOO_MUCH: ");
-            break;
+                case ODP_FIT_TOO_MUCH:
+                    printf("ODP_FIT_TOO_MUCH: ");
+                    break;
 
-        case ODP_FIT_ERROR:
-            printf("odp_flow_key_to_flow: error\n");
-            goto next;
-        }
+                case ODP_FIT_ERROR:
+                    printf("odp_flow_key_to_flow: error\n");
+                    goto next;
+            }
+            /* Convert cls_rule back to odp_key. */
+            ofpbuf_uninit(&odp_key);
+            ofpbuf_init(&odp_key, 0);
+            odp_flow_key_from_flow(&odp_key, &flow, flow.in_port.odp_port);
 
-        /* Convert cls_rule back to odp_key. */
-        ofpbuf_uninit(&odp_key);
-        ofpbuf_init(&odp_key, 0);
-        odp_flow_key_from_flow(&odp_key, &flow);
-
-        if (odp_key.size > ODPUTIL_FLOW_KEY_BYTES) {
-            printf ("too long: %zu > %d\n",
-                    odp_key.size, ODPUTIL_FLOW_KEY_BYTES);
-            exit_code = 1;
+            if (odp_key.size > ODPUTIL_FLOW_KEY_BYTES) {
+                printf ("too long: %zu > %d\n",
+                        odp_key.size, ODPUTIL_FLOW_KEY_BYTES);
+                exit_code = 1;
+            }
         }
 
         /* Convert odp_key to string. */
         ds_init(&out);
-        odp_flow_key_format(odp_key.data, odp_key.size, &out);
+        if (wc_keys) {
+            odp_flow_format(odp_key.data, odp_key.size,
+                            odp_mask.data, odp_mask.size, &out, false);
+        } else {
+            odp_flow_key_format(odp_key.data, odp_key.size, &out);
+        }
         puts(ds_cstr(&out));
         ds_destroy(&out);
 
@@ -104,4 +99,52 @@ main(void)
     ds_destroy(&in);
 
     return exit_code;
+}
+
+static int
+parse_actions(void)
+{
+    struct ds in;
+
+    ds_init(&in);
+    vlog_set_levels_from_string_assert("odp_util:console:dbg");
+    while (!ds_get_test_line(&in, stdin)) {
+        struct ofpbuf odp_actions;
+        struct ds out;
+        int error;
+
+        /* Convert string to OVS DP actions. */
+        ofpbuf_init(&odp_actions, 0);
+        error = odp_actions_from_string(ds_cstr(&in), NULL, &odp_actions);
+        if (error) {
+            printf("odp_actions_from_string: error\n");
+            goto next;
+        }
+
+        /* Convert odp_actions back to string. */
+        ds_init(&out);
+        format_odp_actions(&out, odp_actions.data, odp_actions.size);
+        puts(ds_cstr(&out));
+        ds_destroy(&out);
+
+    next:
+        ofpbuf_uninit(&odp_actions);
+    }
+    ds_destroy(&in);
+
+    return 0;
+}
+
+int
+main(int argc, char *argv[])
+{
+    if (argc == 2 &&!strcmp(argv[1], "parse-keys")) {
+        return parse_keys(false);
+    } else if (argc == 2 &&!strcmp(argv[1], "parse-wc-keys")) {
+        return parse_keys(true);
+    } else if (argc == 2 && !strcmp(argv[1], "parse-actions")) {
+        return parse_actions();
+    } else {
+        ovs_fatal(0, "usage: %s parse-keys | parse-wc-keys | parse-actions", argv[0]);
+    }
 }

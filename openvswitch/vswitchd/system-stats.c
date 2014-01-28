@@ -1,4 +1,4 @@
-/* Copyright (c) 2010 Nicira Networks
+/* Copyright (c) 2010, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,8 @@
 
 #include <config.h>
 
-#include <assert.h>
+#include "system-stats.h"
+
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -33,8 +34,13 @@
 #include "daemon.h"
 #include "dirs.h"
 #include "dynamic-string.h"
+#include "json.h"
+#include "latch.h"
+#include "ofpbuf.h"
+#include "ovs-thread.h"
+#include "poll-loop.h"
 #include "shash.h"
-#include "system-stats.h"
+#include "smap.h"
 #include "timeval.h"
 #include "vlog.h"
 
@@ -42,34 +48,32 @@ VLOG_DEFINE_THIS_MODULE(system_stats);
 
 /* #ifdefs make it a pain to maintain code: you have to try to build both ways.
  * Thus, this file tries to compile as much of the code as possible regardless
- * of the target, by writing "if (LINUX)" instead of "#ifdef __linux__" where
- * this is possible. */
-#ifdef __linux__
+ * of the target, by writing "if (LINUX_DATAPATH)" instead of "#ifdef
+ * __linux__" where this is possible. */
+#ifdef LINUX_DATAPATH
 #include <asm/param.h>
-#define LINUX 1
 #else
-#define LINUX 0
+#define LINUX_DATAPATH 0
 #endif
 
 static void
-get_cpu_cores(struct shash *stats)
+get_cpu_cores(struct smap *stats)
 {
     long int n_cores = sysconf(_SC_NPROCESSORS_ONLN);
     if (n_cores > 0) {
-        shash_add(stats, "cpu", xasprintf("%ld", n_cores));
+        smap_add_format(stats, "cpu", "%ld", n_cores);
     }
 }
 
 static void
-get_load_average(struct shash *stats OVS_UNUSED)
+get_load_average(struct smap *stats OVS_UNUSED)
 {
 #if HAVE_GETLOADAVG
     double loadavg[3];
 
     if (getloadavg(loadavg, 3) == 3) {
-        shash_add(stats, "load_average",
-                  xasprintf("%.2f,%.2f,%.2f",
-                            loadavg[0], loadavg[1], loadavg[2]));
+        smap_add_format(stats, "load_average", "%.2f,%.2f,%.2f",
+                        loadavg[0], loadavg[1], loadavg[2]);
     }
 #endif
 }
@@ -90,11 +94,15 @@ get_page_size(void)
 }
 
 static void
-get_memory_stats(struct shash *stats)
+get_memory_stats(struct smap *stats)
 {
-    if (!LINUX) {
+    if (!LINUX_DATAPATH) {
         unsigned int pagesize = get_page_size();
+#ifdef _SC_PHYS_PAGES
         long int phys_pages = sysconf(_SC_PHYS_PAGES);
+#else
+        long int phys_pages = 0;
+#endif
 #ifdef _SC_AVPHYS_PAGES
         long int avphys_pages = sysconf(_SC_AVPHYS_PAGES);
 #else
@@ -108,7 +116,7 @@ get_memory_stats(struct shash *stats)
 
         mem_total = phys_pages * (pagesize / 1024);
         mem_used = (phys_pages - avphys_pages) * (pagesize / 1024);
-        shash_add(stats, "memory", xasprintf("%d,%d", mem_total, mem_used));
+        smap_add_format(stats, "memory", "%d,%d", mem_total, mem_used);
     } else {
         static const char file_name[] = "/proc/meminfo";
         int mem_used, mem_cache, swap_used;
@@ -124,7 +132,8 @@ get_memory_stats(struct shash *stats)
 
         stream = fopen(file_name, "r");
         if (!stream) {
-            VLOG_WARN_ONCE("%s: open failed (%s)", file_name, strerror(errno));
+            VLOG_WARN_ONCE("%s: open failed (%s)",
+                           file_name, ovs_strerror(errno));
             return;
         }
 
@@ -152,9 +161,8 @@ get_memory_stats(struct shash *stats)
         mem_used = mem_total - mem_free;
         mem_cache = buffers + cached;
         swap_used = swap_total - swap_free;
-        shash_add(stats, "memory",
-                  xasprintf("%d,%d,%d,%d,%d", mem_total, mem_used, mem_cache,
-                            swap_total, swap_used));
+        smap_add_format(stats, "memory", "%d,%d,%d,%d,%d",
+                        mem_total, mem_used, mem_cache, swap_total, swap_used);
     }
 }
 
@@ -166,7 +174,7 @@ get_boot_time(void)
     static long long int cache_expiration = LLONG_MIN;
     static long long int boot_time;
 
-    assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     if (time_msec() >= cache_expiration) {
         static const char stat_file[] = "/proc/stat";
@@ -177,7 +185,8 @@ get_boot_time(void)
 
         stream = fopen(stat_file, "r");
         if (!stream) {
-            VLOG_ERR_ONCE("%s: open failed (%s)", stat_file, strerror(errno));
+            VLOG_ERR_ONCE("%s: open failed (%s)",
+                          stat_file, ovs_strerror(errno));
             return boot_time;
         }
 
@@ -198,7 +207,7 @@ get_boot_time(void)
 static unsigned long long int
 ticks_to_ms(unsigned long long int ticks)
 {
-    assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
 #ifndef USER_HZ
 #define USER_HZ 100
@@ -231,12 +240,13 @@ get_raw_process_info(pid_t pid, struct raw_process_info *raw)
     FILE *stream;
     int n;
 
-    assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     sprintf(file_name, "/proc/%lu/stat", (unsigned long int) pid);
     stream = fopen(file_name, "r");
     if (!stream) {
-        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)",
+                      file_name, ovs_strerror(errno));
         return false;
     }
 
@@ -316,18 +326,18 @@ count_crashes(pid_t pid)
     int crashes = 0;
     FILE *stream;
 
-    assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     sprintf(file_name, "/proc/%lu/cmdline", (unsigned long int) pid);
     stream = fopen(file_name, "r");
     if (!stream) {
-        VLOG_WARN_ONCE("%s: open failed (%s)", file_name, strerror(errno));
+        VLOG_WARN_ONCE("%s: open failed (%s)", file_name, ovs_strerror(errno));
         goto exit;
     }
 
     if (!fgets(line, sizeof line, stream)) {
         VLOG_WARN_ONCE("%s: read failed (%s)", file_name,
-                       feof(stream) ? "end of file" : strerror(errno));
+                       feof(stream) ? "end of file" : ovs_strerror(errno));
         goto exit_close;
     }
 
@@ -359,7 +369,7 @@ get_process_info(pid_t pid, struct process_info *pinfo)
 {
     struct raw_process_info child;
 
-    assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
     if (!get_raw_process_info(pid, &child)) {
         return false;
     }
@@ -385,22 +395,23 @@ get_process_info(pid_t pid, struct process_info *pinfo)
 }
 
 static void
-get_process_stats(struct shash *stats)
+get_process_stats(struct smap *stats)
 {
     struct dirent *de;
     DIR *dir;
 
     dir = opendir(ovs_rundir());
     if (!dir) {
-        VLOG_ERR_ONCE("%s: open failed (%s)", ovs_rundir(), strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)",
+                      ovs_rundir(), ovs_strerror(errno));
         return;
     }
 
     while ((de = readdir(dir)) != NULL) {
         struct process_info pinfo;
-        char *key, *value;
         char *file_name;
         char *extension;
+        char *key;
         pid_t pid;
 
 #ifdef _DIRENT_HAVE_D_TYPE
@@ -423,42 +434,40 @@ get_process_stats(struct shash *stats)
 
         key = xasprintf("process_%.*s",
                         (int) (extension - de->d_name), de->d_name);
-        if (shash_find(stats, key)) {
-            free(key);
-            continue;
+        if (!smap_get(stats, key)) {
+            if (LINUX_DATAPATH && get_process_info(pid, &pinfo)) {
+                smap_add_format(stats, key, "%lu,%lu,%lld,%d,%lld,%lld",
+                                pinfo.vsz, pinfo.rss, pinfo.cputime,
+                                pinfo.crashes, pinfo.booted, pinfo.uptime);
+            } else {
+                smap_add(stats, key, "");
+            }
         }
-
-        if (LINUX && get_process_info(pid, &pinfo)) {
-            value = xasprintf("%lu,%lu,%lld,%d,%lld,%lld",
-                              pinfo.vsz, pinfo.rss, pinfo.cputime,
-                              pinfo.crashes, pinfo.booted, pinfo.uptime);
-        } else {
-            value = xstrdup("");
-        }
-
-        shash_add_nocopy(stats, key, value);
+        free(key);
     }
 
     closedir(dir);
 }
 
 static void
-get_filesys_stats(struct shash *stats OVS_UNUSED)
+get_filesys_stats(struct smap *stats OVS_UNUSED)
 {
-#if HAVE_SETMNTENT && HAVE_STATVFS
+#if HAVE_GETMNTENT_R && HAVE_STATVFS
     static const char file_name[] = "/etc/mtab";
+    struct mntent mntent;
     struct mntent *me;
+    char buf[4096];
     FILE *stream;
     struct ds s;
 
     stream = setmntent(file_name, "r");
     if (!stream) {
-        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, ovs_strerror(errno));
         return;
     }
 
     ds_init(&s);
-    while ((me = getmntent(stream)) != NULL) {
+    while ((me = getmntent_r(stream, &mntent, buf, sizeof buf)) != NULL) {
         unsigned long long int total, free;
         struct statvfs vfs;
         char *p;
@@ -489,18 +498,126 @@ get_filesys_stats(struct shash *stats OVS_UNUSED)
     endmntent(stream);
 
     if (s.length) {
-        shash_add(stats, "file_systems", ds_steal_cstr(&s));
+        smap_add(stats, "file_systems", ds_cstr(&s));
     }
     ds_destroy(&s);
-#endif  /* HAVE_SETMNTENT && HAVE_STATVFS */
+#endif  /* HAVE_GETMNTENT_R && HAVE_STATVFS */
+}
+
+#define SYSTEM_STATS_INTERVAL (5 * 1000) /* In milliseconds. */
+
+static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static struct latch latch OVS_GUARDED_BY(mutex);
+static bool enabled;
+static bool started OVS_GUARDED_BY(mutex);
+static struct smap *system_stats OVS_GUARDED_BY(mutex);
+
+static void *system_stats_thread_func(void *);
+static void discard_stats(void);
+
+/* Enables or disables system stats collection, according to 'enable'. */
+void
+system_stats_enable(bool enable)
+{
+    if (enabled != enable) {
+        ovs_mutex_lock(&mutex);
+        if (enable) {
+            if (!started) {
+                xpthread_create(NULL, NULL, system_stats_thread_func, NULL);
+                latch_init(&latch);
+                started = true;
+            }
+            discard_stats();
+            xpthread_cond_signal(&cond);
+        }
+        enabled = enable;
+        ovs_mutex_unlock(&mutex);
+    }
 }
 
-void
-get_system_stats(struct shash *stats)
+/* Tries to obtain a new snapshot of system stats every SYSTEM_STATS_INTERVAL
+ * milliseconds.
+ *
+ * When a new snapshot is available (which only occurs if system stats are
+ * enabled), returns it as an smap owned by the caller.  The caller must use
+ * both smap_destroy() and free() to completely free the returned data.
+ *
+ * When no new snapshot is available, returns NULL. */
+struct smap *
+system_stats_run(void)
 {
-    get_cpu_cores(stats);
-    get_load_average(stats);
-    get_memory_stats(stats);
-    get_process_stats(stats);
-    get_filesys_stats(stats);
+    struct smap *stats = NULL;
+
+    ovs_mutex_lock(&mutex);
+    if (system_stats) {
+        latch_poll(&latch);
+
+        if (enabled) {
+            stats = system_stats;
+            system_stats = NULL;
+        } else {
+            discard_stats();
+        }
+    }
+    ovs_mutex_unlock(&mutex);
+
+    return stats;
+}
+
+/* Causes poll_block() to wake up when system_stats_run() needs to be
+ * called. */
+void
+system_stats_wait(void)
+{
+    if (enabled) {
+        latch_wait(&latch);
+    }
+}
+
+static void
+discard_stats(void) OVS_REQUIRES(mutex)
+{
+    if (system_stats) {
+        smap_destroy(system_stats);
+        free(system_stats);
+        system_stats = NULL;
+    }
+}
+
+static void * NO_RETURN
+system_stats_thread_func(void *arg OVS_UNUSED)
+{
+    pthread_detach(pthread_self());
+
+    for (;;) {
+        long long int next_refresh;
+        struct smap *stats;
+
+        ovs_mutex_lock(&mutex);
+        while (!enabled) {
+            ovs_mutex_cond_wait(&cond, &mutex);
+        }
+        ovs_mutex_unlock(&mutex);
+
+        stats = xmalloc(sizeof *stats);
+        smap_init(stats);
+        get_cpu_cores(stats);
+        get_load_average(stats);
+        get_memory_stats(stats);
+        get_process_stats(stats);
+        get_filesys_stats(stats);
+
+        ovs_mutex_lock(&mutex);
+        discard_stats();
+        system_stats = stats;
+        latch_set(&latch);
+        ovs_mutex_unlock(&mutex);
+
+        next_refresh = time_msec() + SYSTEM_STATS_INTERVAL;
+        do {
+            poll_timer_wait_until(next_refresh);
+            poll_block();
+        } while (time_msec() < next_refresh);
+    }
 }

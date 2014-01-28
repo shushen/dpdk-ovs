@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -35,30 +35,20 @@
 #include "vport.h"
 
 #define MAX_BUFS             100
-#define MAX_PORT_TYPES       3
-#define MAX_PORTS_PER_CLIENT 16
+#define MAX_VPORTS           80
 
-/* port types */
-#define RING     0
-#define KNI      1
-#define PHY      2
-#define VETH     3
+struct rte_mbuf *buf_array[MAX_VPORTS][MAX_BUFS] = {NULL};
 
-struct rte_mbuf *buf_array[MAX_PORT_TYPES][MAX_PORTS_PER_CLIENT][MAX_BUFS] = {NULL};
-
-int buf_tail[MAX_PORT_TYPES][MAX_PORTS_PER_CLIENT] = {0};
-int buf_head[MAX_PORT_TYPES][MAX_PORTS_PER_CLIENT] = {0};
-
-uint16_t dequeue(uint8_t portid, uint8_t type, struct rte_mbuf **bufs);
-int enqueue(uint8_t portid, uint8_t type, struct rte_mbuf *buf);
+int buf_tail[MAX_VPORTS] = {0};
+int buf_head[MAX_VPORTS] = {0};
 
 uint16_t
-dequeue(uint8_t portid, uint8_t type, struct rte_mbuf **bufs)
+receive_from_vport(uint8_t portid, struct rte_mbuf **bufs)
 {
 	int count = 0;
 	int i = 0;
-	int head = buf_head[type][portid];
-	int tail = buf_tail[type][portid];
+	int head = buf_head[portid];
+	int tail = buf_tail[portid];
 
 	/* check how many buffers can be received */
 	count = tail - head;
@@ -68,8 +58,8 @@ dequeue(uint8_t portid, uint8_t type, struct rte_mbuf **bufs)
 		count = PKT_BURST_SIZE;
 
 	for (i = 0; i < count; i++) {
-		bufs[i] = buf_array[type][portid][head];
-		head = ++buf_head[type][portid];
+		bufs[i] = buf_array[portid][head];
+		head = ++buf_head[portid];
 	}
 
 	return count;
@@ -77,12 +67,12 @@ dequeue(uint8_t portid, uint8_t type, struct rte_mbuf **bufs)
 
 
 int
-enqueue(uint8_t portid, uint8_t type, struct rte_mbuf *buf)
+send_to_vport(uint8_t portid, struct rte_mbuf *buf)
 {
-	int tail = buf_tail[type][portid]++;
+	int tail = buf_tail[portid]++;
 
 	/* add one buffer to buf structure and update index */
-	buf_array[type][portid][tail] = buf;
+	buf_array[portid][tail] = buf;
 	return 0;
 }
 
@@ -96,65 +86,15 @@ void vport_init(void)
 void vport_fini(void)
 {
 	int bufs = 0;
-	int port_types = 0;
 	int ports = 0;
 
 	/* initialize all buf pointers and indices to zero */
 	for (bufs = 0; bufs < MAX_BUFS; bufs++)
-		for (port_types = 0; port_types < MAX_PORT_TYPES; port_types++)
-			for (ports = 0; ports < MAX_PORTS_PER_CLIENT; ports++) {
-				buf_array[port_types][ports][bufs] = NULL;
-				buf_tail[port_types][ports] = 0;
-				buf_head[port_types][ports] = 0;
-			}
+		for (ports = 0; ports < MAX_VPORTS; ports++) {
+			buf_array[ports][bufs] = NULL;
+			buf_tail[ports] = 0;
+			buf_head[ports] = 0;
+		}
 
 	return;
-}
-
-int
-send_to_client(uint8_t client, struct rte_mbuf *buf)
-{
-	return enqueue(client, RING, buf);
-}
-
-int
-send_to_port(uint8_t vportid, struct rte_mbuf *buf)
-{
-	return enqueue(vportid & PORT_MASK , PHY, buf);
-}
-
-int
-send_to_kni(uint8_t vportid, struct rte_mbuf *buf)
-{
-	return enqueue(vportid & KNI_MASK, KNI, buf);
-}
-
-int
-send_to_veth(uint8_t vportid, struct rte_mbuf *buf)
-{
-	return enqueue(vportid & VETH_MASK, VETH, buf);
-}
-
-uint16_t
-receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs)
-{
-	return dequeue(vportid & VETH_MASK, VETH, bufs);
-}
-
-uint16_t
-receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs)
-{
-	return dequeue(vportid & KNI_MASK, KNI, bufs);
-}
-
-uint16_t
-receive_from_client(uint8_t client, struct rte_mbuf **bufs)
-{
-	return dequeue(client, RING, bufs);
-}
-
-uint16_t
-receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
-{
-	return dequeue(vportid & PORT_MASK, PHY, bufs);
 }

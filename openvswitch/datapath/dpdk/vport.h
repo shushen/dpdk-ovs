@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -47,6 +47,7 @@
 #define PKT_BURST_SIZE      32u
 #define CLIENT0             0
 #define CLIENT1             1
+#define PHYPORT0            0x10
 #define KNI0                0x20
 #define VETH0               0x40
 #define CLIENT_MASK         0x00
@@ -68,15 +69,13 @@ struct port_info *ports;
 void vport_init(void);
 void vport_fini(void);
 
-int send_to_client(uint8_t client, struct rte_mbuf *buf);
-int send_to_port(uint8_t vportid, struct rte_mbuf *buf);
-int send_to_kni(uint8_t vportid, struct rte_mbuf *buf);
-int send_to_veth(uint8_t vportid, struct rte_mbuf *buf);
+int send_to_vport(uint8_t vportid, struct rte_mbuf *buf);
+uint16_t receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs);
+void flush_nic_tx_ring(unsigned vportid);
+const char *vport_name(unsigned vportid);
 
-uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
-uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
-uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
-uint16_t receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs);
+void flush_clients(void);
+void flush_ports(void);
 
 #endif /* __VPORT_H_ */
 

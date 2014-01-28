@@ -36,7 +36,7 @@ MAN_FRAGMENTS += \
 # ovsdb-tool
 bin_PROGRAMS += ovsdb/ovsdb-tool
 ovsdb_ovsdb_tool_SOURCES = ovsdb/ovsdb-tool.c
-ovsdb_ovsdb_tool_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a
+ovsdb_ovsdb_tool_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
 # ovsdb-tool.1
 man_MANS += ovsdb/ovsdb-tool.1
 DISTCLEANFILES += ovsdb/ovsdb-tool.1
@@ -55,6 +55,7 @@ MAN_ROOTS += ovsdb/ovsdb-client.1.in
 sbin_PROGRAMS += ovsdb/ovsdb-server
 ovsdb_ovsdb_server_SOURCES = ovsdb/ovsdb-server.c
 ovsdb_ovsdb_server_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
+ovsdb_ovsdb_server_LDADD += $(dpdk_libs)
 # ovsdb-server.1
 man_MANS += ovsdb/ovsdb-server.1
 DISTCLEANFILES += ovsdb/ovsdb-server.1
@@ -89,10 +90,8 @@ BUILT_SOURCES += $(OVSIDL_BUILT)
 $(OVSIDL_BUILT): ovsdb/ovsdb-idlc.in
 
 # ovsdb-doc
-EXTRA_DIST += ovsdb/ovsdb-doc.in
-noinst_SCRIPTS += ovsdb/ovsdb-doc
-DISTCLEANFILES += ovsdb/ovsdb-doc
-OVSDB_DOC = $(run_python) $(srcdir)/ovsdb/ovsdb-doc.in
+EXTRA_DIST += ovsdb/ovsdb-doc
+OVSDB_DOC = $(run_python) $(srcdir)/ovsdb/ovsdb-doc
 
 # ovsdb-dot
 EXTRA_DIST += ovsdb/ovsdb-dot.in ovsdb/dot2pic

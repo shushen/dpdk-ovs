@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,8 +37,6 @@
 
 
 #include <string.h>
-#define IFNAMSIZ 16
-
 #include <rte_kni.h>
 #include <exec-env/rte_kni_common.h>
 

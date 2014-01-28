@@ -5,7 +5,7 @@
 .  IP "\\$1"
 ..
 .\" -*- nroff -*-
-.TH ovsdb\-tool 1 "November 2009" "Open vSwitch" "Open vSwitch Manual"
+.TH ovsdb\-tool 1 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .ds PN ovsdb\-tool
 .
 .SH NAME
@@ -134,7 +134,7 @@ instead, to write to a database that is served by
 Prints a summary of the records in \fIdb\fR's log, including the time
 and date at which each database change occurred and any associated
 comment.  This may be useful for debugging.
-.PP
+.IP
 To increase the verbosity of output, add \fB\-m\fR (or \fB\-\-more\fR)
 one or more times to the command line.  With one \fB\-m\fR,
 \fBshow\-log\fR prints a summary of the records added, deleted, or
@@ -148,7 +148,7 @@ record.
 .SS "Other Options"
 .so lib/common.man
 .SH "FILES"
-The default \fIdb\fR is \fB@sysconfdir@/openvswitch/conf.db\fR.  The
+The default \fIdb\fR is \fB@DBDIR@/conf.db\fR.  The
 default \fIschema\fR is \fB@pkgdatadir@/vswitch.ovsschema\fR.  The
 \fBhelp\fR command also displays these defaults.
 .SH "SEE ALSO"

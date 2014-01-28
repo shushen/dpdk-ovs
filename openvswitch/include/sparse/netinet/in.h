@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Nicira Networks.
+ * Copyright (c) 2011, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,28 @@ extern const struct in6_addr in6addr_any;
 #define IPPROTO_ICMPV6 58
 #define IPPROTO_NONE 59
 #define IPPROTO_DSTOPTS 60
+#define IPPROTO_SCTP 132
+
+/* All the IP options documented in Linux ip(7). */
+#define IP_ADD_MEMBERSHIP 0
+#define IP_DROP_MEMBERSHIP 1
+#define IP_HDRINCL 2
+#define IP_MTU 3
+#define IP_MTU_DISCOVER 4
+#define IP_MULTICAST_IF 5
+#define IP_MULTICAST_LOOP 6
+#define IP_MULTICAST_TTL 7
+#define IP_NODEFRAG 8
+#define IP_OPTIONS 9
+#define IP_PKTINFO 10
+#define IP_RECVERR 11
+#define IP_RECVOPTS 12
+#define IP_RECVTOS 13
+#define IP_RECVTTL 14
+#define IP_RETOPTS 15
+#define IP_ROUTER_ALERT 16
+#define IP_TOS 17
+#define IP_TTL 18
 
 #define INADDR_ANY              0x00000000
 #define INADDR_BROADCAST        0xffffffff
@@ -88,7 +110,6 @@ static inline uint16_t ntohs(ovs_be16 x)
 
 in_addr_t inet_addr(const char *);
 int inet_aton (const char *, struct in_addr *);
-char *inet_ntoa(struct in_addr);
 const char *inet_ntop(int, const void *, char *, socklen_t);
 int inet_pton(int, const char *, void *);
 

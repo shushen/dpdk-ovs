@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Nicira Networks.
+ * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 #include "command-line.h"
 #include "daemon.h"
+#include "dynamic-string.h"
 #include "netflow.h"
 #include "ofpbuf.h"
 #include "packets.h"
@@ -73,8 +74,8 @@ print_netflow(struct ofpbuf *buf)
             return;
         }
 
-        printf("rec: "IP_FMT" > "IP_FMT,
-               IP_ARGS(&rec->src_addr), IP_ARGS(&rec->dst_addr));
+        printf("seq %"PRIu32": "IP_FMT" > "IP_FMT, ntohl(hdr->flow_seq),
+               IP_ARGS(rec->src_addr), IP_ARGS(rec->dst_addr));
 
         printf(", if %"PRIu16" > %"PRIu16,
                ntohs(rec->input), ntohs(rec->output));
@@ -87,36 +88,20 @@ print_netflow(struct ofpbuf *buf)
             printf(", TCP %"PRIu16" > %"PRIu16,
                    ntohs(rec->src_port), ntohs(rec->dst_port));
             if (rec->tcp_flags) {
-                putchar(' ');
-                if (rec->tcp_flags & TCP_SYN) {
-                    putchar('S');
-                }
-                if (rec->tcp_flags & TCP_FIN) {
-                    putchar('F');
-                }
-                if (rec->tcp_flags & TCP_PSH) {
-                    putchar('P');
-                }
-                if (rec->tcp_flags & TCP_RST) {
-                    putchar('R');
-                }
-                if (rec->tcp_flags & TCP_URG) {
-                    putchar('U');
-                }
-                if (rec->tcp_flags & TCP_ACK) {
-                    putchar('.');
-                }
-                if (rec->tcp_flags & 0x40) {
-                    printf("[40]");
-                }
-                if (rec->tcp_flags & 0x80) {
-                    printf("[80]");
-                }
+                struct ds s = DS_EMPTY_INITIALIZER;
+                packet_format_tcp_flags(&s, rec->tcp_flags);
+                printf(" %s", ds_cstr(&s));
+                ds_destroy(&s);
             }
             break;
 
         case IPPROTO_UDP:
             printf(", UDP %"PRIu16" > %"PRIu16,
+                   ntohs(rec->src_port), ntohs(rec->dst_port));
+            break;
+
+        case IPPROTO_SCTP:
+            printf(", SCTP %"PRIu16" > %"PRIu16,
                    ntohs(rec->src_port), ntohs(rec->dst_port));
             break;
 
@@ -140,6 +125,7 @@ print_netflow(struct ofpbuf *buf)
 
         if (rec->ip_proto != IPPROTO_TCP &&
             rec->ip_proto != IPPROTO_UDP &&
+            rec->ip_proto != IPPROTO_SCTP &&
             rec->ip_proto != IPPROTO_ICMP) {
             if (rec->src_port != htons(0)) {
                 printf(", src_port %"PRIu16, ntohs(rec->src_port));
@@ -157,7 +143,7 @@ print_netflow(struct ofpbuf *buf)
                ntohl(rec->init_time), ntohl(rec->used_time));
 
         if (rec->nexthop != htonl(0)) {
-            printf(", nexthop "IP_FMT, IP_ARGS(&rec->nexthop));
+            printf(", nexthop "IP_FMT, IP_ARGS(rec->nexthop));
         }
         if (rec->src_as != htons(0) || rec->dst_as != htons(0)) {
             printf(", AS %"PRIu16" > %"PRIu16,
@@ -190,7 +176,6 @@ main(int argc, char *argv[])
     bool exiting = false;
     int error;
     int sock;
-    int fd;
     int n;
 
     proctitle_init(argc, argv);
@@ -203,15 +188,12 @@ main(int argc, char *argv[])
     }
     target = argv[optind];
 
-    sock = inet_open_passive(SOCK_DGRAM, target, 0, NULL);
+    sock = inet_open_passive(SOCK_DGRAM, target, 0, NULL, 0);
     if (sock < 0) {
-        ovs_fatal(0, "%s: failed to open (%s)", argv[1], strerror(-sock));
+        ovs_fatal(0, "%s: failed to open (%s)", argv[1], ovs_strerror(-sock));
     }
 
-    /* Daemonization will close stdout but we really want to keep it, so make a
-     * copy. */
-    fd = dup(STDOUT_FILENO);
-
+    daemon_save_fd(STDOUT_FILENO);
     daemonize_start();
 
     error = unixctl_server_create(NULL, &server);
@@ -221,9 +203,6 @@ main(int argc, char *argv[])
     unixctl_command_register("exit", "", 0, 0, test_netflow_exit, &exiting);
 
     daemonize_complete();
-
-    /* Now get stdout back. */
-    dup2(fd, STDOUT_FILENO);
 
     ofpbuf_init(&buf, MAX_RECV);
     n = 0;
@@ -261,12 +240,13 @@ static void
 parse_options(int argc, char *argv[])
 {
     enum {
-        DAEMON_OPTION_ENUMS
+        DAEMON_OPTION_ENUMS,
+        VLOG_OPTION_ENUMS
     };
-    static struct option long_options[] = {
-        {"verbose", optional_argument, NULL, 'v'},
+    static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         DAEMON_LONG_OPTIONS,
+        VLOG_LONG_OPTIONS,
         {NULL, 0, NULL, 0},
     };
     char *short_options = long_options_to_short_options(long_options);
@@ -281,11 +261,8 @@ parse_options(int argc, char *argv[])
         case 'h':
             usage();
 
-        case 'v':
-            vlog_set_verbosity(optarg);
-            break;
-
         DAEMON_OPTION_HANDLERS
+        VLOG_OPTION_HANDLERS
 
         case '?':
             exit(EXIT_FAILURE);
@@ -319,5 +296,5 @@ test_netflow_exit(struct unixctl_conn *conn,
 {
     bool *exiting = exiting_;
     *exiting = true;
-    unixctl_command_reply(conn, 200, "");
+    unixctl_command_reply(conn, NULL);
 }

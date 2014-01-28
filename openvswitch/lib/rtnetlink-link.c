@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,9 +45,11 @@ rtnetlink_link_parse(struct ofpbuf *buf,
     static const struct nl_policy policy[] = {
         [IFLA_IFNAME] = { .type = NL_A_STRING, .optional = false },
         [IFLA_MASTER] = { .type = NL_A_U32,    .optional = true },
+        [IFLA_MTU]    = { .type = NL_A_U32,    .optional = true },
+        [IFLA_ADDRESS] = { .type = NL_A_UNSPEC, .optional = true },
     };
 
-    static struct nlattr *attrs[ARRAY_SIZE(policy)];
+    struct nlattr *attrs[ARRAY_SIZE(policy)];
 
     parsed = nl_policy_parse(buf, NLMSG_HDRLEN + sizeof(struct ifinfomsg),
                              policy, attrs, ARRAY_SIZE(policy));
@@ -57,16 +59,25 @@ rtnetlink_link_parse(struct ofpbuf *buf,
         const struct ifinfomsg *ifinfo;
 
         nlmsg  = buf->data;
-        ifinfo = ((const struct ifinfomsg *)
-                  ((const char *) buf->data + NLMSG_HDRLEN));
+        ifinfo = ofpbuf_at(buf, NLMSG_HDRLEN, sizeof *ifinfo);
 
         change->nlmsg_type     = nlmsg->nlmsg_type;
         change->ifi_index      = ifinfo->ifi_index;
         change->ifname         = nl_attr_get_string(attrs[IFLA_IFNAME]);
-        change->running        = ifinfo->ifi_flags & IFF_RUNNING;
+        change->ifi_flags      = ifinfo->ifi_flags;
         change->master_ifindex = (attrs[IFLA_MASTER]
                                   ? nl_attr_get_u32(attrs[IFLA_MASTER])
                                   : 0);
+        change->mtu            = (attrs[IFLA_MTU]
+                                  ? nl_attr_get_u32(attrs[IFLA_MTU])
+                                  : 0);
+
+        if (attrs[IFLA_ADDRESS] &&
+            nl_attr_get_size(attrs[IFLA_ADDRESS]) == ETH_ALEN) {
+            memcpy(change->addr, nl_attr_get(attrs[IFLA_ADDRESS]), ETH_ALEN);
+        } else {
+            memset(change->addr, 0, ETH_ALEN);
+        }
     }
 
     return parsed;

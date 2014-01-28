@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ bitmap_allocate1(size_t n_bits)
 {
     size_t n_bytes = bitmap_n_bytes(n_bits);
     size_t n_longs = bitmap_n_longs(n_bits);
+    size_t r_bits = n_bits % BITMAP_ULONG_BITS;
     unsigned long *bitmap;
 
     /* Allocate and initialize most of the bitmap. */
@@ -32,7 +33,9 @@ bitmap_allocate1(size_t n_bits)
 
     /* Ensure that the last "unsigned long" in the bitmap only has as many
      * 1-bits as there actually should be. */
-    bitmap[n_longs - 1] = (1UL << (n_bits % BITMAP_ULONG_BITS)) - 1;
+    if (r_bits) {
+        bitmap[n_longs - 1] = (1UL << r_bits) - 1;
+    }
 
     return bitmap;
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011 Nicira Networks
+/* Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 
 #include "row.h"
 
-#include <assert.h>
 #include <stddef.h>
 
 #include "dynamic-string.h"
@@ -36,7 +35,7 @@ allocate_row(const struct ovsdb_table *table)
                        + sizeof(struct ovsdb_datum) * n_fields
                        + sizeof(struct hmap_node) * n_indexes);
     struct ovsdb_row *row = xmalloc(row_size);
-    row->table = (struct ovsdb_table *) table;
+    row->table = CONST_CAST(struct ovsdb_table *, table);
     row->txn_row = NULL;
     list_init(&row->src_refs);
     list_init(&row->dst_refs);
@@ -347,7 +346,7 @@ ovsdb_row_hash_destroy(struct ovsdb_row_hash *rh, bool destroy_rows)
     HMAP_FOR_EACH_SAFE (node, next, hmap_node, &rh->rows) {
         hmap_remove(&rh->rows, &node->hmap_node);
         if (destroy_rows) {
-            ovsdb_row_destroy((struct ovsdb_row *) node->row);
+            ovsdb_row_destroy(CONST_CAST(struct ovsdb_row *, node->row));
         }
         free(node);
     }
@@ -376,7 +375,7 @@ ovsdb_row_hash_contains_all(const struct ovsdb_row_hash *a,
 {
     struct ovsdb_row_hash_node *node;
 
-    assert(ovsdb_column_set_equals(&a->columns, &b->columns));
+    ovs_assert(ovsdb_column_set_equals(&a->columns, &b->columns));
     HMAP_FOR_EACH (node, hmap_node, &b->rows) {
         if (!ovsdb_row_hash_contains__(a, node->row, node->hmap_node.hash)) {
             return false;

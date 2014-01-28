@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -51,6 +51,8 @@ struct cfg_params {
 	uint8_t lcore_id;
 } __rte_cache_aligned;
 
+extern struct cfg_params *cfg_params;
+extern uint16_t nb_cfg_params;
 
 int parse_app_args(uint8_t max_ports, int argc, char *argv[]);
 int parse_config(const char *q_arg);

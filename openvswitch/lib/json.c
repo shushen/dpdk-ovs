@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 
 #include "json.h"
 
-#include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <float.h>
@@ -288,42 +287,42 @@ json_object_put_string(struct json *json, const char *name, const char *value)
 const char *
 json_string(const struct json *json)
 {
-    assert(json->type == JSON_STRING);
+    ovs_assert(json->type == JSON_STRING);
     return json->u.string;
 }
 
 struct json_array *
 json_array(const struct json *json)
 {
-    assert(json->type == JSON_ARRAY);
-    return (struct json_array *) &json->u.array;
+    ovs_assert(json->type == JSON_ARRAY);
+    return CONST_CAST(struct json_array *, &json->u.array);
 }
 
 struct shash *
 json_object(const struct json *json)
 {
-    assert(json->type == JSON_OBJECT);
-    return (struct shash *) json->u.object;
+    ovs_assert(json->type == JSON_OBJECT);
+    return CONST_CAST(struct shash *, json->u.object);
 }
 
 bool
 json_boolean(const struct json *json)
 {
-    assert(json->type == JSON_TRUE || json->type == JSON_FALSE);
+    ovs_assert(json->type == JSON_TRUE || json->type == JSON_FALSE);
     return json->type == JSON_TRUE;
 }
 
 double
 json_real(const struct json *json)
 {
-    assert(json->type == JSON_REAL || json->type == JSON_INTEGER);
+    ovs_assert(json->type == JSON_REAL || json->type == JSON_INTEGER);
     return json->type == JSON_REAL ? json->u.real : json->u.integer;
 }
 
 int64_t
 json_integer(const struct json *json)
 {
-    assert(json->type == JSON_INTEGER);
+    ovs_assert(json->type == JSON_INTEGER);
     return json->u.integer;
 }
 
@@ -621,11 +620,11 @@ json_lex_number(struct json_parser *p)
     significand = 0;
     if (*cp == '0') {
         cp++;
-        if (isdigit(*cp)) {
+        if (isdigit((unsigned char) *cp)) {
             json_error(p, "leading zeros not allowed");
             return;
         }
-    } else if (isdigit(*cp)) {
+    } else if (isdigit((unsigned char) *cp)) {
         do {
             if (significand <= ULLONG_MAX / 10) {
                 significand = significand * 10 + (*cp - '0');
@@ -636,7 +635,7 @@ json_lex_number(struct json_parser *p)
                 }
             }
             cp++;
-        } while (isdigit(*cp));
+        } while (isdigit((unsigned char) *cp));
     } else {
         json_error(p, "'-' must be followed by digit");
         return;
@@ -645,7 +644,7 @@ json_lex_number(struct json_parser *p)
     /* Optional fraction. */
     if (*cp == '.') {
         cp++;
-        if (!isdigit(*cp)) {
+        if (!isdigit((unsigned char) *cp)) {
             json_error(p, "decimal point must be followed by digit");
             return;
         }
@@ -657,7 +656,7 @@ json_lex_number(struct json_parser *p)
                 imprecise = true;
             }
             cp++;
-        } while (isdigit(*cp));
+        } while (isdigit((unsigned char) *cp));
     }
 
     /* Optional exponent. */
@@ -673,7 +672,7 @@ json_lex_number(struct json_parser *p)
             cp++;
         }
 
-        if (!isdigit(*cp)) {
+        if (!isdigit((unsigned char) *cp)) {
             json_error(p, "exponent must contain at least one digit");
             return;
         }
@@ -686,7 +685,7 @@ json_lex_number(struct json_parser *p)
             }
             exponent = exponent * 10 + (*cp - '0');
             cp++;
-        } while (isdigit(*cp));
+        } while (isdigit((unsigned char) *cp));
 
         if (negative_exponent) {
             pow10 -= exponent;
@@ -908,14 +907,6 @@ json_lex_input(struct json_parser *p, unsigned char c)
 {
     struct json_token token;
 
-    p->byte_number++;
-    if (c == '\n') {
-        p->column_number = 0;
-        p->line_number++;
-    } else {
-        p->column_number++;
-    }
-
     switch (p->lex_state) {
     case JSON_LEX_START:
         switch (c) {
@@ -1035,7 +1026,8 @@ json_from_file(const char *file_name)
     stream = fopen(file_name, "r");
     if (!stream) {
         return json_string_create_nocopy(
-            xasprintf("error opening \"%s\": %s", file_name, strerror(errno)));
+            xasprintf("error opening \"%s\": %s", file_name,
+                      ovs_strerror(errno)));
     }
     json = json_from_stream(stream);
     fclose(stream);
@@ -1072,7 +1064,7 @@ json_from_stream(FILE *stream)
     if (ferror(stream)) {
         json_destroy(json);
         json = json_string_create_nocopy(
-            xasprintf("error reading JSON stream: %s", strerror(errno)));
+            xasprintf("error reading JSON stream: %s", ovs_strerror(errno)));
     }
 
     return json;
@@ -1092,6 +1084,13 @@ json_parser_feed(struct json_parser *p, const char *input, size_t n)
     size_t i;
     for (i = 0; !p->done && i < n; ) {
         if (json_lex_input(p, input[i])) {
+            p->byte_number++;
+            if (input[i] == '\n') {
+                p->column_number = 0;
+                p->line_number++;
+            } else {
+                p->column_number++;
+            }
             i++;
         }
     }
@@ -1131,8 +1130,8 @@ json_parser_finish(struct json_parser *p)
     }
 
     if (!p->error) {
-        assert(p->height == 1);
-        assert(p->stack[0].json != NULL);
+        ovs_assert(p->height == 1);
+        ovs_assert(p->stack[0].json != NULL);
         json = p->stack[--p->height].json;
     } else {
         json = json_string_create_nocopy(p->error);
@@ -1640,4 +1639,117 @@ json_serialize_string(const char *string, struct ds *ds)
         }
     }
     ds_put_char(ds, '"');
+}
+
+static size_t
+json_string_serialized_length(const char *string)
+{
+    size_t length;
+    uint8_t c;
+
+    length = strlen("\"\"");
+
+    while ((c = *string++) != '\0') {
+        switch (c) {
+        case '"':
+        case '\\':
+        case '\b':
+        case '\f':
+        case '\n':
+        case '\r':
+        case '\t':
+            length += 2;
+            break;
+
+        default:
+            if (c >= 32) {
+                length++;
+            } else {
+                /* \uXXXX */
+                length += 6;
+            }
+            break;
+        }
+    }
+
+    return length;
+}
+
+static size_t
+json_object_serialized_length(const struct shash *object)
+{
+    size_t length = strlen("{}");
+
+    if (!shash_is_empty(object)) {
+        struct shash_node *node;
+
+        /* Commas and colons. */
+        length += 2 * shash_count(object) - 1;
+
+        SHASH_FOR_EACH (node, object) {
+            const struct json *value = node->data;
+
+            length += json_string_serialized_length(node->name);
+            length += json_serialized_length(value);
+        }
+    }
+
+    return length;
+}
+
+static size_t
+json_array_serialized_length(const struct json_array *array)
+{
+    size_t length = strlen("[]");
+
+    if (array->n) {
+        size_t i;
+
+        /* Commas. */
+        length += array->n - 1;
+
+        for (i = 0; i < array->n; i++) {
+            length += json_serialized_length(array->elems[i]);
+        }
+    }
+
+    return length;
+}
+
+/* Returns strlen(json_to_string(json, 0)), that is, the number of bytes in the
+ * JSON output by json_to_string() for 'json' when JSSF_PRETTY is not
+ * requested.  (JSSF_SORT does not affect the length of json_to_string()'s
+ * output.) */
+size_t
+json_serialized_length(const struct json *json)
+{
+    switch (json->type) {
+    case JSON_NULL:
+        return strlen("null");
+
+    case JSON_FALSE:
+        return strlen("false");
+
+    case JSON_TRUE:
+        return strlen("true");
+
+    case JSON_OBJECT:
+        return json_object_serialized_length(json->u.object);
+
+    case JSON_ARRAY:
+        return json_array_serialized_length(&json->u.array);
+
+    case JSON_INTEGER:
+        return snprintf(NULL, 0, "%lld", json->u.integer);
+
+    case JSON_REAL:
+        return snprintf(NULL, 0, "%.*g", DBL_DIG, json->u.real);
+
+    case JSON_STRING:
+        return json_string_serialized_length(json->u.string);
+
+    case JSON_N_TYPES:
+    default:
+        NOT_REACHED();
+    }
 }

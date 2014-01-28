@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <config.h>
 #include "stream-provider.h"
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <netinet/in.h>
@@ -74,14 +73,14 @@ check_stream_classes(void)
 
     for (i = 0; i < ARRAY_SIZE(stream_classes); i++) {
         const struct stream_class *class = stream_classes[i];
-        assert(class->name != NULL);
-        assert(class->open != NULL);
+        ovs_assert(class->name != NULL);
+        ovs_assert(class->open != NULL);
         if (class->close || class->recv || class->send || class->run
             || class->run_wait || class->wait) {
-            assert(class->close != NULL);
-            assert(class->recv != NULL);
-            assert(class->send != NULL);
-            assert(class->wait != NULL);
+            ovs_assert(class->close != NULL);
+            ovs_assert(class->recv != NULL);
+            ovs_assert(class->send != NULL);
+            ovs_assert(class->wait != NULL);
         } else {
             /* This class delegates to another one. */
         }
@@ -89,12 +88,12 @@ check_stream_classes(void)
 
     for (i = 0; i < ARRAY_SIZE(pstream_classes); i++) {
         const struct pstream_class *class = pstream_classes[i];
-        assert(class->name != NULL);
-        assert(class->listen != NULL);
+        ovs_assert(class->name != NULL);
+        ovs_assert(class->listen != NULL);
         if (class->close || class->accept || class->wait) {
-            assert(class->close != NULL);
-            assert(class->accept != NULL);
-            assert(class->wait != NULL);
+            ovs_assert(class->close != NULL);
+            ovs_assert(class->accept != NULL);
+            ovs_assert(class->wait != NULL);
         } else {
             /* This class delegates to another one. */
         }
@@ -194,7 +193,7 @@ stream_verify_name(const char *name)
  * stores a pointer to the new connection in '*streamp', otherwise a null
  * pointer.  */
 int
-stream_open(const char *name, struct stream **streamp)
+stream_open(const char *name, struct stream **streamp, uint8_t dscp)
 {
     const struct stream_class *class;
     struct stream *stream;
@@ -211,7 +210,7 @@ stream_open(const char *name, struct stream **streamp)
 
     /* Call class's "open" function. */
     suffix_copy = xstrdup(strchr(name, ':') + 1);
-    error = class->open(name, suffix_copy, &stream);
+    error = class->open(name, suffix_copy, &stream, dscp);
     free(suffix_copy);
     if (error) {
         goto error;
@@ -250,7 +249,7 @@ stream_open_block(int error, struct stream **streamp)
             stream_connect_wait(stream);
             poll_block();
         }
-        assert(error != EINPROGRESS);
+        ovs_assert(error != EINPROGRESS);
     }
 
     if (error) {
@@ -317,7 +316,7 @@ static void
 scs_connecting(struct stream *stream)
 {
     int retval = (stream->class->connect)(stream);
-    assert(retval != EINPROGRESS);
+    ovs_assert(retval != EINPROGRESS);
     if (!retval) {
         stream->state = SCS_CONNECTED;
     } else if (retval != EAGAIN) {
@@ -419,8 +418,8 @@ stream_run_wait(struct stream *stream)
 void
 stream_wait(struct stream *stream, enum stream_wait_type wait)
 {
-    assert(wait == STREAM_CONNECT || wait == STREAM_RECV
-           || wait == STREAM_SEND);
+    ovs_assert(wait == STREAM_CONNECT || wait == STREAM_RECV
+               || wait == STREAM_SEND);
 
     switch (stream->state) {
     case SCS_CONNECTING:
@@ -489,6 +488,25 @@ pstream_verify_name(const char *name)
     return pstream_lookup_class(name, &class);
 }
 
+/* Returns 1 if the stream or pstream specified by 'name' needs periodic probes
+ * to verify connectivity.  For [p]streams which need probes, it can take a
+ * long time to notice the connection has been dropped.  Returns 0 if the
+ * stream or pstream does not need probes, and -1 if 'name' is not valid. */
+int
+stream_or_pstream_needs_probes(const char *name)
+{
+    const struct pstream_class *pclass;
+    const struct stream_class *class;
+
+    if (!stream_lookup_class(name, &class)) {
+        return class->needs_probes;
+    } else if (!pstream_lookup_class(name, &pclass)) {
+        return pclass->needs_probes;
+    } else {
+        return -1;
+    }
+}
+
 /* Attempts to start listening for remote stream connections.  'name' is a
  * connection name in the form "TYPE:ARGS", where TYPE is an passive stream
  * class's name and ARGS are stream class-specific.
@@ -497,7 +515,7 @@ pstream_verify_name(const char *name)
  * stores a pointer to the new connection in '*pstreamp', otherwise a null
  * pointer.  */
 int
-pstream_open(const char *name, struct pstream **pstreamp)
+pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
 {
     const struct pstream_class *class;
     struct pstream *pstream;
@@ -514,7 +532,7 @@ pstream_open(const char *name, struct pstream **pstreamp)
 
     /* Call class's "open" function. */
     suffix_copy = xstrdup(strchr(name, ':') + 1);
-    error = class->listen(name, suffix_copy, &pstream);
+    error = class->listen(name, suffix_copy, &pstream, dscp);
     free(suffix_copy);
     if (error) {
         goto error;
@@ -561,8 +579,8 @@ pstream_accept(struct pstream *pstream, struct stream **new_stream)
     if (retval) {
         *new_stream = NULL;
     } else {
-        assert((*new_stream)->state != SCS_CONNECTING
-               || (*new_stream)->class->connect);
+        ovs_assert((*new_stream)->state != SCS_CONNECTING
+                   || (*new_stream)->class->connect);
     }
     return retval;
 }
@@ -594,6 +612,23 @@ pstream_wait(struct pstream *pstream)
 {
     (pstream->class->wait)(pstream);
 }
+
+int
+pstream_set_dscp(struct pstream *pstream, uint8_t dscp)
+{
+    if (pstream->class->set_dscp) {
+        return pstream->class->set_dscp(pstream, dscp);
+    }
+    return 0;
+}
+
+/* Returns the transport port on which 'pstream' is listening, or 0 if the
+ * concept doesn't apply. */
+ovs_be16
+pstream_get_bound_port(const struct pstream *pstream)
+{
+    return pstream->bound_port;
+}
 
 /* Initializes 'stream' as a new stream named 'name', implemented via 'class'.
  * The initial connection status, supplied as 'connect_status', is interpreted
@@ -623,7 +658,7 @@ stream_init(struct stream *stream, const struct stream_class *class,
                     : SCS_DISCONNECTED);
     stream->error = connect_status;
     stream->name = xstrdup(name);
-    assert(stream->state != SCS_CONNECTING || class->connect);
+    ovs_assert(stream->state != SCS_CONNECTING || class->connect);
 }
 
 void
@@ -654,8 +689,15 @@ void
 pstream_init(struct pstream *pstream, const struct pstream_class *class,
             const char *name)
 {
+    memset(pstream, 0, sizeof *pstream);
     pstream->class = class;
     pstream->name = xstrdup(name);
+}
+
+void
+pstream_set_bound_port(struct pstream *pstream, ovs_be16 port)
+{
+    pstream->bound_port = port;
 }
 
 static int
@@ -682,7 +724,8 @@ int
 stream_open_with_default_ports(const char *name_,
                                uint16_t default_tcp_port,
                                uint16_t default_ssl_port,
-                               struct stream **streamp)
+                               struct stream **streamp,
+                               uint8_t dscp)
 {
     char *name;
     int error;
@@ -694,7 +737,7 @@ stream_open_with_default_ports(const char *name_,
     } else {
         name = xstrdup(name_);
     }
-    error = stream_open(name, streamp);
+    error = stream_open(name, streamp, dscp);
     free(name);
 
     return error;
@@ -707,7 +750,8 @@ int
 pstream_open_with_default_ports(const char *name_,
                                 uint16_t default_ptcp_port,
                                 uint16_t default_pssl_port,
-                                struct pstream **pstreamp)
+                                struct pstream **pstreamp,
+                                uint8_t dscp)
 {
     char *name;
     int error;
@@ -719,7 +763,7 @@ pstream_open_with_default_ports(const char *name_,
     } else {
         name = xstrdup(name_);
     }
-    error = pstream_open(name, pstreamp);
+    error = pstream_open(name, pstreamp, dscp);
     free(name);
 
     return error;
@@ -757,7 +801,7 @@ stream_guess_content(const uint8_t *data, ssize_t size)
             return STREAM_SSL;
         case PAIR('{', '"'):
             return STREAM_JSONRPC;
-        case PAIR(OFP_VERSION, OFPT_HELLO):
+        case PAIR(OFP10_VERSION, 0 /* OFPT_HELLO */):
             return STREAM_OPENFLOW;
         }
     }

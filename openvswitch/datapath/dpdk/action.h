@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@
 #include <stdint.h>
 
 #include <rte_mbuf.h>
+#include <linux/openvswitch.h>
 
 /* TODO: same value as VPORTS increase if required */
 #define MAX_ACTIONS	(48)
@@ -48,6 +49,10 @@ enum action_type {
 	ACTION_OUTPUT,   /* Output packet to port */
 	ACTION_POP_VLAN, /* Remove 802.1Q header */
 	ACTION_PUSH_VLAN,/* Add 802.1Q VLAN header to packet */
+	ACTION_SET_ETHERNET, /* Modify Ethernet header */
+	ACTION_SET_IPV4, /* Modify IPV4 header */
+	ACTION_SET_TCP, /* Modify TCP header */
+	ACTION_SET_UDP, /* Modify UDP header */
 	ACTION_MAX       /* Maximum number of supported actions */
 };
 
@@ -65,6 +70,10 @@ struct action {
 	union { /* union of difference action types */
 		struct action_output output;
 		struct action_push_vlan vlan;
+		struct ovs_key_ethernet ethernet;
+		struct ovs_key_ipv4 ipv4;
+		struct ovs_key_tcp tcp;
+		struct ovs_key_udp udp;
 		/* add other action structs here */
 	} data;
 };

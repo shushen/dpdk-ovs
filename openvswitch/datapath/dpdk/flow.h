@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -39,12 +39,11 @@
 #include <stdbool.h>
 #include <rte_mbuf.h>
 #include <rte_ether.h>
-#include <rte_spinlock.h>
 
 #include "action.h"
 
 /* Maximum number of flow table entries */
-#define MAX_FLOWS               64
+#define MAX_FLOWS              (1 << 16)
 
 /* Measured CPU frequency. Needed to translate tsk to ms. */
 uint64_t cpu_freq;
@@ -66,12 +65,12 @@ struct flow_key {
 	uint8_t ip_proto;
 	uint8_t ip_tos;
 	uint8_t ip_ttl;
+	uint8_t ip_frag;
 	uint16_t tran_src_port;
 	uint16_t tran_dst_port;
 } __attribute__((__packed__));
 
 struct flow_stats {
-	rte_spinlock_t lock;	/* Lock for values below. */
 	uint64_t packet_count;	/* Number of packets matched. */
 	uint64_t byte_count;	/* Number of bytes matched. */
 	uint64_t used;			/* Last used time (in hpet cycles). */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 
 #include <config.h>
 #include "netlink.h"
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include "coverage.h"
+#include "flow.h"
 #include "netlink-protocol.h"
 #include "ofpbuf.h"
 #include "timeval.h"
@@ -88,26 +88,6 @@ nl_msg_reserve(struct ofpbuf *msg, size_t size)
     ofpbuf_prealloc_tailroom(msg, NLMSG_ALIGN(size));
 }
 
-static uint32_t
-get_nlmsg_seq(void)
-{
-    /* Next nlmsghdr sequence number.
-     *
-     * This implementation uses sequence numbers that are unique process-wide,
-     * to avoid a hypothetical race: send request, close socket, open new
-     * socket that reuses the old socket's PID value, send request on new
-     * socket, receive reply from kernel to old socket but with same PID and
-     * sequence number.  (This race could be avoided other ways, e.g. by
-     * preventing PIDs from being quickly reused). */
-    static uint32_t next_seq;
-
-    if (next_seq == 0) {
-        /* Pick initial sequence number. */
-        next_seq = getpid() ^ time_wall();
-    }
-    return next_seq++;
-}
-
 /* Puts a nlmsghdr at the beginning of 'msg', which must be initially empty.
  * Uses the given 'type' and 'flags'.  'expected_payload' should be
  * an estimate of the number of payload bytes to be supplied; if the size of
@@ -121,8 +101,9 @@ get_nlmsg_seq(void)
  * is often NLM_F_REQUEST indicating that a request is being made, commonly
  * or'd with NLM_F_ACK to request an acknowledgement.
  *
- * Sets the new nlmsghdr's nlmsg_pid field to 0 for now.  nl_sock_send() will
- * fill it in just before sending the message.
+ * Sets the new nlmsghdr's nlmsg_len, nlmsg_seq, and nlmsg_pid fields to 0 for
+ * now.  Functions that send Netlink messages will fill these in just before
+ * sending the message.
  *
  * nl_msg_put_genlmsghdr() is more convenient for composing a Generic Netlink
  * message. */
@@ -132,14 +113,14 @@ nl_msg_put_nlmsghdr(struct ofpbuf *msg,
 {
     struct nlmsghdr *nlmsghdr;
 
-    assert(msg->size == 0);
+    ovs_assert(msg->size == 0);
 
     nl_msg_reserve(msg, NLMSG_HDRLEN + expected_payload);
     nlmsghdr = nl_msg_put_uninit(msg, NLMSG_HDRLEN);
     nlmsghdr->nlmsg_len = 0;
     nlmsghdr->nlmsg_type = type;
     nlmsghdr->nlmsg_flags = flags;
-    nlmsghdr->nlmsg_seq = get_nlmsg_seq();
+    nlmsghdr->nlmsg_seq = 0;
     nlmsghdr->nlmsg_pid = 0;
 }
 
@@ -171,7 +152,7 @@ nl_msg_put_genlmsghdr(struct ofpbuf *msg, size_t expected_payload,
     struct genlmsghdr *genlmsghdr;
 
     nl_msg_put_nlmsghdr(msg, GENL_HDRLEN + expected_payload, family, flags);
-    assert(msg->size == NLMSG_HDRLEN);
+    ovs_assert(msg->size == NLMSG_HDRLEN);
     genlmsghdr = nl_msg_put_uninit(msg, GENL_HDRLEN);
     genlmsghdr->cmd = cmd;
     genlmsghdr->version = version;
@@ -233,7 +214,7 @@ nl_msg_put_unspec_uninit(struct ofpbuf *msg, uint16_t type, size_t size)
 {
     size_t total_size = NLA_HDRLEN + size;
     struct nlattr* nla = nl_msg_put_uninit(msg, total_size);
-    assert(NLA_ALIGN(total_size) <= UINT16_MAX);
+    ovs_assert(NLA_ALIGN(total_size) <= UINT16_MAX);
     nla->nla_len = total_size;
     nla->nla_type = type;
     return nla + 1;
@@ -315,6 +296,15 @@ nl_msg_put_be64(struct ofpbuf *msg, uint16_t type, ovs_be64 value)
     nl_msg_put_unspec(msg, type, &value, sizeof value);
 }
 
+/* Appends a Netlink attribute of the given 'type' and the given odp_port_t
+ * 'value' to 'msg'. */
+void
+nl_msg_put_odp_port(struct ofpbuf *msg, uint16_t type, odp_port_t value)
+{
+    nl_msg_put_u32(msg, type, odp_to_u32(value));
+}
+
+
 /* Appends a Netlink attribute of the given 'type' and the given
  * null-terminated string 'value' to 'msg'. */
 void
@@ -332,7 +322,7 @@ nl_msg_push_unspec_uninit(struct ofpbuf *msg, uint16_t type, size_t size)
 {
     size_t total_size = NLA_HDRLEN + size;
     struct nlattr* nla = nl_msg_push_uninit(msg, total_size);
-    assert(NLA_ALIGN(total_size) <= UINT16_MAX);
+    ovs_assert(NLA_ALIGN(total_size) <= UINT16_MAX);
     nla->nla_len = total_size;
     nla->nla_type = type;
     return nla + 1;
@@ -493,7 +483,7 @@ nl_attr_type(const struct nlattr *nla)
 const void *
 nl_attr_get(const struct nlattr *nla)
 {
-    assert(nla->nla_len >= NLA_HDRLEN);
+    ovs_assert(nla->nla_len >= NLA_HDRLEN);
     return nla + 1;
 }
 
@@ -501,7 +491,7 @@ nl_attr_get(const struct nlattr *nla)
 size_t
 nl_attr_get_size(const struct nlattr *nla)
 {
-    assert(nla->nla_len >= NLA_HDRLEN);
+    ovs_assert(nla->nla_len >= NLA_HDRLEN);
     return nla->nla_len - NLA_HDRLEN;
 }
 
@@ -510,7 +500,7 @@ nl_attr_get_size(const struct nlattr *nla)
 const void *
 nl_attr_get_unspec(const struct nlattr *nla, size_t size)
 {
-    assert(nla->nla_len >= NLA_HDRLEN + size);
+    ovs_assert(nla->nla_len >= NLA_HDRLEN + size);
     return nla + 1;
 }
 
@@ -590,14 +580,23 @@ nl_attr_get_be64(const struct nlattr *nla)
     return get_32aligned_be64(x);
 }
 
+/* Returns the 32-bit odp_port_t value in 'nla''s payload.
+ *
+ * Asserts that 'nla''s payload is at least 4 bytes long. */
+odp_port_t
+nl_attr_get_odp_port(const struct nlattr *nla)
+{
+    return u32_to_odp(nl_attr_get_u32(nla));
+}
+
 /* Returns the null-terminated string value in 'nla''s payload.
  *
  * Asserts that 'nla''s payload contains a null-terminated string. */
 const char *
 nl_attr_get_string(const struct nlattr *nla)
 {
-    assert(nla->nla_len > NLA_HDRLEN);
-    assert(memchr(nl_attr_get(nla), '\0', nla->nla_len - NLA_HDRLEN) != NULL);
+    ovs_assert(nla->nla_len > NLA_HDRLEN);
+    ovs_assert(memchr(nl_attr_get(nla), '\0', nla->nla_len - NLA_HDRLEN));
     return nl_attr_get(nla);
 }
 
@@ -608,17 +607,41 @@ nl_attr_get_nested(const struct nlattr *nla, struct ofpbuf *nested)
     ofpbuf_use_const(nested, nl_attr_get(nla), nl_attr_get_size(nla));
 }
 
-/* Default minimum and maximum payload sizes for each type of attribute. */
-static const size_t attr_len_range[][2] = {
-    [0 ... N_NL_ATTR_TYPES - 1] = { 0, SIZE_MAX },
-    [NL_A_U8] = { 1, 1 },
-    [NL_A_U16] = { 2, 2 },
-    [NL_A_U32] = { 4, 4 },
-    [NL_A_U64] = { 8, 8 },
-    [NL_A_STRING] = { 1, SIZE_MAX },
-    [NL_A_FLAG] = { 0, SIZE_MAX },
-    [NL_A_NESTED] = { 0, SIZE_MAX },
-};
+/* Default minimum payload size for each type of attribute. */
+static size_t
+min_attr_len(enum nl_attr_type type)
+{
+    switch (type) {
+    case NL_A_NO_ATTR: return 0;
+    case NL_A_UNSPEC: return 0;
+    case NL_A_U8: return 1;
+    case NL_A_U16: return 2;
+    case NL_A_U32: return 4;
+    case NL_A_U64: return 8;
+    case NL_A_STRING: return 1;
+    case NL_A_FLAG: return 0;
+    case NL_A_NESTED: return 0;
+    case N_NL_ATTR_TYPES: default: NOT_REACHED();
+    }
+}
+
+/* Default maximum payload size for each type of attribute. */
+static size_t
+max_attr_len(enum nl_attr_type type)
+{
+    switch (type) {
+    case NL_A_NO_ATTR: return SIZE_MAX;
+    case NL_A_UNSPEC: return SIZE_MAX;
+    case NL_A_U8: return 1;
+    case NL_A_U16: return 2;
+    case NL_A_U32: return 4;
+    case NL_A_U64: return 8;
+    case NL_A_STRING: return SIZE_MAX;
+    case NL_A_FLAG: return SIZE_MAX;
+    case NL_A_NESTED: return SIZE_MAX;
+    case N_NL_ATTR_TYPES: default: NOT_REACHED();
+    }
+}
 
 bool
 nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
@@ -635,11 +658,11 @@ nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
     /* Figure out min and max length. */
     min_len = policy->min_len;
     if (!min_len) {
-        min_len = attr_len_range[policy->type][0];
+        min_len = min_attr_len(policy->type);
     }
     max_len = policy->max_len;
     if (!max_len) {
-        max_len = attr_len_range[policy->type][1];
+        max_len = max_attr_len(policy->type);
     }
 
     /* Verify length. */
@@ -688,8 +711,7 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
         return false;
     }
 
-    NL_ATTR_FOR_EACH (nla, left,
-                      (struct nlattr *) ((char *) msg->data + nla_offset),
+    NL_ATTR_FOR_EACH (nla, left, ofpbuf_at(msg, nla_offset, 0),
                       msg->size - nla_offset)
     {
         uint16_t type = nl_attr_type(nla);
@@ -754,8 +776,7 @@ nl_attr_find__(const struct nlattr *attrs, size_t size, uint16_t type)
 const struct nlattr *
 nl_attr_find(const struct ofpbuf *buf, size_t hdr_len, uint16_t type)
 {
-    const uint8_t *start = (const uint8_t *) buf->data + hdr_len;
-    return nl_attr_find__((const struct nlattr *) start, buf->size - hdr_len,
+    return nl_attr_find__(ofpbuf_at(buf, hdr_len, 0), buf->size - hdr_len,
                           type);
 }
 

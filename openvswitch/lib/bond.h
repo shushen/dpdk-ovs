@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,17 +21,16 @@
 #include <stdint.h>
 
 #include "packets.h"
-#include "tag.h"
 
 struct flow;
 struct netdev;
 struct ofpbuf;
+enum lacp_status;
 
 /* How flows are balanced among bond slaves. */
 enum bond_mode {
     BM_TCP, /* Transport Layer Load Balance. */
     BM_SLB, /* Source Load Balance. */
-    BM_STABLE, /* Stable. */
     BM_AB   /* Active Backup. */
 };
 
@@ -45,7 +44,8 @@ struct bond_settings {
 
     /* Balancing configuration. */
     enum bond_mode balance;
-    int rebalance_interval;     /* Milliseconds between rebalances. */
+    int rebalance_interval;     /* Milliseconds between rebalances.
+                                   Zero to disable rebalancing. */
 
     /* Link status detection. */
     int up_delay;               /* ms before enabling an up slave. */
@@ -60,15 +60,15 @@ void bond_init(void);
 
 /* Basics. */
 struct bond *bond_create(const struct bond_settings *);
-void bond_destroy(struct bond *);
+void bond_unref(struct bond *);
+struct bond *bond_ref(const struct bond *);
 
 bool bond_reconfigure(struct bond *, const struct bond_settings *);
-void bond_slave_register(struct bond *, void *slave_,
-                         uint32_t stable_id, struct netdev *);
+void bond_slave_register(struct bond *, void *slave_, struct netdev *);
 void bond_slave_set_netdev(struct bond *, void *slave_, struct netdev *);
 void bond_slave_unregister(struct bond *, const void *slave);
 
-void bond_run(struct bond *, struct tag_set *, bool lacp_negotiated);
+bool bond_run(struct bond *, enum lacp_status);
 void bond_wait(struct bond *);
 
 void bond_slave_set_may_enable(struct bond *, void *slave_, bool may_enable);
@@ -86,14 +86,13 @@ enum bond_verdict {
     BV_DROP_IF_MOVED            /* Drop if we've learned a different port. */
 };
 enum bond_verdict bond_check_admissibility(struct bond *, const void *slave_,
-                                           const uint8_t eth_dst[ETH_ADDR_LEN],
-                                           tag_type *);
-void *bond_choose_output_slave(struct bond *,
-                               const struct flow *, uint16_t vlan, tag_type *);
+                                           const uint8_t dst[ETH_ADDR_LEN]);
+void *bond_choose_output_slave(struct bond *, const struct flow *,
+                               struct flow_wildcards *, uint16_t vlan);
 
 /* Rebalancing. */
 void bond_account(struct bond *, const struct flow *, uint16_t vlan,
                   uint64_t n_bytes);
-void bond_rebalance(struct bond *, struct tag_set *);
+void bond_rebalance(struct bond *);
 
 #endif /* bond.h */

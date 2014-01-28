@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Nicira Networks.
+ * Copyright (c) 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,13 +40,11 @@ struct vlan_real_dev {
     struct hmap vlan_devs;      /* All child VLAN devices, hashed by VID. */
 };
 
-int vlandev_refresh(void);
-
-struct shash *vlandev_get_real_devs(void);
-
-const char *vlandev_get_name(const char *real_dev_name, int vid);
-
 int vlandev_add(const char *real_dev, int vid);
 int vlandev_del(const char *vlan_dev);
+
+int vlandev_refresh(void);
+struct shash *vlandev_get_real_devs(void);
+const char *vlandev_get_name(const char *real_dev_name, int vid);
 
 #endif /* vlandev.h */

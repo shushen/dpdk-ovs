@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,8 @@ extern "C" {
 
 enum ofpbuf_source {
     OFPBUF_MALLOC,              /* Obtained via malloc(). */
-    OFPBUF_STACK                /* Stack space or static buffer. */
+    OFPBUF_STACK,               /* Un-movable stack space or static buffer. */
+    OFPBUF_STUB                 /* Starts on stack, may expand into heap. */
 };
 
 /* Buffer for holding arbitrary data.  An ofpbuf is automatically reallocated
@@ -42,6 +43,7 @@ struct ofpbuf {
     size_t size;                /* Number of bytes in use. */
 
     void *l2;                   /* Link-level header. */
+    void *l2_5;                 /* MPLS label stack */
     void *l3;                   /* Network-level header. */
     void *l4;                   /* Transport-level header. */
     void *l7;                   /* Application data. */
@@ -50,16 +52,14 @@ struct ofpbuf {
     void *private_p;            /* Private pointer for use by owner. */
 };
 
-/* Declares NAME as a SIZE-byte array aligned properly for storing any kind of
- * data.  For use with ofpbuf_use_stack(). */
-#define OFPBUF_STACK_BUFFER(NAME, SIZE) uint64_t NAME[DIV_ROUND_UP(SIZE, 8)]
-
 void ofpbuf_use(struct ofpbuf *, void *, size_t);
 void ofpbuf_use_stack(struct ofpbuf *, void *, size_t);
+void ofpbuf_use_stub(struct ofpbuf *, void *, size_t);
 void ofpbuf_use_const(struct ofpbuf *, const void *, size_t);
 
 void ofpbuf_init(struct ofpbuf *, size_t);
 void ofpbuf_uninit(struct ofpbuf *);
+void *ofpbuf_get_uninit_pointer(struct ofpbuf *);
 void ofpbuf_reinit(struct ofpbuf *, size_t);
 
 struct ofpbuf *ofpbuf_new(size_t);
@@ -106,6 +106,12 @@ static inline struct ofpbuf *ofpbuf_from_list(const struct list *list)
     return CONTAINER_OF(list, struct ofpbuf, list_node);
 }
 void ofpbuf_list_delete(struct list *);
+
+static inline bool
+ofpbuf_equal(const struct ofpbuf *a, const struct ofpbuf *b)
+{
+    return a->size == b->size && memcmp(a->data, b->data, a->size) == 0;
+}
 
 #ifdef  __cplusplus
 }

@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -35,14 +35,6 @@
 
 #ifndef _INIT_H_
 #define _INIT_H_
-
-struct port_queue {
-	unsigned port_id;
-	struct rte_ring *tx_q;
-};
-
-struct port_queue *port_queues;
-
 
 /* The mbuf pool for packet rx */
 struct rte_mempool *pktmbuf_pool;

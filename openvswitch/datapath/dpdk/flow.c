@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -50,6 +50,7 @@
 #include <rte_jhash.h>
 #endif
 
+#include <linux/openvswitch.h>
 
 #include "flow.h"
 #include "action.h"
@@ -78,6 +79,11 @@
 #define ETH_ARGS(ea) (ea)[0], (ea)[1], (ea)[2], (ea)[3], (ea)[4], (ea)[5]
 #define IP_FMT "%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8
 #define IP_ARGS(ip) ((ip >> 24) & 0xFF), ((ip >> 16) & 0xFF), ((ip >> 8) & 0xFF), (ip & 0xFF)
+
+#define TCP_HDR_FROM_PKT(pkt) (struct tcp_hdr*)\
+	(rte_pktmbuf_mtod(pkt, unsigned char *) + \
+			sizeof(struct ether_hdr) + \
+			sizeof(struct ipv4_hdr))
 
 struct flow_table_entry {
 	rte_rwlock_t lock;   /* Lock to allow multiple readers and one writer */
@@ -149,8 +155,6 @@ flow_table_init(void)
 static int
 flow_table_clear_stats(int pos)
 {
-	rte_spinlock_init((rte_spinlock_t *)&(flow_table[pos].stats.lock));
-
 	flow_table[pos].stats.used = 0;
 	flow_table[pos].stats.tcp_flags = 0;
 	flow_table[pos].stats.packet_count = 0;
@@ -398,22 +402,15 @@ flow_table_del_all(void)
 static inline int __attribute__((always_inline))
 flow_table_update_stats(int pos, const struct rte_mbuf *pkt)
 {
-	uint8_t tcp_flags = 0;
-
 	if (flow_table[pos].key.ether_type == ETHER_TYPE_IPv4 &&
 	    flow_table[pos].key.ip_proto == IPPROTO_TCP) {
-		uint8_t *pkt_data = rte_pktmbuf_mtod(pkt, unsigned char *);
-		pkt_data += sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr);
-		struct tcp_hdr *tcp = (struct tcp_hdr *) pkt_data;
-		tcp_flags = tcp->tcp_flags & TCP_FLAG_MASK;
+		struct tcp_hdr *tcp_hdr = TCP_HDR_FROM_PKT(pkt);
+		flow_table[pos].stats.tcp_flags |= tcp_hdr->tcp_flags & TCP_FLAG_MASK;
 	}
 
-	rte_spinlock_lock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 	flow_table[pos].stats.used = curr_tsc;
 	flow_table[pos].stats.packet_count++;
 	flow_table[pos].stats.byte_count += rte_pktmbuf_data_len(pkt);
-	flow_table[pos].stats.tcp_flags |= tcp_flags;
-	rte_spinlock_unlock((rte_spinlock_t *)&(flow_table[pos].stats.lock));
 
 	return 0;
 }
@@ -451,6 +448,9 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	struct icmp_hdr *icmp = NULL;
 	unsigned char *pkt_data = NULL;
 	uint16_t vlan_tci = 0;
+	uint16_t be_offset = 0;
+
+	memset(key, 0, sizeof(struct flow_key));
 
 	key->in_port = in_port;
 
@@ -483,6 +483,16 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 		key->ip_proto = ipv4_hdr->next_proto_id;
 		key->ip_tos = ipv4_hdr->type_of_service;
 		key->ip_ttl = ipv4_hdr->time_to_live;
+
+		be_offset = ipv4_hdr->fragment_offset;
+		if (be_offset & rte_be_to_cpu_16(IPV4_HDR_OFFSET_MASK)) {
+			key->ip_frag = OVS_FRAG_TYPE_LATER;
+			return;
+		}
+		if (be_offset & rte_be_to_cpu_16(IPV4_HDR_MF_FLAG))
+			key->ip_frag = OVS_FRAG_TYPE_FIRST;
+		else
+			key->ip_frag = OVS_FRAG_TYPE_NONE;
 	}
 
 	switch (key->ip_proto) {
@@ -559,21 +569,19 @@ switch_packet(struct rte_mbuf *pkt, struct flow_key *key)
 	pos = flow_table_lookup(key);
 
 	if (likely(pos >= 0)) {
-		rte_rwlock_write_lock(&flow_table[pos].lock);
+		rte_rwlock_read_lock(&flow_table[pos].lock);
 		if (flow_table[pos].used) {
 			struct action *actions;
 			actions = &flow_table[pos].actions[0];
 			action_execute(actions, pkt);
 			flow_table_update_stats(pos, pkt);
 		}
-		rte_rwlock_write_unlock(&flow_table[pos].lock);
-	} else {
-		struct dpdk_upcall info;
-		/* flow table miss, send unmatched packet to the daemon */
-		info.cmd = PACKET_CMD_MISS;
-		info.key = *key;
-		send_packet_to_vswitchd(pkt, &info);
+		rte_rwlock_read_unlock(&flow_table[pos].lock);
+		return;
 	}
-
-	return;
+	struct dpdk_upcall info;
+	/* flow table miss, send unmatched packet to the daemon */
+	info.cmd = PACKET_CMD_MISS;
+	info.key = *key;
+	send_packet_to_vswitchd(pkt, &info);
 }

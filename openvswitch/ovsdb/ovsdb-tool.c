@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ VLOG_DEFINE_THIS_MODULE(ovsdb_tool);
 /* -m, --more: Verbosity level for "show-log" command output. */
 static int show_log_verbosity;
 
-static const struct command all_commands[];
+static const struct command *get_all_commands(void);
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -59,14 +59,14 @@ main(int argc, char *argv[])
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);
-    run_command(argc - optind, argv + optind, all_commands);
+    run_command(argc - optind, argv + optind, get_all_commands());
     return 0;
 }
 
 static void
 parse_options(int argc, char *argv[])
 {
-    static struct option long_options[] = {
+    static const struct option long_options[] = {
         {"more", no_argument, NULL, 'm'},
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
@@ -140,7 +140,7 @@ default_db(void)
 {
     static char *db;
     if (!db) {
-        db = xasprintf("%s/conf.db", ovs_sysconfdir());
+        db = xasprintf("%s/conf.db", ovs_dbdir());
     }
     return db;
 }
@@ -207,29 +207,36 @@ do_create(int argc, char *argv[])
 }
 
 static void
-compact_or_convert(const char *src_name, const char *dst_name,
+compact_or_convert(const char *src_name_, const char *dst_name_,
                    const struct ovsdb_schema *new_schema,
                    const char *comment)
 {
+    char *src_name, *dst_name;
     struct lockfile *src_lock;
     struct lockfile *dst_lock;
-    bool in_place = dst_name == NULL;
+    bool in_place = dst_name_ == NULL;
     struct ovsdb *db;
     int retval;
 
+    /* Dereference symlinks for source and destination names.  In the in-place
+     * case this ensures that, if the source name is a symlink, we replace its
+     * target instead of replacing the symlink by a regular file.  In the
+     * non-in-place, this has the same effect for the destination name. */
+    src_name = follow_symlinks(src_name_);
+    dst_name = (in_place
+                ? xasprintf("%s.tmp", src_name)
+                : follow_symlinks(dst_name_));
+
     /* Lock the source, if we will be replacing it. */
     if (in_place) {
-        retval = lockfile_lock(src_name, 0, &src_lock);
+        retval = lockfile_lock(src_name, &src_lock);
         if (retval) {
             ovs_fatal(retval, "%s: failed to lock lockfile", src_name);
         }
     }
 
     /* Get (temporary) destination and lock it. */
-    if (in_place) {
-        dst_name = xasprintf("%s.tmp", src_name);
-    }
-    retval = lockfile_lock(dst_name, 0, &dst_lock);
+    retval = lockfile_lock(dst_name, &dst_lock);
     if (retval) {
         ovs_fatal(retval, "%s: failed to lock lockfile", dst_name);
     }
@@ -252,6 +259,9 @@ compact_or_convert(const char *src_name, const char *dst_name,
     }
 
     lockfile_unlock(dst_lock);
+
+    free(src_name);
+    free(dst_name);
 }
 
 static void
@@ -260,8 +270,7 @@ do_compact(int argc, char *argv[])
     const char *db = argc >= 2 ? argv[1] : default_db();
     const char *target = argc >= 3 ? argv[2] : NULL;
 
-    compact_or_convert(db, target, NULL,
-                       "compacted by ovsdb-tool "VERSION BUILDNR);
+    compact_or_convert(db, target, NULL, "compacted by ovsdb-tool "VERSION);
 }
 
 static void
@@ -274,7 +283,7 @@ do_convert(int argc, char *argv[])
 
     check_ovsdb_error(ovsdb_schema_from_file(schema, &new_schema));
     compact_or_convert(db, target, new_schema,
-                       "converted by ovsdb-tool "VERSION BUILDNR);
+                       "converted by ovsdb-tool "VERSION);
     ovsdb_schema_destroy(new_schema);
 }
 
@@ -426,8 +435,8 @@ print_db_changes(struct shash *tables, struct shash *names,
                              ? shash_find_data(&table_schema->columns, column)
                              : NULL);
                         if (column_schema) {
-                            const struct ovsdb_error *error;
                             const struct ovsdb_type *type;
+                            struct ovsdb_error *error;
                             struct ovsdb_datum datum;
 
                             type = &column_schema->type;
@@ -439,6 +448,8 @@ print_db_changes(struct shash *tables, struct shash *names,
                                 ds_init(&s);
                                 ovsdb_datum_to_string(&datum, type, &s);
                                 value_string = ds_steal_cstr(&s);
+                            } else {
+                                ovsdb_error_destroy(error);
                             }
                         }
                         if (!value_string) {
@@ -507,11 +518,17 @@ do_show_log(int argc, char *argv[])
 
             date = shash_find_data(json_object(json), "_date");
             if (date && date->type == JSON_INTEGER) {
-                time_t t = json_integer(date);
-                char s[128];
+                long long int t = json_integer(date);
+                char *s;
 
-                strftime(s, sizeof s, "%Y-%m-%d %H:%M:%S", localtime(&t));
-                printf(" %s", s);
+                if (t < INT32_MAX) {
+                    /* Older versions of ovsdb wrote timestamps in seconds. */
+                    t *= 1000;
+                }
+
+		s = xastrftime_msec(" %Y-%m-%d %H:%M:%S.###", t, true);
+                fputs(s, stdout);
+                free(s);
             }
 
             comment = shash_find_data(json_object(json), "_comment");
@@ -554,3 +571,8 @@ static const struct command all_commands[] = {
     { "help", 0, INT_MAX, do_help },
     { NULL, 0, 0, NULL },
 };
+
+static const struct command *get_all_commands(void)
+{
+    return all_commands;
+}
