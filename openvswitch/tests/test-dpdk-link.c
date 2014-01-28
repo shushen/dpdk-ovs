@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -54,7 +54,6 @@
 #define SOCKET0             0
 
 static struct rte_mempool *pktmbuf_pool = NULL;
-static struct rte_mempool *pktmbuf_pool_largej = NULL;
 /* ring to send packets to vswitchd */
 static struct rte_ring *vswitchd_packet_ring = NULL;
 /* ring to receive messages from vswitchd */
@@ -69,7 +68,8 @@ main(int argc, char *argv[])
 {
 	struct dpif_dpdk_message request;
 	const struct ofpbuf test_ofpbuf[20];
-	const struct ofpbuf *const *test_ofpbuf_array = &test_ofpbuf;
+	const struct ofpbuf *const *test_ofpbuf_array =
+		(const struct ofpbuf *const *) &test_ofpbuf;
 
 	int result = 0;
 

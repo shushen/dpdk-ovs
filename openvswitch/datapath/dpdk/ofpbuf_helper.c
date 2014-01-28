@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -33,6 +33,11 @@
  */
 
 #include <rte_config.h>
+#include <rte_ip.h>
+#include <rte_tcp.h>
+#include <rte_udp.h>
+#include <rte_ether.h>
+#include <rte_byteorder.h>
 #include <rte_lcore.h>
 #include <rte_mbuf.h>
 
@@ -46,6 +51,8 @@
  * This workaround is temporary
  */
 struct ofpbuf buf[RTE_MAX_LCORE];
+static int vlan_tagged(struct rte_mbuf *mbuf);
+static int tcp_pkt(struct ipv4_hdr *ipv4_hdr);
 
 void * overlay_ofpbuf(struct rte_mbuf *mbuf)
 {
@@ -55,10 +62,42 @@ void * overlay_ofpbuf(struct rte_mbuf *mbuf)
 	buf[id].data = mbuf->pkt.data;
 	buf[id].size = mbuf->pkt.pkt_len;
 
-	/* VLAN pop library function requires l2 pointer */
 	buf[id].l2 = mbuf->pkt.data;
 
+	if (vlan_tagged(mbuf))
+		buf[id].l3 = buf[id].l2 + sizeof(struct ether_hdr)
+		                        + sizeof(struct vlan_hdr);
+	else
+		buf[id].l3 = buf[id].l2 + sizeof(struct ether_hdr);
+
+	buf[id].l4 = buf[id].l3 + sizeof(struct ipv4_hdr);
+
+	/* Only TCP and UDP set actions are supported */
+	if (tcp_pkt(buf[id].l4))
+		buf[id].l7 = buf[id].l4 + sizeof(struct tcp_hdr);
+	else
+		buf[id].l7 = buf[id].l4 + sizeof(struct udp_hdr);
+
 	return &buf[id];
+}
+
+static int vlan_tagged(struct rte_mbuf *mbuf)
+{
+	struct ether_hdr *ether_hdr = NULL;
+
+	ether_hdr = (struct ether_hdr *)mbuf->pkt.data;
+	if(rte_be_to_cpu_16(ether_hdr->ether_type) == ETHER_TYPE_VLAN)
+		return 1;
+	else
+		return 0;
+}
+
+static int tcp_pkt(struct ipv4_hdr *ipv4_hdr)
+{
+	if(ipv4_hdr->next_proto_id == IPPROTO_TCP)
+		return 1;
+	else
+		return 0;
 }
 
 void update_mbuf(struct ofpbuf *ovs_pkt, struct rte_mbuf *mbuf)

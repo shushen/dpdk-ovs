@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #ifndef STREAM_PROVIDER_H
 #define STREAM_PROVIDER_H 1
 
-#include <assert.h>
 #include <sys/types.h>
 #include "stream.h"
 
@@ -46,18 +45,25 @@ void stream_set_local_port(struct stream *, ovs_be16 local_port);
 static inline void stream_assert_class(const struct stream *stream,
                                        const struct stream_class *class)
 {
-    assert(stream->class == class);
+    ovs_assert(stream->class == class);
 }
 
 struct stream_class {
     /* Prefix for connection names, e.g. "tcp", "ssl", "unix". */
     const char *name;
 
+    /* True if this stream needs periodic probes to verify connectivity.  For
+     * streams which need probes, it can take a long time to notice the
+     * connection was dropped. */
+    bool needs_probes;
+
     /* Attempts to connect to a peer.  'name' is the full connection name
      * provided by the user, e.g. "tcp:1.2.3.4".  This name is useful for error
      * messages but must not be modified.
      *
      * 'suffix' is a copy of 'name' following the colon and may be modified.
+     * 'dscp' is the DSCP value that the new connection should use in the IP
+     * packets it sends.
      *
      * Returns 0 if successful, otherwise a positive errno value.  If
      * successful, stores a pointer to the new connection in '*streamp'.
@@ -66,7 +72,8 @@ struct stream_class {
      * If the connection cannot be completed immediately, it should return
      * EAGAIN (not EINPROGRESS, as returned by the connect system call) and
      * continue the connection in the background. */
-    int (*open)(const char *name, char *suffix, struct stream **streamp);
+    int (*open)(const char *name, char *suffix, struct stream **streamp,
+                uint8_t dscp);
 
     /* Closes 'stream' and frees associated memory. */
     void (*close)(struct stream *stream);
@@ -132,24 +139,33 @@ struct stream_class {
 struct pstream {
     const struct pstream_class *class;
     char *name;
+    ovs_be16 bound_port;
 };
 
 void pstream_init(struct pstream *, const struct pstream_class *, const char *name);
+void pstream_set_bound_port(struct pstream *, ovs_be16 bound_port);
 static inline void pstream_assert_class(const struct pstream *pstream,
                                         const struct pstream_class *class)
 {
-    assert(pstream->class == class);
+    ovs_assert(pstream->class == class);
 }
 
 struct pstream_class {
     /* Prefix for connection names, e.g. "ptcp", "pssl", "punix". */
     const char *name;
 
+    /* True if this pstream needs periodic probes to verify connectivity.  For
+     * pstreams which need probes, it can take a long time to notice the
+     * connection was dropped. */
+    bool needs_probes;
+
     /* Attempts to start listening for stream connections.  'name' is the full
      * connection name provided by the user, e.g. "ptcp:1234".  This name is
      * useful for error messages but must not be modified.
      *
      * 'suffix' is a copy of 'name' following the colon and may be modified.
+     * 'dscp' is the DSCP value that the new connection should use in the IP
+     * packets it sends.
      *
      * Returns 0 if successful, otherwise a positive errno value.  If
      * successful, stores a pointer to the new connection in '*pstreamp'.
@@ -158,7 +174,8 @@ struct pstream_class {
      * completed immediately, it should return EAGAIN (not EINPROGRESS, as
      * returned by the connect system call) and continue the connection in the
      * background. */
-    int (*listen)(const char *name, char *suffix, struct pstream **pstreamp);
+    int (*listen)(const char *name, char *suffix, struct pstream **pstreamp,
+                  uint8_t dscp);
 
     /* Closes 'pstream' and frees associated memory. */
     void (*close)(struct pstream *pstream);
@@ -174,6 +191,9 @@ struct pstream_class {
     /* Arranges for the poll loop to wake up when a connection is ready to be
      * accepted on 'pstream'. */
     void (*wait)(struct pstream *pstream);
+
+    /* Set DSCP value of the listening socket. */
+    int (*set_dscp)(struct pstream *pstream, uint8_t dscp);
 };
 
 /* Active and passive stream classes. */

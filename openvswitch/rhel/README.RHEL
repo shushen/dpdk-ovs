@@ -42,10 +42,14 @@ assignments.  The following OVS-specific variable names are supported:
 Note
 ----
 
-"ifdown" on a bridge will not bring individual ports on the bridge
+* "ifdown" on a bridge will not bring individual ports on the bridge
 down.  "ifup" on a bridge will not add ports to the bridge.  This
 behavior should be compatible with standard bridges (with
 TYPE=Bridge).
+
+* If 'ifup' on an interface is called multiple times, one can see
+"RTNETLINK answers: File exists" printed on the console. This comes from
+ifup-eth trying to add zeroconf route multiple times and is harmless.
 
 Examples
 --------
@@ -62,6 +66,18 @@ IPADDR=A.B.C.D
 NETMASK=X.Y.Z.0
 HOTPLUG=no
 
+Enable DHCP on the bridge:
+* Needs OVSBOOTPROTO instead of BOOTPROTO.
+* All the interfaces that can reach the DHCP server
+as a space separated list in OVSDHCPINTERFACES.
+
+DEVICE=ovsbridge0
+ONBOOT=yes
+DEVICETYPE=ovs
+TYPE=OVSBridge
+OVSBOOTPROTO="dhcp"
+OVSDHCPINTERFACES="eth0"
+HOTPLUG=no
 
 Adding physical eth0 to ovsbridge0 described above:
 
@@ -70,7 +86,7 @@ DEVICE=eth0
 ONBOOT=yes
 DEVICETYPE=ovs
 TYPE=OVSPort
-OVS_BRIDGE=internet
+OVS_BRIDGE=ovsbridge0
 BOOTPROTO=none
 HOTPLUG=no
 

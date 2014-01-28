@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -134,7 +134,8 @@ static void send_signal_to_dpif(void)
 inline void __attribute__((always_inline))
 send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 {
-	int rslt, cnt;
+	int rslt = 0;
+	int cnt = 0;
 	void *mbuf_ptr = NULL;
 
 	/* send one packet, delete information about segments */

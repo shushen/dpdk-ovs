@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012 Nicira Networks.
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 
 #include "ovsdb-idl.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -70,6 +69,7 @@ struct ovsdb_idl {
     struct json *monitor_request_id;
     unsigned int last_monitor_request_seqno;
     unsigned int change_seqno;
+    bool verify_write_only;
 
     /* Database locking. */
     char *lock_name;            /* Name of lock we need, NULL if none. */
@@ -94,9 +94,9 @@ struct ovsdb_idl_txn {
     unsigned int commit_seqno;
 
     /* Increments. */
-    char *inc_table;
-    char *inc_column;
-    struct json *inc_where;
+    const char *inc_table;
+    const char *inc_column;
+    struct uuid inc_row;
     unsigned int inc_index;
     int64_t inc_new_value;
 
@@ -157,6 +157,9 @@ static void ovsdb_idl_parse_lock_notify(struct ovsdb_idl *,
  * 'class'.  (Ordinarily 'class' is compiled from an OVSDB schema automatically
  * by ovsdb-idlc.)
  *
+ * Passes 'retry' to jsonrpc_session_open().  See that function for
+ * documentation.
+ *
  * If 'monitor_everything_by_default' is true, then everything in the remote
  * database will be replicated by default.  ovsdb_idl_omit() and
  * ovsdb_idl_omit_alert() may be used to selectively drop some columns from
@@ -168,7 +171,7 @@ static void ovsdb_idl_parse_lock_notify(struct ovsdb_idl *,
  */
 struct ovsdb_idl *
 ovsdb_idl_create(const char *remote, const struct ovsdb_idl_class *class,
-                 bool monitor_everything_by_default)
+                 bool monitor_everything_by_default, bool retry)
 {
     struct ovsdb_idl *idl;
     uint8_t default_mode;
@@ -180,7 +183,7 @@ ovsdb_idl_create(const char *remote, const struct ovsdb_idl_class *class,
 
     idl = xzalloc(sizeof *idl);
     idl->class = class;
-    idl->session = jsonrpc_session_open(remote);
+    idl->session = jsonrpc_session_open(remote, retry);
     shash_init(&idl->table_by_name);
     idl->tables = xmalloc(class->n_tables * sizeof *idl->tables);
     for (i = 0; i < class->n_tables; i++) {
@@ -215,7 +218,7 @@ ovsdb_idl_destroy(struct ovsdb_idl *idl)
     if (idl) {
         size_t i;
 
-        assert(!idl->txn);
+        ovs_assert(!idl->txn);
         ovsdb_idl_clear(idl);
         jsonrpc_session_close(idl->session);
 
@@ -230,6 +233,7 @@ ovsdb_idl_destroy(struct ovsdb_idl *idl)
         json_destroy(idl->monitor_request_id);
         free(idl->lock_name);
         json_destroy(idl->lock_request_id);
+        hmap_destroy(&idl->outstanding_txns);
         free(idl);
     }
 }
@@ -270,35 +274,15 @@ ovsdb_idl_clear(struct ovsdb_idl *idl)
     }
 }
 
-/* Processes a batch of messages from the database server on 'idl'.  Returns
- * true if the database as seen through 'idl' changed, false if it did not
- * change.  The initial fetch of the entire contents of the remote database is
- * considered to be one kind of change.  If 'idl' has been configured to
- * acquire a database lock (with ovsdb_idl_set_lock()), then successfully
- * acquiring the lock is also considered to be a change.
- *
- * When this function returns false, the client may continue to use any data
- * structures it obtained from 'idl' in the past.  But when it returns true,
- * the client must not access any of these data structures again, because they
- * could have freed or reused for other purposes.
- *
- * This function can return occasional false positives, that is, report that
- * the database changed even though it didn't.  This happens if the connection
- * to the database drops and reconnects, which causes the database contents to
- * be reloaded even if they didn't change.  (It could also happen if the
- * database server sends out a "change" that reflects what we already thought
- * was in the database, but the database server is not supposed to do that.)
- *
- * As an alternative to checking the return value, the client may check for
- * changes in the value returned by ovsdb_idl_get_seqno().
- */
-bool
+/* Processes a batch of messages from the database server on 'idl'.  This may
+ * cause the IDL's contents to change.  The client may check for that with
+ * ovsdb_idl_get_seqno(). */
+void
 ovsdb_idl_run(struct ovsdb_idl *idl)
 {
-    unsigned int initial_change_seqno = idl->change_seqno;
     int i;
 
-    assert(!idl->txn);
+    ovs_assert(!idl->txn);
     jsonrpc_session_run(idl->session);
     for (i = 0; jsonrpc_session_is_connected(idl->session) && i < 50; i++) {
         struct jsonrpc_msg *msg;
@@ -366,8 +350,6 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
         }
         jsonrpc_msg_destroy(msg);
     }
-
-    return initial_change_seqno != idl->change_seqno;
 }
 
 /* Arranges for poll_block() to wake up when ovsdb_idl_run() has something to
@@ -379,8 +361,23 @@ ovsdb_idl_wait(struct ovsdb_idl *idl)
     jsonrpc_session_recv_wait(idl->session);
 }
 
-/* Returns a number that represents the state of 'idl'.  When 'idl' is updated
- * (by ovsdb_idl_run()), the return value changes. */
+/* Returns a "sequence number" that represents the state of 'idl'.  When
+ * ovsdb_idl_run() changes the database, the sequence number changes.  The
+ * initial fetch of the entire contents of the remote database is considered to
+ * be one kind of change.  Successfully acquiring a lock, if one has been
+ * configured with ovsdb_idl_set_lock(), is also considered to be a change.
+ *
+ * As long as the sequence number does not change, the client may continue to
+ * use any data structures it obtains from 'idl'.  But when it changes, the
+ * client must not access any of these data structures again, because they
+ * could have freed or reused for other purposes.
+ *
+ * The sequence number can occasionally change even if the database does not.
+ * This happens if the connection to the database drops and reconnects, which
+ * causes the database contents to be reloaded even if they didn't change.  (It
+ * could also happen if the database server sends out a "change" that reflects
+ * what the IDL already thought was in the database.  The database server is
+ * not supposed to do that, but bugs could in theory cause it to do so.) */
 unsigned int
 ovsdb_idl_get_seqno(const struct ovsdb_idl *idl)
 {
@@ -408,6 +405,28 @@ ovsdb_idl_force_reconnect(struct ovsdb_idl *idl)
 {
     jsonrpc_session_force_reconnect(idl->session);
 }
+
+/* Some IDL users should only write to write-only columns.  Furthermore,
+ * writing to a column which is not write-only can cause serious performance
+ * degradations for these users.  This function causes 'idl' to reject writes
+ * to columns which are not marked write only using ovsdb_idl_omit_alert(). */
+void
+ovsdb_idl_verify_write_only(struct ovsdb_idl *idl)
+{
+    idl->verify_write_only = true;
+}
+
+bool
+ovsdb_idl_is_alive(const struct ovsdb_idl *idl)
+{
+    return jsonrpc_session_is_alive(idl->session);
+}
+
+int
+ovsdb_idl_get_last_error(const struct ovsdb_idl *idl)
+{
+    return jsonrpc_session_get_last_error(idl->session);
+}
 
 static unsigned char *
 ovsdb_idl_get_mode(struct ovsdb_idl *idl,
@@ -415,7 +434,7 @@ ovsdb_idl_get_mode(struct ovsdb_idl *idl,
 {
     size_t i;
 
-    assert(!idl->change_seqno);
+    ovs_assert(!idl->change_seqno);
 
     for (i = 0; i < idl->class->n_tables; i++) {
         const struct ovsdb_idl_table *table = &idl->tables[i];
@@ -831,7 +850,7 @@ ovsdb_idl_row_unparse(struct ovsdb_idl_row *row)
 static void
 ovsdb_idl_row_clear_old(struct ovsdb_idl_row *row)
 {
-    assert(row->old == row->new);
+    ovs_assert(row->old == row->new);
     if (!ovsdb_idl_row_is_orphan(row)) {
         const struct ovsdb_idl_table_class *class = row->table->class;
         size_t i;
@@ -913,6 +932,7 @@ static struct ovsdb_idl_row *
 ovsdb_idl_row_create__(const struct ovsdb_idl_table_class *class)
 {
     struct ovsdb_idl_row *row = xzalloc(class->allocation_size);
+    class->row_init(row);
     list_init(&row->src_arcs);
     list_init(&row->dst_arcs);
     hmap_node_nullify(&row->txn_node);
@@ -945,7 +965,7 @@ ovsdb_idl_insert_row(struct ovsdb_idl_row *row, const struct json *row_json)
     const struct ovsdb_idl_table_class *class = row->table->class;
     size_t i;
 
-    assert(!row->old && !row->new);
+    ovs_assert(!row->old && !row->new);
     row->old = row->new = xmalloc(class->n_columns * sizeof *row->old);
     for (i = 0; i < class->n_columns; i++) {
         ovsdb_datum_init_default(&row->old[i], &class->columns[i].type);
@@ -1014,6 +1034,7 @@ ovsdb_idl_table_from_class(const struct ovsdb_idl *idl,
     return &idl->tables[table_class - idl->class->tables];
 }
 
+/* Called by ovsdb-idlc generated code. */
 struct ovsdb_idl_row *
 ovsdb_idl_get_row_arc(struct ovsdb_idl_row *src,
                       struct ovsdb_idl_table_class *dst_table_class,
@@ -1058,6 +1079,8 @@ ovsdb_idl_get_row_arc(struct ovsdb_idl_row *src,
     }
 }
 
+/* Searches 'tc''s table in 'idl' for a row with UUID 'uuid'.  Returns a
+ * pointer to the row if there is one, otherwise a null pointer.  */
 const struct ovsdb_idl_row *
 ovsdb_idl_get_row_for_uuid(const struct ovsdb_idl *idl,
                            const struct ovsdb_idl_table_class *tc,
@@ -1080,6 +1103,12 @@ next_real_row(struct ovsdb_idl_table *table, struct hmap_node *node)
     return NULL;
 }
 
+/* Returns a row in 'table_class''s table in 'idl', or a null pointer if that
+ * table is empty.
+ *
+ * Database tables are internally maintained as hash tables, so adding or
+ * removing rows while traversing the same table can cause some rows to be
+ * visited twice or not at apply. */
 const struct ovsdb_idl_row *
 ovsdb_idl_first_row(const struct ovsdb_idl *idl,
                     const struct ovsdb_idl_table_class *table_class)
@@ -1089,6 +1118,8 @@ ovsdb_idl_first_row(const struct ovsdb_idl *idl,
     return next_real_row(table, hmap_first(&table->rows));
 }
 
+/* Returns a row following 'row' within its table, or a null pointer if 'row'
+ * is the last row in its table. */
 const struct ovsdb_idl_row *
 ovsdb_idl_next_row(const struct ovsdb_idl_row *row)
 {
@@ -1115,13 +1146,13 @@ ovsdb_idl_read(const struct ovsdb_idl_row *row,
     const struct ovsdb_idl_table_class *class;
     size_t column_idx;
 
-    assert(!ovsdb_idl_row_is_synthetic(row));
+    ovs_assert(!ovsdb_idl_row_is_synthetic(row));
 
     class = row->table->class;
     column_idx = column - class->columns;
 
-    assert(row->new != NULL);
-    assert(column_idx < class->n_columns);
+    ovs_assert(row->new != NULL);
+    ovs_assert(column_idx < class->n_columns);
 
     if (row->written && bitmap_is_set(row->written, column_idx)) {
         return &row->new[column_idx];
@@ -1145,8 +1176,8 @@ ovsdb_idl_get(const struct ovsdb_idl_row *row,
               enum ovsdb_atomic_type key_type OVS_UNUSED,
               enum ovsdb_atomic_type value_type OVS_UNUSED)
 {
-    assert(column->type.key.type == key_type);
-    assert(column->type.value.type == value_type);
+    ovs_assert(column->type.key.type == key_type);
+    ovs_assert(column->type.value.type == value_type);
 
     return ovsdb_idl_read(row, column);
 }
@@ -1165,6 +1196,11 @@ ovsdb_idl_row_is_synthetic(const struct ovsdb_idl_row *row)
 static void ovsdb_idl_txn_complete(struct ovsdb_idl_txn *txn,
                                    enum ovsdb_idl_txn_status);
 
+/* Returns a string representation of 'status'.  The caller must not modify or
+ * free the returned string.
+ *
+ * The return value is probably useful only for debug log messages and unit
+ * tests. */
 const char *
 ovsdb_idl_txn_status_to_string(enum ovsdb_idl_txn_status status)
 {
@@ -1179,10 +1215,8 @@ ovsdb_idl_txn_status_to_string(enum ovsdb_idl_txn_status status)
         return "aborted";
     case TXN_SUCCESS:
         return "success";
-    case TXN_AGAIN_WAIT:
-        return "wait then try again";
-    case TXN_AGAIN_NOW:
-        return "try again now";
+    case TXN_TRY_AGAIN:
+        return "try again";
     case TXN_NOT_LOCKED:
         return "not locked";
     case TXN_ERROR:
@@ -1191,12 +1225,15 @@ ovsdb_idl_txn_status_to_string(enum ovsdb_idl_txn_status status)
     return "<unknown>";
 }
 
+/* Starts a new transaction on 'idl'.  A given ovsdb_idl may only have a single
+ * active transaction at a time.  See the large comment in ovsdb-idl.h for
+ * general information on transactions. */
 struct ovsdb_idl_txn *
 ovsdb_idl_txn_create(struct ovsdb_idl *idl)
 {
     struct ovsdb_idl_txn *txn;
 
-    assert(!idl->txn);
+    ovs_assert(!idl->txn);
     idl->txn = txn = xmalloc(sizeof *txn);
     txn->request_id = NULL;
     txn->idl = idl;
@@ -1209,7 +1246,6 @@ ovsdb_idl_txn_create(struct ovsdb_idl *idl)
 
     txn->inc_table = NULL;
     txn->inc_column = NULL;
-    txn->inc_where = NULL;
 
     hmap_init(&txn->inserted_rows);
 
@@ -1234,22 +1270,50 @@ ovsdb_idl_txn_add_comment(struct ovsdb_idl_txn *txn, const char *s, ...)
     va_end(args);
 }
 
+/* Marks 'txn' as a transaction that will not actually modify the database.  In
+ * almost every way, the transaction is treated like other transactions.  It
+ * must be committed or aborted like other transactions, it will be sent to the
+ * database server like other transactions, and so on.  The only difference is
+ * that the operations sent to the database server will include, as the last
+ * step, an "abort" operation, so that any changes made by the transaction will
+ * not actually take effect. */
 void
 ovsdb_idl_txn_set_dry_run(struct ovsdb_idl_txn *txn)
 {
     txn->dry_run = true;
 }
 
+/* Causes 'txn', when committed, to increment the value of 'column' within
+ * 'row' by 1.  'column' must have an integer type.  After 'txn' commits
+ * successfully, the client may retrieve the final (incremented) value of
+ * 'column' with ovsdb_idl_txn_get_increment_new_value().
+ *
+ * The client could accomplish something similar with ovsdb_idl_read(),
+ * ovsdb_idl_txn_verify() and ovsdb_idl_txn_write(), or with ovsdb-idlc
+ * generated wrappers for these functions.  However, ovsdb_idl_txn_increment()
+ * will never (by itself) fail because of a verify error.
+ *
+ * The intended use is for incrementing the "next_cfg" column in the
+ * Open_vSwitch table. */
 void
-ovsdb_idl_txn_increment(struct ovsdb_idl_txn *txn, const char *table,
-                        const char *column, const struct json *where)
+ovsdb_idl_txn_increment(struct ovsdb_idl_txn *txn,
+                        const struct ovsdb_idl_row *row,
+                        const struct ovsdb_idl_column *column)
 {
-    assert(!txn->inc_table);
-    txn->inc_table = xstrdup(table);
-    txn->inc_column = xstrdup(column);
-    txn->inc_where = where ? json_clone(where) : json_array_create_empty();
+    ovs_assert(!txn->inc_table);
+    ovs_assert(column->type.key.type == OVSDB_TYPE_INTEGER);
+    ovs_assert(column->type.value.type == OVSDB_TYPE_VOID);
+
+    txn->inc_table = row->table->class->name;
+    txn->inc_column = column->name;
+    txn->inc_row = row->uuid;
 }
 
+/* Destroys 'txn' and frees all associated memory.  If ovsdb_idl_txn_commit()
+ * has been called for 'txn' but the commit is still incomplete (that is, the
+ * last call returned TXN_INCOMPLETE) then the transaction may or may not still
+ * end up committing at the database server, but the client will not be able to
+ * get any further status information back. */
 void
 ovsdb_idl_txn_destroy(struct ovsdb_idl_txn *txn)
 {
@@ -1262,9 +1326,6 @@ ovsdb_idl_txn_destroy(struct ovsdb_idl_txn *txn)
     ovsdb_idl_txn_abort(txn);
     ds_destroy(&txn->comment);
     free(txn->error);
-    free(txn->inc_table);
-    free(txn->inc_column);
-    json_destroy(txn->inc_where);
     HMAP_FOR_EACH_SAFE (insert, next, hmap_node, &txn->inserted_rows) {
         free(insert);
     }
@@ -1272,6 +1333,7 @@ ovsdb_idl_txn_destroy(struct ovsdb_idl_txn *txn)
     free(txn);
 }
 
+/* Causes poll_block() to wake up if 'txn' has completed committing. */
 void
 ovsdb_idl_txn_wait(const struct ovsdb_idl_txn *txn)
 {
@@ -1402,6 +1464,55 @@ ovsdb_idl_txn_disassemble(struct ovsdb_idl_txn *txn)
     hmap_init(&txn->txn_rows);
 }
 
+/* Attempts to commit 'txn'.  Returns the status of the commit operation, one
+ * of the following TXN_* constants:
+ *
+ *   TXN_INCOMPLETE:
+ *
+ *       The transaction is in progress, but not yet complete.  The caller
+ *       should call again later, after calling ovsdb_idl_run() to let the IDL
+ *       do OVSDB protocol processing.
+ *
+ *   TXN_UNCHANGED:
+ *
+ *       The transaction is complete.  (It didn't actually change the database,
+ *       so the IDL didn't send any request to the database server.)
+ *
+ *   TXN_ABORTED:
+ *
+ *       The caller previously called ovsdb_idl_txn_abort().
+ *
+ *   TXN_SUCCESS:
+ *
+ *       The transaction was successful.  The update made by the transaction
+ *       (and possibly other changes made by other database clients) should
+ *       already be visible in the IDL.
+ *
+ *   TXN_TRY_AGAIN:
+ *
+ *       The transaction failed for some transient reason, e.g. because a
+ *       "verify" operation reported an inconsistency or due to a network
+ *       problem.  The caller should wait for a change to the database, then
+ *       compose a new transaction, and commit the new transaction.
+ *
+ *       Use the return value of ovsdb_idl_get_seqno() to wait for a change in
+ *       the database.  It is important to use its return value *before* the
+ *       initial call to ovsdb_idl_txn_commit() as the baseline for this
+ *       purpose, because the change that one should wait for can happen after
+ *       the initial call but before the call that returns TXN_TRY_AGAIN, and
+ *       using some other baseline value in that situation could cause an
+ *       indefinite wait if the database rarely changes.
+ *
+ *   TXN_NOT_LOCKED:
+ *
+ *       The transaction failed because the IDL has been configured to require
+ *       a database lock (with ovsdb_idl_set_lock()) but didn't get it yet or
+ *       has already lost it.
+ *
+ * Committing a transaction rolls back all of the changes that it made to the
+ * IDL's copy of the database.  If the transaction commits successfully, then
+ * the database server will send an update and, thus, the IDL will be updated
+ * with the committed changes. */
 enum ovsdb_idl_txn_status
 ovsdb_idl_txn_commit(struct ovsdb_idl_txn *txn)
 {
@@ -1552,7 +1663,8 @@ ovsdb_idl_txn_commit(struct ovsdb_idl_txn *txn)
         json_object_put_string(op, "op", "mutate");
         json_object_put_string(op, "table", txn->inc_table);
         json_object_put(op, "where",
-                        substitute_uuids(json_clone(txn->inc_where), txn));
+                        substitute_uuids(where_uuid_equals(&txn->inc_row),
+                                         txn));
         json_object_put(op, "mutations",
                         json_array_create_1(
                             json_array_create_3(
@@ -1565,7 +1677,8 @@ ovsdb_idl_txn_commit(struct ovsdb_idl_txn *txn)
         json_object_put_string(op, "op", "select");
         json_object_put_string(op, "table", txn->inc_table);
         json_object_put(op, "where",
-                        substitute_uuids(json_clone(txn->inc_where), txn));
+                        substitute_uuids(where_uuid_equals(&txn->inc_row),
+                                         txn));
         json_object_put(op, "columns",
                         json_array_create_1(json_string_create(
                                                 txn->inc_column)));
@@ -1596,7 +1709,7 @@ ovsdb_idl_txn_commit(struct ovsdb_idl_txn *txn)
                     json_hash(txn->request_id, 0));
         txn->status = TXN_INCOMPLETE;
     } else {
-        txn->status = TXN_AGAIN_WAIT;
+        txn->status = TXN_TRY_AGAIN;
     }
 
     ovsdb_idl_txn_disassemble(txn);
@@ -1605,7 +1718,10 @@ ovsdb_idl_txn_commit(struct ovsdb_idl_txn *txn)
 
 /* Attempts to commit 'txn', blocking until the commit either succeeds or
  * fails.  Returns the final commit status, which may be any TXN_* value other
- * than TXN_INCOMPLETE. */
+ * than TXN_INCOMPLETE.
+ *
+ * This function calls ovsdb_idl_run() on 'txn''s IDL, so it may cause the
+ * return value of ovsdb_idl_get_seqno() to change. */
 enum ovsdb_idl_txn_status
 ovsdb_idl_txn_commit_block(struct ovsdb_idl_txn *txn)
 {
@@ -1621,13 +1737,22 @@ ovsdb_idl_txn_commit_block(struct ovsdb_idl_txn *txn)
     return status;
 }
 
+/* Returns the final (incremented) value of the column in 'txn' that was set to
+ * be incremented by ovsdb_idl_txn_increment().  'txn' must have committed
+ * successfully. */
 int64_t
 ovsdb_idl_txn_get_increment_new_value(const struct ovsdb_idl_txn *txn)
 {
-    assert(txn->status == TXN_SUCCESS);
+    ovs_assert(txn->status == TXN_SUCCESS);
     return txn->inc_new_value;
 }
 
+/* Aborts 'txn' without sending it to the database server.  This is effective
+ * only if ovsdb_idl_txn_commit() has not yet been called for 'txn'.
+ * Otherwise, it has no effect.
+ *
+ * Aborting a transaction doesn't free its memory.  Use
+ * ovsdb_idl_txn_destroy() to do that. */
 void
 ovsdb_idl_txn_abort(struct ovsdb_idl_txn *txn)
 {
@@ -1637,6 +1762,14 @@ ovsdb_idl_txn_abort(struct ovsdb_idl_txn *txn)
     }
 }
 
+/* Returns a string that reports the error status for 'txn'.  The caller must
+ * not modify or free the returned string.  A call to ovsdb_idl_txn_destroy()
+ * for 'txn' may free the returned string.
+ *
+ * The return value is ordinarily one of the strings that
+ * ovsdb_idl_txn_status_to_string() would return, but if the transaction failed
+ * due to an error reported by the database server, the return value is that
+ * error. */
 const char *
 ovsdb_idl_txn_get_error(const struct ovsdb_idl_txn *txn)
 {
@@ -1673,7 +1806,7 @@ ovsdb_idl_txn_get_insert_uuid(const struct ovsdb_idl_txn *txn,
 {
     const struct ovsdb_idl_txn_insert *insert;
 
-    assert(txn->status == TXN_SUCCESS || txn->status == TXN_UNCHANGED);
+    ovs_assert(txn->status == TXN_SUCCESS || txn->status == TXN_UNCHANGED);
     HMAP_FOR_EACH_IN_BUCKET (insert, hmap_node,
                              uuid_hash(uuid), &txn->inserted_rows) {
         if (uuid_equals(uuid, &insert->dummy)) {
@@ -1708,27 +1841,34 @@ ovsdb_idl_txn_complete(struct ovsdb_idl_txn *txn,
  * Takes ownership of what 'datum' points to (and in some cases destroys that
  * data before returning) but makes a copy of 'datum' itself.  (Commonly
  * 'datum' is on the caller's stack.) */
-void
-ovsdb_idl_txn_write(const struct ovsdb_idl_row *row_,
-                    const struct ovsdb_idl_column *column,
-                    struct ovsdb_datum *datum)
+static void
+ovsdb_idl_txn_write__(const struct ovsdb_idl_row *row_,
+                      const struct ovsdb_idl_column *column,
+                      struct ovsdb_datum *datum, bool owns_datum)
 {
-    struct ovsdb_idl_row *row = (struct ovsdb_idl_row *) row_;
+    struct ovsdb_idl_row *row = CONST_CAST(struct ovsdb_idl_row *, row_);
     const struct ovsdb_idl_table_class *class;
     size_t column_idx;
+    bool write_only;
 
     if (ovsdb_idl_row_is_synthetic(row)) {
-        ovsdb_datum_destroy(datum, &column->type);
-        return;
+        goto discard_datum;
     }
 
     class = row->table->class;
     column_idx = column - class->columns;
+    write_only = row->table->modes[column_idx] == OVSDB_IDL_MONITOR;
 
-    assert(row->new != NULL);
-    assert(column_idx < class->n_columns);
-    assert(row->old == NULL ||
-           row->table->modes[column_idx] & OVSDB_IDL_MONITOR);
+    ovs_assert(row->new != NULL);
+    ovs_assert(column_idx < class->n_columns);
+    ovs_assert(row->old == NULL ||
+               row->table->modes[column_idx] & OVSDB_IDL_MONITOR);
+
+    if (row->table->idl->verify_write_only && !write_only) {
+        VLOG_ERR("Bug: Attempt to write to a read/write column (%s:%s) when"
+                 " explicitly configured not to.", class->name, column->name);
+        goto discard_datum;
+    }
 
     /* If this is a write-only column and the datum being written is the same
      * as the one already there, just skip the update entirely.  This is worth
@@ -1741,11 +1881,9 @@ ovsdb_idl_txn_write(const struct ovsdb_idl_row *row_,
      * transaction only does writes of existing values, without making any real
      * changes, we will drop the whole transaction later in
      * ovsdb_idl_txn_commit().) */
-    if (row->table->modes[column_idx] == OVSDB_IDL_MONITOR
-        && ovsdb_datum_equals(ovsdb_idl_read(row, column),
-                              datum, &column->type)) {
-        ovsdb_datum_destroy(datum, &column->type);
-        return;
+    if (write_only && ovsdb_datum_equals(ovsdb_idl_read(row, column),
+                                         datum, &column->type)) {
+        goto discard_datum;
     }
 
     if (hmap_node_is_null(&row->txn_node)) {
@@ -1763,9 +1901,36 @@ ovsdb_idl_txn_write(const struct ovsdb_idl_row *row_,
     } else {
         bitmap_set1(row->written, column_idx);
     }
-    row->new[column_idx] = *datum;
+    if (owns_datum) {
+        row->new[column_idx] = *datum;
+    } else {
+        ovsdb_datum_clone(&row->new[column_idx], datum, &column->type);
+    }
     (column->unparse)(row);
     (column->parse)(row, &row->new[column_idx]);
+    return;
+
+discard_datum:
+    if (owns_datum) {
+        ovsdb_datum_destroy(datum, &column->type);
+    }
+}
+
+void
+ovsdb_idl_txn_write(const struct ovsdb_idl_row *row,
+                    const struct ovsdb_idl_column *column,
+                    struct ovsdb_datum *datum)
+{
+    ovsdb_idl_txn_write__(row, column, datum, true);
+}
+
+void
+ovsdb_idl_txn_write_clone(const struct ovsdb_idl_row *row,
+                          const struct ovsdb_idl_column *column,
+                          const struct ovsdb_datum *datum)
+{
+    ovsdb_idl_txn_write__(row, column,
+                          CONST_CAST(struct ovsdb_datum *, datum), false);
 }
 
 /* Causes the original contents of 'column' in 'row_' to be verified as a
@@ -1800,7 +1965,7 @@ void
 ovsdb_idl_txn_verify(const struct ovsdb_idl_row *row_,
                      const struct ovsdb_idl_column *column)
 {
-    struct ovsdb_idl_row *row = (struct ovsdb_idl_row *) row_;
+    struct ovsdb_idl_row *row = CONST_CAST(struct ovsdb_idl_row *, row_);
     const struct ovsdb_idl_table_class *class;
     size_t column_idx;
 
@@ -1811,9 +1976,9 @@ ovsdb_idl_txn_verify(const struct ovsdb_idl_row *row_,
     class = row->table->class;
     column_idx = column - class->columns;
 
-    assert(row->new != NULL);
-    assert(row->old == NULL ||
-           row->table->modes[column_idx] & OVSDB_IDL_MONITOR);
+    ovs_assert(row->new != NULL);
+    ovs_assert(row->old == NULL ||
+               row->table->modes[column_idx] & OVSDB_IDL_MONITOR);
     if (!row->old
         || (row->written && bitmap_is_set(row->written, column_idx))) {
         return;
@@ -1839,17 +2004,17 @@ ovsdb_idl_txn_verify(const struct ovsdb_idl_row *row_,
 void
 ovsdb_idl_txn_delete(const struct ovsdb_idl_row *row_)
 {
-    struct ovsdb_idl_row *row = (struct ovsdb_idl_row *) row_;
+    struct ovsdb_idl_row *row = CONST_CAST(struct ovsdb_idl_row *, row_);
 
     if (ovsdb_idl_row_is_synthetic(row)) {
         return;
     }
 
-    assert(row->new != NULL);
+    ovs_assert(row->new != NULL);
     if (!row->old) {
         ovsdb_idl_row_unparse(row);
         ovsdb_idl_row_clear_new(row);
-        assert(!row->prereqs);
+        ovs_assert(!row->prereqs);
         hmap_remove(&row->table->rows, &row->hmap_node);
         hmap_remove(&row->table->idl->txn->txn_rows, &row->txn_node);
         free(row);
@@ -1883,7 +2048,7 @@ ovsdb_idl_txn_insert(struct ovsdb_idl_txn *txn,
     struct ovsdb_idl_row *row = ovsdb_idl_row_create__(class);
 
     if (uuid) {
-        assert(!ovsdb_idl_txn_get_row(txn, uuid));
+        ovs_assert(!ovsdb_idl_txn_get_row(txn, uuid));
         row->uuid = *uuid;
     } else {
         uuid_generate(&row->uuid);
@@ -1902,7 +2067,7 @@ ovsdb_idl_txn_abort_all(struct ovsdb_idl *idl)
     struct ovsdb_idl_txn *txn;
 
     HMAP_FOR_EACH (txn, hmap_node, &idl->outstanding_txns) {
-        ovsdb_idl_txn_complete(txn, TXN_AGAIN_WAIT);
+        ovsdb_idl_txn_complete(txn, TXN_TRY_AGAIN);
     }
 }
 
@@ -2019,6 +2184,7 @@ ovsdb_idl_txn_process_insert_reply(struct ovsdb_idl_txn_insert *insert,
         VLOG_WARN_RL(&syntax_rl, "\"insert\" reply \"uuid\" is not a JSON "
                      "UUID: %s", s);
         free(s);
+        ovsdb_error_destroy(error);
         return false;
     }
 
@@ -2103,9 +2269,7 @@ ovsdb_idl_txn_process_reply(struct ovsdb_idl *idl,
 
         status = (hard_errors ? TXN_ERROR
                   : lock_errors ? TXN_NOT_LOCKED
-                  : soft_errors ? (txn->commit_seqno == idl->change_seqno
-                                   ? TXN_AGAIN_WAIT
-                                   : TXN_AGAIN_NOW)
+                  : soft_errors ? TXN_TRY_AGAIN
                   : TXN_SUCCESS);
     }
 
@@ -2113,14 +2277,17 @@ ovsdb_idl_txn_process_reply(struct ovsdb_idl *idl,
     return true;
 }
 
+/* Returns the transaction currently active for 'row''s IDL.  A transaction
+ * must currently be active. */
 struct ovsdb_idl_txn *
 ovsdb_idl_txn_get(const struct ovsdb_idl_row *row)
 {
     struct ovsdb_idl_txn *txn = row->table->idl->txn;
-    assert(txn != NULL);
+    ovs_assert(txn != NULL);
     return txn;
 }
 
+/* Returns the IDL on which 'txn' acts. */
 struct ovsdb_idl *
 ovsdb_idl_txn_get_idl (struct ovsdb_idl_txn *txn)
 {
@@ -2136,8 +2303,8 @@ ovsdb_idl_txn_get_idl (struct ovsdb_idl_txn *txn)
 void
 ovsdb_idl_set_lock(struct ovsdb_idl *idl, const char *lock_name)
 {
-    assert(!idl->txn);
-    assert(hmap_is_empty(&idl->outstanding_txns));
+    ovs_assert(!idl->txn);
+    ovs_assert(hmap_is_empty(&idl->outstanding_txns));
 
     if (idl->lock_name && (!lock_name || strcmp(lock_name, idl->lock_name))) {
         /* Release previous lock. */

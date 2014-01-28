@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Nicira Networks.
+ * Copyright (c) 2007-2012 Nicira, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -19,32 +19,11 @@
 #ifndef COMPAT_H
 #define COMPAT_H 1
 
+#include <linux/in.h>
+#include <linux/in_route.h>
 #include <linux/netlink.h>
-
-#ifndef HAVE_NLA_NUL_STRING
-static inline int CHECK_NUL_STRING(struct nlattr *attr, int maxlen)
-{
-	char *s;
-	int len;
-	if (!attr)
-		return 0;
-
-	len = nla_len(attr);
-	if (len >= maxlen)
-		return -EINVAL;
-
-	s = nla_data(attr);
-	if (s[len - 1] != '\0')
-		return -EINVAL;
-
-	return 0;
-}
-#else
-static inline int CHECK_NUL_STRING(struct nlattr *attr, int maxlen)
-{
-	return 0;
-}
-#endif  /* !HAVE_NLA_NUL_STRING */
+#include <net/route.h>
+#include <net/xfrm.h>
 
 static inline void skb_clear_rxhash(struct sk_buff *skb)
 {
@@ -53,24 +32,54 @@ static inline void skb_clear_rxhash(struct sk_buff *skb)
 #endif
 }
 
-/*
- * Enforces, mutual exclusion with the Linux bridge module, by declaring and
- * exporting br_should_route_hook.  Because the bridge module also exports the
- * same symbol, the module loader will refuse to load both modules at the same
- * time (e.g. "bridge: exports duplicate symbol br_should_route_hook (owned by
- * openvswitch_mod)").
- *
- * Before Linux 2.6.36, Open vSwitch cannot safely coexist with the Linux
- * bridge module, so openvswitch_mod uses this macro in those versions.  In
- * Linux 2.6.36 and later, Open vSwitch can coexist with the bridge module, but
- * it makes no sense to load both bridge and brcompat_mod, so brcompat_mod uses
- * this macro in those versions.
- *
- * The use of "typeof" here avoids the need to track changes in the type of
- * br_should_route_hook over various kernel versions.
- */
-#define BRIDGE_MUTUAL_EXCLUSION					\
-	typeof(br_should_route_hook) br_should_route_hook;	\
-	EXPORT_SYMBOL(br_should_route_hook)
+#ifdef HAVE_PARALLEL_OPS
+#define SET_PARALLEL_OPS	.parallel_ops = true,
+#else
+#define SET_PARALLEL_OPS
+#endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+#define rt_dst(rt) (rt->dst)
+#else
+#define rt_dst(rt) (rt->u.dst)
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+#define inet_sport(sk)	(inet_sk(sk)->sport)
+#else
+#define inet_sport(sk)	(inet_sk(sk)->inet_sport)
+#endif
+
+static inline struct rtable *find_route(struct net *net,
+					__be32 *saddr, __be32 daddr,
+					u8 ipproto, u8 tos, u32 skb_mark)
+{
+	struct rtable *rt;
+	/* Tunnel configuration keeps DSCP part of TOS bits, But Linux
+	 * router expect RT_TOS bits only. */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39)
+	struct flowi fl = { .nl_u = { .ip4_u = {
+					.daddr = daddr,
+					.saddr = *saddr,
+					.tos   = RT_TOS(tos) } },
+					.mark = skb_mark,
+					.proto = ipproto };
+
+	if (unlikely(ip_route_output_key(net, &rt, &fl)))
+		return ERR_PTR(-EADDRNOTAVAIL);
+	*saddr = fl.nl_u.ip4_u.saddr;
+	return rt;
+#else
+	struct flowi4 fl = { .daddr = daddr,
+			     .saddr = *saddr,
+			     .flowi4_tos = RT_TOS(tos),
+			     .flowi4_mark = skb_mark,
+			     .flowi4_proto = ipproto };
+
+	rt = ip_route_output_key(net, &fl);
+	*saddr = fl.saddr;
+	return rt;
+#endif
+}
 #endif /* compat.h */

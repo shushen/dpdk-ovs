@@ -47,6 +47,14 @@ AT_SETUP([execute a pop VLAN action])
 AT_CHECK([sudo -E $srcdir/dpdk/test-datapath -c 1 -n 4 -- action_execute_pop_vlan], [0], [ignore], [])
 AT_CLEANUP
 
+AT_SETUP([execute a set ethernet action])
+AT_CHECK([sudo -E $srcdir/dpdk/test-datapath -c 1 -n 4 -- action_execute_set_ethernet], [0], [ignore], [])
+AT_CLEANUP
+
+AT_SETUP([execute a set ipv4 action])
+AT_CHECK([sudo -E $srcdir/dpdk/test-datapath -c 1 -n 4 -- action_execute_set_ipv4], [0], [ignore], [])
+AT_CLEANUP
+
 AT_SETUP([execute a push VLAN vid action])
 AT_CHECK([sudo -E $srcdir/dpdk/test-datapath -c 1 -n 4 -- action_execute_push_vlan__vid], [0], [ignore], [])
 AT_CLEANUP

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011 Nicira Networks
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,19 +17,27 @@
 #define OVSDB_JSONRPC_SERVER_H 1
 
 #include <stdbool.h>
+#include "openvswitch/types.h"
 
 struct ovsdb;
 struct shash;
+struct simap;
 
-struct ovsdb_jsonrpc_server *ovsdb_jsonrpc_server_create(struct ovsdb *);
+struct ovsdb_jsonrpc_server *ovsdb_jsonrpc_server_create(void);
+bool ovsdb_jsonrpc_server_add_db(struct ovsdb_jsonrpc_server *,
+                                 struct ovsdb *);
+bool ovsdb_jsonrpc_server_remove_db(struct ovsdb_jsonrpc_server *,
+                                     struct ovsdb *);
 void ovsdb_jsonrpc_server_destroy(struct ovsdb_jsonrpc_server *);
 
 /* Options for a remote. */
 struct ovsdb_jsonrpc_options {
     int max_backoff;            /* Maximum reconnection backoff, in msec. */
     int probe_interval;         /* Max idle time before probing, in msec. */
+    int dscp;                   /* Dscp value for manager connections */
 };
-struct ovsdb_jsonrpc_options *ovsdb_jsonrpc_default_options(void);
+struct ovsdb_jsonrpc_options *
+ovsdb_jsonrpc_default_options(const char *target);
 
 void ovsdb_jsonrpc_server_set_remotes(struct ovsdb_jsonrpc_server *,
                                       const struct shash *);
@@ -45,6 +53,7 @@ struct ovsdb_jsonrpc_remote_status {
     char *locks_waiting;
     char *locks_lost;
     int n_connections;
+    ovs_be16 bound_port;
 };
 bool ovsdb_jsonrpc_server_get_remote_status(
     const struct ovsdb_jsonrpc_server *, const char *target,
@@ -56,5 +65,8 @@ void ovsdb_jsonrpc_server_reconnect(struct ovsdb_jsonrpc_server *);
 
 void ovsdb_jsonrpc_server_run(struct ovsdb_jsonrpc_server *);
 void ovsdb_jsonrpc_server_wait(struct ovsdb_jsonrpc_server *);
+
+void ovsdb_jsonrpc_server_get_memory_usage(const struct ovsdb_jsonrpc_server *,
+                                           struct simap *usage);
 
 #endif /* ovsdb/jsonrpc-server.h */

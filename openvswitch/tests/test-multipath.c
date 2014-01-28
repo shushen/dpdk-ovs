@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 Nicira Networks.
+ * Copyright (c) 2010, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 #include <stdlib.h>
 
 #include "flow.h"
+#include "ofp-actions.h"
 #include "random.h"
 #include "util.h"
 
@@ -32,8 +33,9 @@ int
 main(int argc, char *argv[])
 {
     enum { MP_MAX_LINKS = 63 };
-    struct nx_action_multipath mp;
+    struct ofpact_multipath mp;
     bool ok = true;
+    char *error;
     int n;
 
     set_program_name(argv[0]);
@@ -43,7 +45,11 @@ main(int argc, char *argv[])
         ovs_fatal(0, "usage: %s multipath_action", program_name);
     }
 
-    multipath_parse(&mp, argv[1]);
+    error = multipath_parse(&mp, argv[1]);
+    if (error) {
+        ovs_fatal(0, "%s", error);
+    }
+
     for (n = 1; n <= MP_MAX_LINKS; n++) {
         enum { N_FLOWS = 65536 };
         double disruption, perfect, distribution;
@@ -56,16 +62,19 @@ main(int argc, char *argv[])
         memset(histogram, 0, sizeof histogram);
         for (i = 0; i < N_FLOWS; i++) {
             int old_link, new_link;
+            struct flow_wildcards wc;
             struct flow flow;
 
             random_bytes(&flow, sizeof flow);
+            memset(flow.zeros, 0, sizeof flow.zeros);
+            flow.mpls_depth = 0;
 
-            mp.max_link = htons(n - 1);
-            multipath_execute(&mp, &flow);
+            mp.max_link = n - 1;
+            multipath_execute(&mp, &flow, &wc);
             old_link = flow.regs[0];
 
-            mp.max_link = htons(n);
-            multipath_execute(&mp, &flow);
+            mp.max_link = n;
+            multipath_execute(&mp, &flow, &wc);
             new_link = flow.regs[0];
 
             assert(old_link >= 0 && old_link < n);
@@ -91,7 +100,7 @@ main(int argc, char *argv[])
                "stddev/expected=%.4f\n",
                n, n + 1, disruption, perfect, distribution);
 
-        switch (ntohs(mp.algorithm)) {
+        switch (mp.algorithm) {
         case NX_MP_ALG_MODULO_N:
             if (disruption < (n < 2 ? .25 : .5)) {
                 fprintf(stderr, "%d -> %d: disruption=%.2f < .5\n",

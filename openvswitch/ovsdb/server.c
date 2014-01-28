@@ -1,4 +1,4 @@
-/* Copyright (c) 2011 Nicira Networks
+/* Copyright (c) 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,14 @@
 
 #include "server.h"
 
-#include <assert.h>
-
 #include "hash.h"
+#include "ovsdb.h"
 
-/* Initializes 'session' as a session that operates on 'db'. */
+/* Initializes 'session' as a session within 'server'. */
 void
-ovsdb_session_init(struct ovsdb_session *session, struct ovsdb *db)
+ovsdb_session_init(struct ovsdb_session *session, struct ovsdb_server *server)
 {
-    session->db = db;
+    session->server = server;
     list_init(&session->completions);
     hmap_init(&session->waiters);
 }
@@ -34,7 +33,7 @@ ovsdb_session_init(struct ovsdb_session *session, struct ovsdb *db)
 void
 ovsdb_session_destroy(struct ovsdb_session *session)
 {
-    assert(hmap_is_empty(&session->waiters));
+    ovs_assert(hmap_is_empty(&session->waiters));
     hmap_destroy(&session->waiters);
 }
 
@@ -100,7 +99,7 @@ ovsdb_lock_waiter_remove(struct ovsdb_lock_waiter *waiter)
 void
 ovsdb_lock_waiter_destroy(struct ovsdb_lock_waiter *waiter)
 {
-    assert(!waiter->lock);
+    ovs_assert(!waiter->lock);
     hmap_remove(&waiter->session->waiters, &waiter->session_node);
     free(waiter->lock_name);
     free(waiter);
@@ -113,18 +112,44 @@ ovsdb_lock_waiter_is_owner(const struct ovsdb_lock_waiter *waiter)
     return waiter->lock && waiter == ovsdb_lock_get_owner(waiter->lock);
 }
 
-/* Initializes 'server' as a server that operates on 'db'. */
+/* Initializes 'server'.
+ *
+ * The caller must call ovsdb_server_add_db() for each database to which
+ * 'server' should provide access. */
 void
-ovsdb_server_init(struct ovsdb_server *server, struct ovsdb *db)
+ovsdb_server_init(struct ovsdb_server *server)
 {
-    server->db = db;
+    shash_init(&server->dbs);
     hmap_init(&server->locks);
+}
+
+/* Adds 'db' to the set of databases served out by 'server'.  Returns true if
+ * successful, false if 'db''s name is the same as some database already in
+ * 'server'. */
+bool
+ovsdb_server_add_db(struct ovsdb_server *server, struct ovsdb *db)
+{
+    return shash_add_once(&server->dbs, db->schema->name, db);
+}
+
+/* Removes 'db' from the set of databases served out by 'server'.  Returns
+ * true if successful, false if there is no db associated with
+ * db->schema->name. */
+bool
+ovsdb_server_remove_db(struct ovsdb_server *server, struct ovsdb *db)
+{
+    void *data = shash_find_and_delete(&server->dbs, db->schema->name);
+    if (data) {
+        return true;
+    }
+    return false;
 }
 
 /* Destroys 'server'. */
 void
 ovsdb_server_destroy(struct ovsdb_server *server)
 {
+    shash_destroy(&server->dbs);
     hmap_destroy(&server->locks);
 }
 

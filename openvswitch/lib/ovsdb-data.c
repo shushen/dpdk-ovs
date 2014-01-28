@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011 Nicira Networks
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 
 #include "ovsdb-data.h"
 
-#include <assert.h>
 #include <ctype.h>
 #include <float.h>
 #include <inttypes.h>
@@ -25,10 +24,12 @@
 
 #include "dynamic-string.h"
 #include "hash.h"
+#include "ovs-thread.h"
 #include "ovsdb-error.h"
 #include "ovsdb-parser.h"
 #include "json.h"
 #include "shash.h"
+#include "smap.h"
 #include "sort.h"
 #include "unicode.h"
 
@@ -94,9 +95,9 @@ const union ovsdb_atom *
 ovsdb_atom_default(enum ovsdb_atomic_type type)
 {
     static union ovsdb_atom default_atoms[OVSDB_N_TYPES];
-    static bool inited;
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
 
-    if (!inited) {
+    if (ovsthread_once_start(&once)) {
         int i;
 
         for (i = 0; i < OVSDB_N_TYPES; i++) {
@@ -104,10 +105,10 @@ ovsdb_atom_default(enum ovsdb_atomic_type type)
                 ovsdb_atom_init_default(&default_atoms[i], i);
             }
         }
-        inited = true;
+        ovsthread_once_done(&once);
     }
 
-    assert(ovsdb_atomic_type_is_valid(type));
+    ovs_assert(ovsdb_atomic_type_is_valid(type));
     return &default_atoms[type];
 }
 
@@ -289,7 +290,7 @@ static void
 ovsdb_symbol_referenced(struct ovsdb_symbol *symbol,
                         const struct ovsdb_base_type *base)
 {
-    assert(base->type == OVSDB_TYPE_UUID);
+    ovs_assert(base->type == OVSDB_TYPE_UUID);
 
     if (base->u.uuid.refTableName) {
         switch (base->u.uuid.refType) {
@@ -466,6 +467,47 @@ ovsdb_atom_to_json(const union ovsdb_atom *atom, enum ovsdb_atomic_type type)
     }
 }
 
+/* Returns strlen(json_to_string(ovsdb_atom_to_json(atom, type), 0)). */
+size_t
+ovsdb_atom_json_length(const union ovsdb_atom *atom,
+                       enum ovsdb_atomic_type type)
+{
+    struct json json;
+
+    switch (type) {
+    case OVSDB_TYPE_VOID:
+        NOT_REACHED();
+
+    case OVSDB_TYPE_INTEGER:
+        json.type = JSON_INTEGER;
+        json.u.integer = atom->integer;
+        break;
+
+    case OVSDB_TYPE_REAL:
+        json.type = JSON_REAL;
+        json.u.real = atom->real;
+        break;
+
+    case OVSDB_TYPE_BOOLEAN:
+        json.type = atom->boolean ? JSON_TRUE : JSON_FALSE;
+        break;
+
+    case OVSDB_TYPE_STRING:
+        json.type = JSON_STRING;
+        json.u.string = atom->string;
+        break;
+
+    case OVSDB_TYPE_UUID:
+        return strlen("[\"uuid\",\"00000000-0000-0000-0000-000000000000\"]");
+
+    case OVSDB_N_TYPES:
+    default:
+        NOT_REACHED();
+    }
+
+    return json_serialized_length(&json);
+}
+
 static char *
 ovsdb_atom_from_string__(union ovsdb_atom *atom,
                          const struct ovsdb_base_type *base, const char *s,
@@ -590,6 +632,7 @@ ovsdb_atom_from_string(union ovsdb_atom *atom,
 
     error = ovsdb_atom_check_constraints(atom, base);
     if (error) {
+        ovsdb_atom_destroy(atom, base->type);
         msg = ovsdb_error_to_string(error);
         ovsdb_error_destroy(error);
     }
@@ -877,14 +920,15 @@ ovsdb_datum_default(const struct ovsdb_type *type)
         int kt = type->key.type;
         int vt = type->value.type;
 
-        assert(ovsdb_type_is_valid(type));
+        ovs_assert(ovsdb_type_is_valid(type));
 
         d = &default_data[kt][vt];
         if (!d->n) {
             d->n = 1;
-            d->keys = (union ovsdb_atom *) ovsdb_atom_default(kt);
+            d->keys = CONST_CAST(union ovsdb_atom *, ovsdb_atom_default(kt));
             if (vt != OVSDB_TYPE_VOID) {
-                d->values = (union ovsdb_atom *) ovsdb_atom_default(vt);
+                d->values = CONST_CAST(union ovsdb_atom *,
+                                       ovsdb_atom_default(vt));
             }
         }
         return d;
@@ -1305,6 +1349,56 @@ ovsdb_datum_to_json(const struct ovsdb_datum *datum,
     }
 }
 
+/* Returns strlen(json_to_string(ovsdb_datum_to_json(datum, type), 0)). */
+size_t
+ovsdb_datum_json_length(const struct ovsdb_datum *datum,
+                        const struct ovsdb_type *type)
+{
+    if (ovsdb_type_is_map(type)) {
+        size_t length;
+
+        /* ["map",[...]]. */
+        length = 10;
+        if (datum->n > 0) {
+            size_t i;
+
+            /* Commas between pairs in the inner [...] */
+            length += datum->n - 1;
+
+            /* [,] in each pair. */
+            length += datum->n * 3;
+
+            /* Data. */
+            for (i = 0; i < datum->n; i++) {
+                length += ovsdb_atom_json_length(&datum->keys[i],
+                                                 type->key.type);
+                length += ovsdb_atom_json_length(&datum->values[i],
+                                                 type->value.type);
+            }
+        }
+        return length;
+    } else if (datum->n == 1) {
+        return ovsdb_atom_json_length(&datum->keys[0], type->key.type);
+    } else {
+        size_t length;
+        size_t i;
+
+        /* ["set",[...]]. */
+        length = 10;
+        if (datum->n > 0) {
+            /* Commas between elements in the inner [...]. */
+            length += datum->n - 1;
+
+            /* Data. */
+            for (i = 0; i < datum->n; i++) {
+                length += ovsdb_atom_json_length(&datum->keys[i],
+                                                 type->key.type);
+            }
+        }
+        return length;
+    }
+}
+
 static const char *
 skip_spaces(const char *p)
 {
@@ -1523,27 +1617,26 @@ ovsdb_datum_to_bare(const struct ovsdb_datum *datum,
 }
 
 /* Initializes 'datum' as a string-to-string map whose contents are taken from
- * 'sh'.  Destroys 'sh'. */
+ * 'smap'.  Destroys 'smap'. */
 void
-ovsdb_datum_from_shash(struct ovsdb_datum *datum, struct shash *sh)
+ovsdb_datum_from_smap(struct ovsdb_datum *datum, struct smap *smap)
 {
-    struct shash_node *node, *next;
+    struct smap_node *node, *next;
     size_t i;
 
-    datum->n = shash_count(sh);
+    datum->n = smap_count(smap);
     datum->keys = xmalloc(datum->n * sizeof *datum->keys);
     datum->values = xmalloc(datum->n * sizeof *datum->values);
 
     i = 0;
-    SHASH_FOR_EACH_SAFE (node, next, sh) {
-        datum->keys[i].string = node->name;
-        datum->values[i].string = node->data;
-        shash_steal(sh, node);
+    SMAP_FOR_EACH_SAFE (node, next, smap) {
+        smap_steal(smap, node,
+                   &datum->keys[i].string, &datum->values[i].string);
         i++;
     }
-    assert(i == datum->n);
+    ovs_assert(i == datum->n);
 
-    shash_destroy(sh);
+    smap_destroy(smap);
     ovsdb_datum_sort_unique(datum, OVSDB_TYPE_STRING, OVSDB_TYPE_STRING);
 }
 
@@ -1800,7 +1893,7 @@ ovsdb_datum_union(struct ovsdb_datum *a, const struct ovsdb_datum *b,
         struct ovsdb_error *error;
         a->n = n;
         error = ovsdb_datum_sort(a, type->key.type);
-        assert(!error);
+        ovs_assert(!error);
     }
 }
 
@@ -1812,9 +1905,9 @@ ovsdb_datum_subtract(struct ovsdb_datum *a, const struct ovsdb_type *a_type,
     bool changed = false;
     size_t i;
 
-    assert(a_type->key.type == b_type->key.type);
-    assert(a_type->value.type == b_type->value.type
-           || b_type->value.type == OVSDB_TYPE_VOID);
+    ovs_assert(a_type->key.type == b_type->key.type);
+    ovs_assert(a_type->value.type == b_type->value.type
+               || b_type->value.type == OVSDB_TYPE_VOID);
 
     /* XXX The big-O of this could easily be improved. */
     for (i = 0; i < a->n; ) {
@@ -1861,7 +1954,7 @@ ovsdb_symbol_table_put(struct ovsdb_symbol_table *symtab, const char *name,
 {
     struct ovsdb_symbol *symbol;
 
-    assert(!ovsdb_symbol_table_get(symtab, name));
+    ovs_assert(!ovsdb_symbol_table_get(symtab, name));
     symbol = xmalloc(sizeof *symbol);
     symbol->uuid = *uuid;
     symbol->created = created;

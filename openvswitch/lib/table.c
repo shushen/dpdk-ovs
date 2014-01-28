@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,11 @@
 
 #include "table.h"
 
-#include <assert.h>
-
 #include "dynamic-string.h"
 #include "json.h"
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
+#include "timeval.h"
 #include "util.h"
 
 struct column {
@@ -123,6 +122,14 @@ table_set_caption(struct table *table, char *caption)
     table->caption = caption;
 }
 
+/* Turns printing a timestamp along with 'table' on or off, according to
+ * 'timestamp'.  */
+void
+table_set_timestamp(struct table *table, bool timestamp)
+{
+    table->timestamp = timestamp;
+}
+
 /* Adds a new column to 'table' just to the right of any existing column, with
  * 'heading' as a title for the column.  'heading' must be a valid printf()
  * format specifier.
@@ -134,7 +141,7 @@ table_add_column(struct table *table, const char *heading, ...)
     struct column *column;
     va_list args;
 
-    assert(!table->n_rows);
+    ovs_assert(!table->n_rows);
     if (table->n_columns >= table->allocated_columns) {
         table->columns = x2nrealloc(table->columns, &table->allocated_columns,
                                     sizeof *table->columns);
@@ -195,8 +202,8 @@ table_add_cell(struct table *table)
 {
     size_t x, y;
 
-    assert(table->n_rows > 0);
-    assert(table->current_column < table->n_columns);
+    ovs_assert(table->n_rows > 0);
+    ovs_assert(table->current_column < table->n_columns);
 
     x = table->current_column++;
     y = table->n_rows - 1;
@@ -211,6 +218,22 @@ table_print_table_line__(struct ds *line)
     ds_clear(line);
 }
 
+static char *
+table_format_timestamp__(void)
+{
+    return xastrftime_msec("%Y-%m-%d %H:%M:%S.###", time_wall_msec(), true);
+}
+
+static void
+table_print_timestamp__(const struct table *table)
+{
+    if (table->timestamp) {
+        char *s = table_format_timestamp__();
+        puts(s);
+        free(s);
+    }
+}
+
 static void
 table_print_table__(const struct table *table, const struct table_style *style)
 {
@@ -222,6 +245,8 @@ table_print_table__(const struct table *table, const struct table_style *style)
     if (n++ > 0) {
         putchar('\n');
     }
+
+    table_print_timestamp__(table);
 
     if (table->caption) {
         puts(table->caption);
@@ -285,6 +310,8 @@ table_print_list__(const struct table *table, const struct table_style *style)
     if (n++ > 0) {
         putchar('\n');
     }
+
+    table_print_timestamp__(table);
 
     if (table->caption) {
         puts(table->caption);
@@ -357,6 +384,8 @@ table_print_html__(const struct table *table, const struct table_style *style)
 {
     size_t x, y;
 
+    table_print_timestamp__(table);
+
     fputs("<table border=1>\n", stdout);
 
     if (table->caption) {
@@ -427,6 +456,8 @@ table_print_csv__(const struct table *table, const struct table_style *style)
         putchar('\n');
     }
 
+    table_print_timestamp__(table);
+
     if (table->caption) {
         puts(table->caption);
     }
@@ -464,6 +495,11 @@ table_print_json__(const struct table *table, const struct table_style *style)
     json = json_object_create();
     if (table->caption) {
         json_object_put_string(json, "caption", table->caption);
+    }
+    if (table->timestamp) {
+        char *s = table_format_timestamp__();
+        json_object_put_string(json, "time", s);
+        free(s);
     }
 
     headings = json_array_create_empty();

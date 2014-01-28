@@ -1,4 +1,4 @@
-# Copyright (c) 2009, 2010, 2011 Nicira Networks
+# Copyright (c) 2009, 2010, 2011 Nicira, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -468,7 +468,7 @@ class Datum(object):
         new datum's value is taken from 'value', which must take the form
         described as a valid return value from Datum.to_python() for 'type'.
 
-        Each scalar value within 'value' is initally passed through
+        Each scalar value within 'value' is initially passed through
         'row_to_uuid', which should convert objects that represent rows (if
         any) into uuid.UUID objects and return other data unchanged.
 

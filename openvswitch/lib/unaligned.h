@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2011 Nicira Networks.
+ * Copyright (c) 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -175,29 +175,68 @@ put_unaligned_u64(uint64_t *p, uint64_t x)
 }
 
 /* Returns the value in 'x'. */
+static inline uint32_t
+get_16aligned_u32(const ovs_16aligned_u32 *x)
+{
+    return ((uint32_t) x->hi << 16) | x->lo;
+}
+
+/* Stores 'value' in 'x'. */
+static inline void
+put_16aligned_u32(ovs_16aligned_u32 *x, uint32_t value)
+{
+    x->hi = value >> 16;
+    x->lo = value;
+}
+
+/* Returns the value in 'x'. */
 static inline uint64_t
 get_32aligned_u64(const ovs_32aligned_u64 *x)
 {
-	return ((uint64_t) x->hi << 32) | x->lo;
+    return ((uint64_t) x->hi << 32) | x->lo;
 }
 
 /* Stores 'value' in 'x'. */
 static inline void
 put_32aligned_u64(ovs_32aligned_u64 *x, uint64_t value)
 {
-	x->hi = value >> 32;
-	x->lo = value;
+    x->hi = value >> 32;
+    x->lo = value;
 }
 
 #ifndef __CHECKER__
+/* Returns the value of 'x'. */
+static inline ovs_be32
+get_16aligned_be32(const ovs_16aligned_be32 *x)
+{
+#ifdef WORDS_BIGENDIAN
+    return ((ovs_be32) x->hi << 16) | x->lo;
+#else
+    return ((ovs_be32) x->lo << 16) | x->hi;
+#endif
+}
+
+/* Stores network byte order 'value' into 'x'. */
+static inline void
+put_16aligned_be32(ovs_16aligned_be32 *x, ovs_be32 value)
+{
+#if WORDS_BIGENDIAN
+    x->hi = value >> 16;
+    x->lo = value;
+#else
+    x->hi = value;
+    x->lo = value >> 16;
+#endif
+}
+
 /* Returns the value of 'x'. */
 static inline ovs_be64
 get_32aligned_be64(const ovs_32aligned_be64 *x)
 {
 #ifdef WORDS_BIGENDIAN
-	return ((ovs_be64) x->hi << 32) | x->lo;
+    return ((ovs_be64) x->hi << 32) | x->lo;
 #else
-	return ((ovs_be64) x->lo << 32) | x->hi;
+    return ((ovs_be64) x->lo << 32) | x->hi;
 #endif
 }
 
@@ -206,8 +245,8 @@ static inline void
 put_32aligned_be64(ovs_32aligned_be64 *x, ovs_be64 value)
 {
 #if WORDS_BIGENDIAN
-	x->hi = value >> 32;
-	x->lo = value;
+    x->hi = value >> 32;
+    x->lo = value;
 #else
     x->hi = value;
     x->lo = value >> 32;
@@ -216,6 +255,8 @@ put_32aligned_be64(ovs_32aligned_be64 *x, ovs_be64 value)
 #else  /* __CHECKER__ */
 /* Making sparse happy with these functions also makes them unreadable, so
  * don't bother to show it their implementations. */
+ovs_be32 get_16aligned_be32(const ovs_16aligned_be32 *);
+void put_16aligned_be32(ovs_16aligned_be32 *, ovs_be32);
 ovs_be64 get_32aligned_be64(const ovs_32aligned_be64 *);
 void put_32aligned_be64(ovs_32aligned_be64 *, ovs_be64);
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,48 +54,30 @@ netdev_dpdk_wait(void)
     DPDK_DEBUG()
 }
 
-static int
-netdev_dpdk_create(const struct netdev_class *class, const char *name,
-                    struct netdev_dev **netdev_devp)
+static struct netdev *
+netdev_dpdk_alloc(void)
 {
-    DPDK_DEBUG()
-
-    *netdev_devp = xzalloc(sizeof(**netdev_devp));
-    netdev_dev_init(*netdev_devp, name, class);
-
-    return 0;
-}
-
-static void
-netdev_dpdk_destroy(struct netdev_dev *netdev_dev_)
-{
-    DPDK_DEBUG()
-
-    free(netdev_dev_);
+    return xzalloc(sizeof(struct netdev));
 }
 
 static int
-netdev_dpdk_open(struct netdev_dev *netdev_dev_, struct netdev **netdevp)
+netdev_dpdk_construct(struct netdev *netdev OVS_UNUSED)
 {
-    DPDK_DEBUG()
-
-    *netdevp = xzalloc(sizeof(**netdevp));
-    netdev_init(*netdevp, netdev_dev_);
-
     return 0;
+
 }
 
 static void
-netdev_dpdk_close(struct netdev *netdev_)
+netdev_dpdk_destruct(struct netdev *netdev OVS_UNUSED)
 {
-    const char *name = netdev_get_name(netdev_);
-    if (!strncmp(name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
-        netdev_assert_class(netdev_, &netdev_dpdk_class);
-    }
+    ;
 
-    DPDK_DEBUG()
+}
 
-    free(netdev_);
+static void
+netdev_dpdk_dealloc(struct netdev *netdev)
+{
+    free(netdev);
 }
 
 static int
@@ -167,13 +149,10 @@ const struct netdev_class netdev_dpdk_class =
     netdev_dpdk_init,
     netdev_dpdk_run,
     netdev_dpdk_wait,
-    netdev_dpdk_create,
-    netdev_dpdk_destroy,
-    NULL,
-    NULL,
-    netdev_dpdk_open,
-    netdev_dpdk_close,
-    NULL,
+    netdev_dpdk_alloc,
+    netdev_dpdk_construct,
+    netdev_dpdk_destruct,
+    netdev_dpdk_dealloc,
     NULL,
     NULL,
     NULL,
@@ -209,23 +188,29 @@ const struct netdev_class netdev_dpdk_class =
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq
+    netdev_dpdk_change_seq,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
 };
 
-const struct netdev_class netdev_internal_class =
+const struct netdev_class netdev_dpdk_internal_class =
 {
     "internal",
     netdev_dpdk_init,
     netdev_dpdk_run,
     netdev_dpdk_wait,
-    netdev_dpdk_create,
-    netdev_dpdk_destroy,
-    NULL,
-    NULL,
-    netdev_dpdk_open,
-    netdev_dpdk_close,
-    NULL,
+    netdev_dpdk_alloc,
+    netdev_dpdk_construct,
+    netdev_dpdk_destruct,
+    netdev_dpdk_dealloc,
     NULL,
     NULL,
     NULL,
@@ -261,7 +246,16 @@ const struct netdev_class netdev_internal_class =
     NULL,
     NULL,
     NULL,
+    NULL,
+    NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq
+    netdev_dpdk_change_seq,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
 };
 

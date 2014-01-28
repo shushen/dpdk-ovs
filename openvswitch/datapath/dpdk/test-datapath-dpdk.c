@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -33,9 +33,12 @@
  */
 
 #include <rte_mbuf.h>
+#include <rte_ip.h>
+#include <rte_ether.h>
 
 #include <string.h>
 #include <limits.h>
+#include <linux/openvswitch.h>
 
 #include "action.h"
 #include "stats.h"
@@ -191,6 +194,97 @@ test_action_execute_pop_vlan(int argc, char *argv[])
 	assert(*(pktmbuf_data + 3) != 0x00000081);
 	assert(*(pktmbuf_data + 3) == 0xBABEFACE);
 	rte_pktmbuf_free(vlan_buf);
+}
+
+/* Modify packet ethernet header */
+static void
+test_action_execute_set_ethernet(int argc, char *argv[])
+{
+	struct rte_mempool *pktmbuf_pool;
+	struct action action_multiple[MAX_ACTIONS] = {0};
+
+	pktmbuf_pool = rte_mempool_create("MProc_pktmbuf_pool",
+                    20, /* num mbufs */
+                    2048 + sizeof(struct rte_mbuf) + 128, /*pktmbuf size */
+                    32, /*cache size */
+                    sizeof(struct rte_pktmbuf_pool_private),
+                    rte_pktmbuf_pool_init,
+                    NULL, rte_pktmbuf_init, NULL, 0, 0);
+
+	struct rte_mbuf *ethernet_buf = rte_pktmbuf_alloc(pktmbuf_pool);
+
+	struct ovs_key_ethernet set_ethernet;
+	__u8 eth_src_set[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+	__u8 eth_dst_set[6] = {0xCA, 0xFE, 0xDE, 0xAD, 0xBE, 0xEF};
+	memcpy(&set_ethernet.eth_src, &eth_src_set, sizeof(eth_src_set));
+	memcpy(&set_ethernet.eth_dst, &eth_dst_set, sizeof(eth_dst_set));
+
+	struct ovs_key_ethernet ethernet_orig;
+	__u8 eth_src_orig[6] = {0xFF, 0xFF, 0xFF, 0xCC, 0xCC, 0xCC};
+	__u8 eth_dst_orig[6] = {0xAA, 0xAA, 0xAA, 0xEE, 0xEE, 0xEE};
+	memcpy(&ethernet_orig.eth_src, &eth_src_orig, sizeof(eth_src_orig));
+	memcpy(&ethernet_orig.eth_dst, &eth_dst_orig, sizeof(eth_dst_orig));
+
+	vport_init();
+	action_multiple[0].type = ACTION_SET_ETHERNET;
+	action_multiple[0].data.ethernet = set_ethernet;
+	action_null_build(&action_multiple[1]);
+
+	struct ovs_key_ethernet *pktmbuf_data =
+		rte_pktmbuf_mtod(ethernet_buf, struct ovs_key_ethernet *);
+	memcpy(pktmbuf_data, &ethernet_orig, sizeof(ethernet_orig));
+
+	action_execute(action_multiple, ethernet_buf);
+	pktmbuf_data = rte_pktmbuf_mtod(ethernet_buf, struct ovs_key_ethernet *);
+	/* Can't compare struct directly as ovs_key_ethernet has src first then
+	 * dst whereas the real ethernet header has dst first then source
+	 */
+	assert(memcmp(pktmbuf_data, &set_ethernet.eth_dst, sizeof(eth_dst_set)) == 0);
+	assert(memcmp((uint8_t *)pktmbuf_data + sizeof(eth_dst_set),
+	              &set_ethernet.eth_src, sizeof(eth_src_set)) == 0);
+	rte_pktmbuf_free(ethernet_buf);
+}
+
+
+/* Modify packet ipv4 header */
+static void
+test_action_execute_set_ipv4(int argc, char *argv[])
+{
+	struct rte_mempool *pktmbuf_pool;
+	struct action action_multiple[MAX_ACTIONS] = {0};
+	struct ipv4_hdr *pkt_ipv4;
+
+	pktmbuf_pool = rte_mempool_create("MProc_pktmbuf_pool",
+                    20, /* num mbufs */
+                    2048 + sizeof(struct rte_mbuf) + 128, /*pktmbuf size */
+                    32, /*cache size */
+                    sizeof(struct rte_pktmbuf_pool_private),
+                    rte_pktmbuf_pool_init,
+                    NULL, rte_pktmbuf_init, NULL, 0, 0);
+
+	struct rte_mbuf *ipv4_buf = rte_pktmbuf_alloc(pktmbuf_pool);
+
+	struct ovs_key_ipv4 set_ipv4;
+	set_ipv4.ipv4_tos = 0xFF;
+
+	vport_init();
+	action_multiple[0].type = ACTION_SET_IPV4;
+	action_multiple[0].data.ipv4 = set_ipv4;
+	action_null_build(&action_multiple[1]);
+
+	uint8_t *pktmbuf_data =
+	          rte_pktmbuf_mtod(ipv4_buf, uint8_t *);
+	pktmbuf_data += sizeof(struct ether_hdr);
+	pkt_ipv4 = (struct ipv4_hdr *)(pktmbuf_data);
+	pkt_ipv4->type_of_service = 0xaa;
+
+	action_execute(action_multiple, ipv4_buf);
+	pktmbuf_data = rte_pktmbuf_mtod(ipv4_buf, uint8_t *);
+	pktmbuf_data += sizeof(struct ether_hdr);
+	pkt_ipv4 = (struct ipv4_hdr *)(pktmbuf_data);
+
+	assert(pkt_ipv4->type_of_service == set_ipv4.ipv4_tos);
+	rte_pktmbuf_free(ipv4_buf);
 }
 
 /* Try to execute action with the push vlan (VID) action, which should
@@ -726,6 +820,8 @@ static const struct command commands[] = {
 	{"action_execute_output__corrupt_action", 0, 0, test_action_execute_output__corrupt_action},
 	{"action_execute_drop", 0, 0, test_action_execute_drop},
 	{"action_execute_pop_vlan", 0, 0, test_action_execute_pop_vlan},
+	{"action_execute_set_ethernet", 0, 0, test_action_execute_set_ethernet},
+	{"action_execute_set_ipv4", 0, 0, test_action_execute_set_ipv4},
 	{"action_execute_push_vlan__vid", 0, 0, test_action_execute_push_vlan__vid},
 	{"action_execute_push_vlan__pcp", 0, 0, test_action_execute_push_vlan__pcp},
 	{"action_execute_multiple_actions__three_output", 0, 0, test_action_execute_multiple_actions__three_output},

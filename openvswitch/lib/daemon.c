@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
 #include "fatal-signal.h"
 #include "dirs.h"
 #include "lockfile.h"
+#include "ovs-thread.h"
 #include "process.h"
 #include "socket-util.h"
 #include "timeval.h"
@@ -38,7 +39,8 @@
 VLOG_DEFINE_THIS_MODULE(daemon);
 
 /* --detach: Should we run in the background? */
-static bool detach;
+static bool detach;             /* Was --detach specified? */
+static bool detached;           /* Have we already detached? */
 
 /* --pidfile: Name of pidfile (null if none). */
 static char *pidfile;
@@ -60,6 +62,10 @@ static int daemonize_fd = -1;
 /* --monitor: Should a supervisory process monitor the daemon and restart it if
  * it dies due to an error signal? */
 static bool monitor;
+
+/* For each of the standard file descriptors, whether to replace it by
+ * /dev/null (if false) or keep it for the daemon to use (if true). */
+static bool save_fds[3];
 
 static void check_already_running(void);
 static int lock_pidfile(FILE *, int command);
@@ -83,6 +89,7 @@ make_pidfile_name(const char *name)
 void
 set_pidfile(const char *name)
 {
+    assert_single_threaded();
     free(pidfile);
     pidfile = make_pidfile_name(name);
 }
@@ -142,6 +149,42 @@ daemon_set_monitor(void)
     monitor = true;
 }
 
+/* A daemon doesn't normally have any use for the file descriptors for stdin,
+ * stdout, and stderr after it detaches.  To keep these file descriptors from
+ * e.g. holding an SSH session open, by default detaching replaces each of
+ * these file descriptors by /dev/null.  But a few daemons expect the user to
+ * redirect stdout or stderr to a file, in which case it is desirable to keep
+ * these file descriptors.  This function, therefore, disables replacing 'fd'
+ * by /dev/null when the daemon detaches. */
+void
+daemon_save_fd(int fd)
+{
+    ovs_assert(fd == STDIN_FILENO ||
+               fd == STDOUT_FILENO ||
+               fd == STDERR_FILENO);
+    save_fds[fd] = true;
+}
+
+/* Unregisters pidfile from being unlinked when the program terminates via
+* exit() or a fatal signal. */
+void
+remove_pidfile_from_unlink(void)
+{
+    if (pidfile) {
+        fatal_signal_remove_file_to_unlink(pidfile);
+    }
+}
+
+/* Registers pidfile to be unlinked when the program terminates via exit() or a
+ * fatal signal. */
+void
+add_pidfile_to_unlink(void)
+{
+    if (pidfile) {
+        fatal_signal_add_file_to_unlink(pidfile);
+    }
+}
+
 /* If a pidfile has been configured, creates it and stores the running
  * process's pid in it.  Ensures that the pidfile will be deleted when the
  * process exits. */
@@ -155,56 +198,63 @@ make_pidfile(void)
     int error;
 
     /* Create a temporary pidfile. */
-    tmpfile = xasprintf("%s.tmp%ld", pidfile, pid);
-    fatal_signal_add_file_to_unlink(tmpfile);
-    file = fopen(tmpfile, "w+");
+    if (overwrite_pidfile) {
+        tmpfile = xasprintf("%s.tmp%ld", pidfile, pid);
+        fatal_signal_add_file_to_unlink(tmpfile);
+    } else {
+        /* Everyone shares the same file which will be treated as a lock.  To
+         * avoid some uncomfortable race conditions, we can't set up the fatal
+         * signal unlink until we've acquired it. */
+        tmpfile = xasprintf("%s.tmp", pidfile);
+    }
+
+    file = fopen(tmpfile, "a+");
     if (!file) {
-        VLOG_FATAL("%s: create failed (%s)", tmpfile, strerror(errno));
-    }
-
-    if (fstat(fileno(file), &s) == -1) {
-        VLOG_FATAL("%s: fstat failed (%s)", tmpfile, strerror(errno));
-    }
-
-    fprintf(file, "%ld\n", pid);
-    if (fflush(file) == EOF) {
-        VLOG_FATAL("%s: write failed (%s)", tmpfile, strerror(errno));
+        VLOG_FATAL("%s: create failed (%s)", tmpfile, ovs_strerror(errno));
     }
 
     error = lock_pidfile(file, F_SETLK);
     if (error) {
-        VLOG_FATAL("%s: fcntl(F_SETLK) failed (%s)", tmpfile, strerror(error));
+        /* Looks like we failed to acquire the lock.  Note that, if we failed
+         * for some other reason (and '!overwrite_pidfile'), we will have
+         * left 'tmpfile' as garbage in the file system. */
+        VLOG_FATAL("%s: fcntl(F_SETLK) failed (%s)", tmpfile,
+                   ovs_strerror(error));
     }
 
-    /* Rename or link it to the correct name. */
-    if (overwrite_pidfile) {
-        if (rename(tmpfile, pidfile) < 0) {
-            VLOG_FATAL("failed to rename \"%s\" to \"%s\" (%s)",
-                       tmpfile, pidfile, strerror(errno));
-        }
-    } else {
-        do {
-            error = link(tmpfile, pidfile) == -1 ? errno : 0;
-            if (error == EEXIST) {
-                check_already_running();
-            }
-        } while (error == EINTR || error == EEXIST);
-        if (error) {
-            VLOG_FATAL("failed to link \"%s\" as \"%s\" (%s)",
-                       tmpfile, pidfile, strerror(error));
-        }
+    if (!overwrite_pidfile) {
+        /* We acquired the lock.  Make sure to clean up on exit, and verify
+         * that we're allowed to create the actual pidfile. */
+        fatal_signal_add_file_to_unlink(tmpfile);
+        check_already_running();
+    }
+
+    if (fstat(fileno(file), &s) == -1) {
+        VLOG_FATAL("%s: fstat failed (%s)", tmpfile, ovs_strerror(errno));
+    }
+
+    if (ftruncate(fileno(file), 0) == -1) {
+        VLOG_FATAL("%s: truncate failed (%s)", tmpfile, ovs_strerror(errno));
+    }
+
+    fprintf(file, "%ld\n", pid);
+    if (fflush(file) == EOF) {
+        VLOG_FATAL("%s: write failed (%s)", tmpfile, ovs_strerror(errno));
+    }
+
+    error = rename(tmpfile, pidfile);
+
+    /* Due to a race, 'tmpfile' may be owned by a different process, so we
+     * shouldn't delete it on exit. */
+    fatal_signal_remove_file_to_unlink(tmpfile);
+
+    if (error < 0) {
+        VLOG_FATAL("failed to rename \"%s\" to \"%s\" (%s)",
+                   tmpfile, pidfile, ovs_strerror(errno));
     }
 
     /* Ensure that the pidfile will get deleted on exit. */
     fatal_signal_add_file_to_unlink(pidfile);
-
-    /* Delete the temporary pidfile if it still exists. */
-    if (!overwrite_pidfile) {
-        error = fatal_signal_unlink_file_now(tmpfile);
-        if (error) {
-            VLOG_FATAL("%s: unlink failed (%s)", tmpfile, strerror(error));
-        }
-    }
 
     /* Clean up.
      *
@@ -213,8 +263,6 @@ make_pidfile(void)
     pidfile_dev = s.st_dev;
     pidfile_ino = s.st_ino;
     free(tmpfile);
-    free(pidfile);
-    pidfile = NULL;
 }
 
 /* If configured with set_pidfile() or set_detach(), creates the pid file and
@@ -226,6 +274,38 @@ daemonize(void)
     daemonize_complete();
 }
 
+/* Calls fork() and on success returns its return value.  On failure, logs an
+ * error and exits unsuccessfully.
+ *
+ * Post-fork, but before returning, this function calls a few other functions
+ * that are generally useful if the child isn't planning to exec a new
+ * process. */
+pid_t
+fork_and_clean_up(void)
+{
+    pid_t pid = xfork();
+    if (pid > 0) {
+        /* Running in parent process. */
+        fatal_signal_fork();
+    } else if (!pid) {
+        /* Running in child process. */
+        time_postfork();
+        lockfile_postfork();
+    }
+    return pid;
+}
+
+/* Forks, then:
+ *
+ *   - In the parent, waits for the child to signal that it has completed its
+ *     startup sequence.  Then stores -1 in '*fdp' and returns the child's pid.
+ *
+ *   - In the child, stores a fd in '*fdp' and returns 0.  The caller should
+ *     pass the fd to fork_notify_startup() after it finishes its startup
+ *     sequence.
+ *
+ * If something goes wrong with the fork, logs a critical error and aborts the
+ * process. */
 static pid_t
 fork_and_wait_for_startup(int *fdp)
 {
@@ -234,14 +314,13 @@ fork_and_wait_for_startup(int *fdp)
 
     xpipe(fds);
 
-    pid = fork();
+    pid = fork_and_clean_up();
     if (pid > 0) {
         /* Running in parent process. */
         size_t bytes_read;
         char c;
 
         close(fds[1]);
-        fatal_signal_fork();
         if (read_fully(fds[0], &c, 1, &bytes_read) != 0) {
             int retval;
             int status;
@@ -261,7 +340,7 @@ fork_and_wait_for_startup(int *fdp)
                                status_msg);
                 }
             } else if (retval < 0) {
-                VLOG_FATAL("waitpid failed (%s)", strerror(errno));
+                VLOG_FATAL("waitpid failed (%s)", ovs_strerror(errno));
             } else {
                 NOT_REACHED();
             }
@@ -271,11 +350,7 @@ fork_and_wait_for_startup(int *fdp)
     } else if (!pid) {
         /* Running in child process. */
         close(fds[0]);
-        time_postfork();
-        lockfile_postfork();
         *fdp = fds[1];
-    } else {
-        VLOG_FATAL("fork failed (%s)", strerror(errno));
     }
 
     return pid;
@@ -290,7 +365,7 @@ fork_notify_startup(int fd)
 
         error = write_fully(fd, "", 1, &bytes_written);
         if (error) {
-            VLOG_FATAL("pipe write failed (%s)", strerror(error));
+            VLOG_FATAL("pipe write failed (%s)", ovs_strerror(error));
         }
 
         close(fd);
@@ -321,13 +396,11 @@ static void
 monitor_daemon(pid_t daemon_pid)
 {
     /* XXX Should log daemon's stderr output at startup time. */
-    const char *saved_program_name;
     time_t last_restart;
     char *status_msg;
     int crashes;
 
-    saved_program_name = program_name;
-    program_name = xasprintf("monitor(%s)", program_name);
+    set_subprogram_name("monitor");
     status_msg = xstrdup("healthy");
     last_restart = TIME_MIN;
     crashes = 0;
@@ -335,16 +408,15 @@ monitor_daemon(pid_t daemon_pid)
         int retval;
         int status;
 
-        proctitle_set("%s: monitoring pid %lu (%s)",
-                      saved_program_name, (unsigned long int) daemon_pid,
-                      status_msg);
+        proctitle_set("monitoring pid %lu (%s)",
+                      (unsigned long int) daemon_pid, status_msg);
 
         do {
             retval = waitpid(daemon_pid, &status, 0);
         } while (retval == -1 && errno == EINTR);
 
         if (retval == -1) {
-            VLOG_FATAL("waitpid failed (%s)", strerror(errno));
+            VLOG_FATAL("waitpid failed (%s)", ovs_strerror(errno));
         } else if (retval == daemon_pid) {
             char *s = process_status_msg(status);
             if (should_restart(status)) {
@@ -362,7 +434,7 @@ monitor_daemon(pid_t daemon_pid)
                     r.rlim_max = 0;
                     if (setrlimit(RLIMIT_CORE, &r) == -1) {
                         VLOG_WARN("failed to disable core dumps: %s",
-                                  strerror(errno));
+                                  ovs_strerror(errno));
                     }
                 }
 
@@ -398,20 +470,24 @@ monitor_daemon(pid_t daemon_pid)
 
     /* Running in new daemon process. */
     proctitle_restore();
-    free((char *) program_name);
-    program_name = saved_program_name;
+    set_subprogram_name("");
 }
 
-/* Close stdin, stdout, stderr.  If we're started from e.g. an SSH session,
- * then this keeps us from holding that session open artificially. */
+/* Close standard file descriptors (except any that the client has requested we
+ * leave open by calling daemon_save_fd()).  If we're started from e.g. an SSH
+ * session, then this keeps us from holding that session open artificially. */
 static void
 close_standard_fds(void)
 {
     int null_fd = get_null_fd();
     if (null_fd >= 0) {
-        dup2(null_fd, STDIN_FILENO);
-        dup2(null_fd, STDOUT_FILENO);
-        dup2(null_fd, STDERR_FILENO);
+        int fd;
+
+        for (fd = 0; fd < 3; fd++) {
+            if (!save_fds[fd]) {
+                dup2(null_fd, fd);
+            }
+        }
     }
 
     /* Disable logging to stderr to avoid wasting CPU time. */
@@ -426,6 +502,7 @@ close_standard_fds(void)
 void
 daemonize_start(void)
 {
+    assert_single_threaded();
     daemonize_fd = -1;
 
     if (detach) {
@@ -433,7 +510,9 @@ daemonize_start(void)
             /* Running in parent process. */
             exit(0);
         }
+
         /* Running in daemon or monitor process. */
+        setsid();
     }
 
     if (monitor) {
@@ -450,6 +529,8 @@ daemonize_start(void)
         /* Running in daemon process. */
     }
 
+    forbid_forking("running in daemon process");
+
     if (pidfile) {
         make_pidfile();
     }
@@ -460,22 +541,42 @@ daemonize_start(void)
 }
 
 /* If daemonization is configured, then this function notifies the parent
- * process that the child process has completed startup successfully.
+ * process that the child process has completed startup successfully.  It also
+ * call daemonize_post_detach().
  *
  * Calling this function more than once has no additional effect. */
 void
 daemonize_complete(void)
 {
-    fork_notify_startup(daemonize_fd);
-    daemonize_fd = -1;
+    if (pidfile) {
+        free(pidfile);
+        pidfile = NULL;
+    }
 
+    if (!detached) {
+        detached = true;
+
+        fork_notify_startup(daemonize_fd);
+        daemonize_fd = -1;
+        daemonize_post_detach();
+    }
+}
+
+/* If daemonization is configured, then this function does traditional Unix
+ * daemonization behavior: join a new session, chdir to the root (if not
+ * disabled), and close the standard file descriptors.
+ *
+ * It only makes sense to call this function as part of an implementation of a
+ * special daemon subprocess.  A normal daemon should just call
+ * daemonize_complete(). */
+void
+daemonize_post_detach(void)
+{
     if (detach) {
-        setsid();
         if (chdir_) {
             ignore(chdir("/"));
         }
         close_standard_fds();
-        detach = false;
     }
 }
 
@@ -543,13 +644,13 @@ read_pidfile__(const char *pidfile, bool delete_if_stale)
             return 0;
         }
         error = errno;
-        VLOG_WARN("%s: open: %s", pidfile, strerror(error));
+        VLOG_WARN("%s: open: %s", pidfile, ovs_strerror(error));
         goto error;
     }
 
     error = lock_pidfile__(file, F_GETLK, &lck);
     if (error) {
-        VLOG_WARN("%s: fcntl: %s", pidfile, strerror(error));
+        VLOG_WARN("%s: fcntl: %s", pidfile, ovs_strerror(error));
         goto error;
     }
     if (lck.l_type == F_UNLCK) {
@@ -588,7 +689,7 @@ read_pidfile__(const char *pidfile, bool delete_if_stale)
         if (unlink(pidfile)) {
             error = errno;
             VLOG_WARN("%s: failed to delete stale pidfile (%s)",
-                      pidfile, strerror(error));
+                      pidfile, ovs_strerror(error));
             goto error;
         }
         VLOG_DBG("%s: deleted stale pidfile", pidfile);
@@ -599,7 +700,7 @@ read_pidfile__(const char *pidfile, bool delete_if_stale)
     if (!fgets(line, sizeof line, file)) {
         if (ferror(file)) {
             error = errno;
-            VLOG_WARN("%s: read: %s", pidfile, strerror(error));
+            VLOG_WARN("%s: read: %s", pidfile, ovs_strerror(error));
         } else {
             error = ESRCH;
             VLOG_WARN("%s: read: unexpected end of file", pidfile);
@@ -645,6 +746,6 @@ check_already_running(void)
         VLOG_FATAL("%s: already running as pid %ld, aborting", pidfile, pid);
     } else if (pid < 0) {
         VLOG_FATAL("%s: pidfile check failed (%s), aborting",
-                   pidfile, strerror(-pid));
+                   pidfile, ovs_strerror(-pid));
     }
 }

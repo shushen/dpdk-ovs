@@ -1,4 +1,4 @@
-# Copyright (c) 2010 Nicira Networks
+# Copyright (c) 2010 Nicira, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,88 @@
 # limitations under the License.
 
 import errno
-import select
 import ovs.timeval
 import ovs.vlog
+import select
+import socket
+
+try:
+    import eventlet.patcher
+
+    def _using_eventlet_green_select():
+        return eventlet.patcher.is_monkey_patched(select)
+except:
+    def _using_eventlet_green_select():
+        return False
 
 vlog = ovs.vlog.Vlog("poller")
+
+POLLIN = 0x001
+POLLOUT = 0x004
+POLLERR = 0x008
+POLLHUP = 0x010
+POLLNVAL = 0x020
+
+# eventlet/gevent doesn't support select.poll. If select.poll is used,
+# python interpreter is blocked as a whole instead of switching from the
+# current thread that is about to block to other runnable thread.
+# So emulate select.poll by select.select because using python means that
+# performance isn't so important.
+class _SelectSelect(object):
+    """ select.poll emulation by using select.select.
+    Only register and poll are needed at the moment.
+    """
+    def __init__(self):
+        self.rlist = []
+        self.wlist = []
+        self.xlist = []
+
+    def register(self, fd, events):
+        if isinstance(fd, socket.socket):
+            fd = fd.fileno()
+        assert isinstance(fd, int)
+        if events & POLLIN:
+            self.rlist.append(fd)
+            events &= ~POLLIN
+        if events & POLLOUT:
+            self.wlist.append(fd)
+            events &= ~POLLOUT
+        if events:
+            self.xlist.append(fd)
+
+    def poll(self, timeout):
+        if timeout == -1:
+            # epoll uses -1 for infinite timeout, select uses None.
+            timeout = None
+        else:
+            timeout = float(timeout) / 1000
+        # XXX workaround a bug in eventlet
+        # see https://github.com/eventlet/eventlet/pull/25
+        if timeout == 0 and _using_eventlet_green_select():
+            timeout = 0.1
+
+        rlist, wlist, xlist = select.select(self.rlist, self.wlist, self.xlist,
+                                            timeout)
+        # collections.defaultdict is introduced by python 2.5 and
+        # XenServer uses python 2.4. We don't use it for XenServer.
+        # events_dict = collections.defaultdict(int)
+        # events_dict[fd] |= event
+        events_dict = {}
+        for fd in rlist:
+            events_dict[fd] = events_dict.get(fd, 0) | POLLIN
+        for fd in wlist:
+            events_dict[fd] = events_dict.get(fd, 0) | POLLOUT
+        for fd in xlist:
+            events_dict[fd] = events_dict.get(fd, 0) | (POLLERR |
+                                                        POLLHUP |
+                                                        POLLNVAL)
+        return events_dict.items()
+
+
+SelectPoll = _SelectSelect
+# If eventlet/gevent isn't used, we can use select.poll by replacing
+# _SelectPoll with select.poll class
+# _SelectPoll = select.poll
 
 
 class Poller(object):
@@ -109,18 +186,18 @@ class Poller(object):
             for fd, revents in events:
                 if revents != 0:
                     s = ""
-                    if revents & select.POLLIN:
+                    if revents & POLLIN:
                         s += "[POLLIN]"
-                    if revents & select.POLLOUT:
+                    if revents & POLLOUT:
                         s += "[POLLOUT]"
-                    if revents & select.POLLERR:
+                    if revents & POLLERR:
                         s += "[POLLERR]"
-                    if revents & select.POLLHUP:
+                    if revents & POLLHUP:
                         s += "[POLLHUP]"
-                    if revents & select.POLLNVAL:
+                    if revents & POLLNVAL:
                         s += "[POLLNVAL]"
                     vlog.dbg("%s on fd %d" % (s, fd))
 
     def __reset(self):
-        self.poll = select.poll()
+        self.poll = SelectPoll()
         self.timeout = -1

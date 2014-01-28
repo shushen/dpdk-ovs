@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 #define PINSCHED_H_H 1
 
 #include <stdint.h>
+#include "flow.h"
 
 struct ofpbuf;
 
@@ -27,9 +28,11 @@ void pinsched_get_limits(const struct pinsched *,
                          int *rate_limit, int *burst_limit);
 void pinsched_set_limits(struct pinsched *, int rate_limit, int burst_limit);
 void pinsched_destroy(struct pinsched *);
-void pinsched_send(struct pinsched *, uint16_t port_no, struct ofpbuf *,
+void pinsched_send(struct pinsched *, ofp_port_t port_no, struct ofpbuf *,
                    pinsched_tx_cb *, void *aux);
 void pinsched_run(struct pinsched *, pinsched_tx_cb *, void *aux);
 void pinsched_wait(struct pinsched *);
+
+unsigned int pinsched_count_txqlen(const struct pinsched *);
 
 #endif /* pinsched.h */

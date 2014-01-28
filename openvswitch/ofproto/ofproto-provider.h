@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,58 +17,125 @@
 #ifndef OFPROTO_OFPROTO_PROVIDER_H
 #define OFPROTO_OFPROTO_PROVIDER_H 1
 
-/* Definitions for use within ofproto. */
+/* Definitions for use within ofproto.
+ *
+ *
+ * Thread-safety
+ * =============
+ *
+ * Lots of ofproto data structures are only accessed from a single thread.
+ * Those data structures are generally not thread-safe.
+ *
+ * The ofproto-dpif ofproto implementation accesses the flow table from
+ * multiple threads, including modifying the flow table from multiple threads
+ * via the "learn" action, so the flow table and various structures that index
+ * it have been made thread-safe.  Refer to comments on individual data
+ * structures for details.
+ */
 
-#include "ofproto/ofproto.h"
 #include "cfm.h"
 #include "classifier.h"
+#include "guarded-list.h"
+#include "heap.h"
+#include "hindex.h"
 #include "list.h"
+#include "ofp-errors.h"
+#include "ofp-util.h"
+#include "ofproto/ofproto.h"
+#include "ovs-atomic.h"
+#include "ovs-thread.h"
 #include "shash.h"
+#include "simap.h"
 #include "timeval.h"
 
+struct match;
+struct ofpact;
 struct ofputil_flow_mod;
+struct bfd_cfg;
+struct meter;
+
+extern struct ovs_mutex ofproto_mutex;
 
 /* An OpenFlow switch.
  *
  * With few exceptions, ofproto implementations may look at these fields but
  * should not modify them. */
 struct ofproto {
+    struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */
     const struct ofproto_class *ofproto_class;
     char *type;                 /* Datapath type. */
     char *name;                 /* Datapath name. */
-    struct hmap_node hmap_node; /* In global 'all_ofprotos' hmap. */
 
     /* Settings. */
     uint64_t fallback_dpid;     /* Datapath ID if no better choice found. */
     uint64_t datapath_id;       /* Datapath ID. */
-    unsigned flow_eviction_threshold; /* Threshold at which to begin flow
-                                       * table eviction. Only affects the
-                                       * ofproto-dpif implementation */
     bool forward_bpdu;          /* Option to allow forwarding of BPDU frames
                                  * when NORMAL action is invoked. */
-    char *mfr_desc;             /* Manufacturer. */
-    char *hw_desc;              /* Hardware. */
-    char *sw_desc;              /* Software version. */
-    char *serial_desc;          /* Serial number. */
-    char *dp_desc;              /* Datapath description. */
+    char *mfr_desc;             /* Manufacturer (NULL for default)b. */
+    char *hw_desc;              /* Hardware (NULL for default). */
+    char *sw_desc;              /* Software version (NULL for default). */
+    char *serial_desc;          /* Serial number (NULL for default). */
+    char *dp_desc;              /* Datapath description (NULL for default). */
     enum ofp_config_flags frag_handling; /* One of OFPC_*.  */
 
     /* Datapath. */
     struct hmap ports;          /* Contains "struct ofport"s. */
     struct shash port_by_name;
+    unsigned long *ofp_port_ids;/* Bitmap of used OpenFlow port numbers. */
+    struct simap ofp_requests;  /* OpenFlow port number requests. */
+    uint16_t alloc_port_no;     /* Last allocated OpenFlow port number. */
+    uint16_t max_ports;         /* Max possible OpenFlow port num, plus one. */
 
     /* Flow tables. */
-    struct classifier *tables;  /* Each classifier contains "struct rule"s. */
+    long long int eviction_group_timer; /* For rate limited reheapification. */
+    struct oftable *tables;
     int n_tables;
+
+    /* Rules indexed on their cookie values, in all flow tables. */
+    struct hindex cookies OVS_GUARDED_BY(ofproto_mutex);
+
+    /* List of expirable flows, in all flow tables. */
+    struct list expirable OVS_GUARDED_BY(ofproto_mutex);
+
+    /* Meter table.
+     * OpenFlow meters start at 1.  To avoid confusion we leave the first
+     * pointer in the array un-used, and index directly with the OpenFlow
+     * meter_id. */
+    struct ofputil_meter_features meter_features;
+    struct meter **meters; /* 'meter_features.max_meter' + 1 pointers. */
 
     /* OpenFlow connections. */
     struct connmgr *connmgr;
 
-    /* Flow table operation tracking. */
-    int state;                  /* Internal state. */
-    struct list pending;        /* List of "struct ofopgroup"s. */
-    unsigned int n_pending;     /* list_size(&pending). */
-    struct hmap deletions;      /* All OFOPERATION_DELETE "ofoperation"s. */
+    /* Flow table operation tracking.
+     *
+     * 'state' is meaningful only within ofproto.c, one of the enum
+     * ofproto_state constants defined there.
+     *
+     * 'pending' is the list of "struct ofopgroup"s currently pending.
+     *
+     * 'n_pending' is the number of elements in 'pending'.
+     *
+     * 'deletions' contains pending ofoperations of type OFOPERATION_DELETE,
+     * indexed on its rule's flow.*/
+    int state;
+    struct list pending OVS_GUARDED_BY(ofproto_mutex);
+    unsigned int n_pending OVS_GUARDED_BY(ofproto_mutex);
+    struct hmap deletions OVS_GUARDED_BY(ofproto_mutex);
+
+    /* Delayed rule executions.
+     *
+     * We delay calls to ->ofproto_class->rule_execute() past releasing
+     * ofproto_mutex during a flow_mod, because otherwise a "learn" action
+     * triggered by the executing the packet would try to recursively modify
+     * the flow table and reacquire the global lock. */
+    struct guarded_list rule_executes; /* Contains "struct rule_execute"s. */
+
+    /* Flow table operation logging. */
+    int n_add, n_delete, n_modify; /* Number of unreported ops of each kind. */
+    long long int first_op, last_op; /* Range of times for unreported ops. */
+    long long int next_op_report;    /* Time to report ops, or LLONG_MAX. */
+    long long int op_backoff;        /* Earliest time to report ops again. */
 
     /* Linux VLAN device support (e.g. "eth0.10" for VLAN 10.)
      *
@@ -78,58 +145,303 @@ struct ofproto {
      * widespread use, we will delete these interfaces. */
     unsigned long int *vlan_bitmap; /* 4096-bit bitmap of in-use VLANs. */
     bool vlans_changed;             /* True if new VLANs are in use. */
+    int min_mtu;                    /* Current MTU of non-internal ports. */
 };
 
-struct ofproto *ofproto_lookup(const char *name);
-struct ofport *ofproto_get_port(const struct ofproto *, uint16_t ofp_port);
+void ofproto_init_tables(struct ofproto *, int n_tables);
+void ofproto_init_max_ports(struct ofproto *, uint16_t max_ports);
 
-/* Assigns CLS to each classifier table, in turn, in OFPROTO.
- *
- * All parameters are evaluated multiple times. */
-#define OFPROTO_FOR_EACH_TABLE(CLS, OFPROTO)                \
-    for ((CLS) = (OFPROTO)->tables;                         \
-         (CLS) < &(OFPROTO)->tables[(OFPROTO)->n_tables];   \
-         (CLS)++)
+struct ofproto *ofproto_lookup(const char *name);
+struct ofport *ofproto_get_port(const struct ofproto *, ofp_port_t ofp_port);
 
 /* An OpenFlow port within a "struct ofproto".
  *
  * With few exceptions, ofproto implementations may look at these fields but
  * should not modify them. */
 struct ofport {
-    struct ofproto *ofproto;    /* The ofproto that contains this port. */
     struct hmap_node hmap_node; /* In struct ofproto's "ports" hmap. */
+    struct ofproto *ofproto;    /* The ofproto that contains this port. */
     struct netdev *netdev;
-    struct ofp_phy_port opp;
-    uint16_t ofp_port;          /* OpenFlow port number. */
+    struct ofputil_phy_port pp;
+    ofp_port_t ofp_port;        /* OpenFlow port number. */
     unsigned int change_seq;
+    long long int created;      /* Time created, in msec. */
     int mtu;
 };
 
-void ofproto_port_set_state(struct ofport *, ovs_be32 state);
+void ofproto_port_set_state(struct ofport *, enum ofputil_port_state);
+
+/* OpenFlow table flags:
+ *
+ *   - "Hidden" tables are not included in OpenFlow operations that operate on
+ *     "all tables".  For example, a request for flow stats on all tables will
+ *     omit flows in hidden tables, table stats requests will omit the table
+ *     entirely, and the switch features reply will not count the hidden table.
+ *
+ *     However, operations that specifically name the particular table still
+ *     operate on it.  For example, flow_mods and flow stats requests on a
+ *     hidden table work.
+ *
+ *     To avoid gaps in table IDs (which have unclear validity in OpenFlow),
+ *     hidden tables must be the highest-numbered tables that a provider
+ *     implements.
+ *
+ *   - "Read-only" tables can't be changed through OpenFlow operations.  (At
+ *     the moment all flow table operations go effectively through OpenFlow, so
+ *     this means that read-only tables can't be changed at all after the
+ *     read-only flag is set.)
+ *
+ * The generic ofproto layer never sets these flags.  An ofproto provider can
+ * set them if it is appropriate.
+ */
+enum oftable_flags {
+    OFTABLE_HIDDEN = 1 << 0,   /* Hide from most OpenFlow operations. */
+    OFTABLE_READONLY = 1 << 1  /* Don't allow OpenFlow to change this table. */
+};
+
+/* A flow table within a "struct ofproto".
+ *
+ *
+ * Thread-safety
+ * =============
+ *
+ * A cls->rwlock read-lock holder prevents rules from being added or deleted.
+ *
+ * Adding or removing rules requires holding ofproto_mutex AND the cls->rwlock
+ * write-lock.
+ *
+ * cls->rwlock should be held only briefly.  For extended access to a rule,
+ * increment its ref_count with ofproto_rule_ref().  A rule will not be freed
+ * until its ref_count reaches zero.
+ *
+ * Modifying a rule requires the rule's own mutex.  Holding cls->rwlock (for
+ * read or write) does not allow the holder to modify the rule.
+ *
+ * Freeing a rule requires ofproto_mutex and the cls->rwlock write-lock.  After
+ * removing the rule from the classifier, release a ref_count from the rule
+ * ('cls''s reference to the rule).
+ *
+ * Refer to the thread-safety notes on struct rule for more information.*/
+struct oftable {
+    enum oftable_flags flags;
+    struct classifier cls;      /* Contains "struct rule"s. */
+    char *name;                 /* Table name exposed via OpenFlow, or NULL. */
+
+    /* Maximum number of flows or UINT_MAX if there is no limit besides any
+     * limit imposed by resource limitations. */
+    unsigned int max_flows;
+
+    /* These members determine the handling of an attempt to add a flow that
+     * would cause the table to have more than 'max_flows' flows.
+     *
+     * If 'eviction_fields' is NULL, overflows will be rejected with an error.
+     *
+     * If 'eviction_fields' is nonnull (regardless of whether n_eviction_fields
+     * is nonzero), an overflow will cause a flow to be removed.  The flow to
+     * be removed is chosen to give fairness among groups distinguished by
+     * different values for the subfields within 'groups'. */
+    struct mf_subfield *eviction_fields;
+    size_t n_eviction_fields;
+
+    /* Eviction groups.
+     *
+     * When a flow is added that would cause the table to have more than
+     * 'max_flows' flows, and 'eviction_fields' is nonnull, these groups are
+     * used to decide which rule to evict: the rule is chosen from the eviction
+     * group that contains the greatest number of rules.*/
+    uint32_t eviction_group_id_basis;
+    struct hmap eviction_groups_by_id;
+    struct heap eviction_groups_by_size;
+};
+
+/* Assigns TABLE to each oftable, in turn, in OFPROTO.
+ *
+ * All parameters are evaluated multiple times. */
+#define OFPROTO_FOR_EACH_TABLE(TABLE, OFPROTO)              \
+    for ((TABLE) = (OFPROTO)->tables;                       \
+         (TABLE) < &(OFPROTO)->tables[(OFPROTO)->n_tables]; \
+         (TABLE)++)
 
 /* An OpenFlow flow within a "struct ofproto".
  *
  * With few exceptions, ofproto implementations may look at these fields but
- * should not modify them. */
+ * should not modify them.
+ *
+ *
+ * Thread-safety
+ * =============
+ *
+ * Except near the beginning or ending of its lifespan, rule 'rule' belongs to
+ * the classifier rule->ofproto->tables[rule->table_id].cls.  The text below
+ * calls this classifier 'cls'.
+ *
+ * Motivation
+ * ----------
+ *
+ * The thread safety rules described here for "struct rule" are motivated by
+ * two goals:
+ *
+ *    - Prevent threads that read members of "struct rule" from reading bad
+ *      data due to changes by some thread concurrently modifying those
+ *      members.
+ *
+ *    - Prevent two threads making changes to members of a given "struct rule"
+ *      from interfering with each other.
+ *
+ *
+ * Rules
+ * -----
+ *
+ * A rule 'rule' may be accessed without a risk of being freed by code that
+ * holds a read-lock or write-lock on 'cls->rwlock' or that owns a reference to
+ * 'rule->ref_count' (or both).  Code that needs to hold onto a rule for a
+ * while should take 'cls->rwlock', find the rule it needs, increment
+ * 'rule->ref_count' with ofproto_rule_ref(), and drop 'cls->rwlock'.
+ *
+ * 'rule->ref_count' protects 'rule' from being freed.  It doesn't protect the
+ * rule from being deleted from 'cls' (that's 'cls->rwlock') and it doesn't
+ * protect members of 'rule' from modification (that's 'rule->rwlock').
+ *
+ * 'rule->mutex' protects the members of 'rule' from modification.  It doesn't
+ * protect the rule from being deleted from 'cls' (that's 'cls->rwlock') and it
+ * doesn't prevent the rule from being freed (that's 'rule->ref_count').
+ *
+ * Regarding thread safety, the members of a rule fall into the following
+ * categories:
+ *
+ *    - Immutable.  These members are marked 'const'.
+ *
+ *    - Members that may be safely read or written only by code holding
+ *      ofproto_mutex.  These are marked OVS_GUARDED_BY(ofproto_mutex).
+ *
+ *    - Members that may be safely read only by code holding ofproto_mutex or
+ *      'rule->mutex', and safely written only by coding holding ofproto_mutex
+ *      AND 'rule->mutex'.  These are marked OVS_GUARDED.
+ */
 struct rule {
-    struct ofproto *ofproto;     /* The ofproto that contains this rule. */
-    struct list ofproto_node;    /* Owned by ofproto base code. */
-    struct cls_rule cr;          /* In owning ofproto's classifier. */
+    /* Where this rule resides in an OpenFlow switch.
+     *
+     * These are immutable once the rule is constructed, hence 'const'. */
+    struct ofproto *const ofproto; /* The ofproto that contains this rule. */
+    const struct cls_rule cr;      /* In owning ofproto's classifier. */
+    const uint8_t table_id;        /* Index in ofproto's 'tables' array. */
 
-    struct ofoperation *pending; /* Operation now in progress, if nonnull. */
+    /* Protects members marked OVS_GUARDED.
+     * Readers only need to hold this mutex.
+     * Writers must hold both this mutex AND ofproto_mutex. */
+    struct ovs_mutex mutex OVS_ACQ_AFTER(ofproto_mutex);
 
-    ovs_be64 flow_cookie;        /* Controller-issued identifier. */
+    /* Number of references.
+     * The classifier owns one reference.
+     * Any thread trying to keep a rule from being freed should hold its own
+     * reference. */
+    atomic_uint ref_count;
 
-    long long int created;       /* Creation time. */
-    long long int modified;      /* Time of last modification. */
-    uint16_t idle_timeout;       /* In seconds from time of last use. */
-    uint16_t hard_timeout;       /* In seconds from last modification. */
-    uint8_t table_id;            /* Index in ofproto's 'tables' array. */
+    /* Operation now in progress, if nonnull. */
+    struct ofoperation *pending OVS_GUARDED_BY(ofproto_mutex);
+
+    /* A "flow cookie" is the OpenFlow name for a 64-bit value associated with
+     * a flow.. */
+    ovs_be64 flow_cookie OVS_GUARDED;
+    struct hindex_node cookie_node OVS_GUARDED_BY(ofproto_mutex);
+
+    /* Times. */
+    long long int created OVS_GUARDED; /* Creation time. */
+    long long int modified OVS_GUARDED; /* Time of last modification. */
+    long long int used OVS_GUARDED; /* Last use; time created if never used. */
     bool send_flow_removed;      /* Send a flow removed message? */
 
-    union ofp_action *actions;   /* OpenFlow actions. */
-    int n_actions;               /* Number of elements in actions[]. */
+    /* Timeouts. */
+    uint16_t hard_timeout OVS_GUARDED; /* In seconds from ->modified. */
+    uint16_t idle_timeout OVS_GUARDED; /* In seconds from ->used. */
+
+    /* Eviction groups (see comment on struct eviction_group for explanation) .
+     *
+     * 'eviction_group' is this rule's eviction group, or NULL if it is not in
+     * any eviction group.  When 'eviction_group' is nonnull, 'evg_node' is in
+     * the ->eviction_group->rules hmap. */
+    struct eviction_group *eviction_group OVS_GUARDED_BY(ofproto_mutex);
+    struct heap_node evg_node OVS_GUARDED_BY(ofproto_mutex);
+
+    /* OpenFlow actions.  See struct rule_actions for more thread-safety
+     * notes. */
+    struct rule_actions *actions OVS_GUARDED;
+
+    /* In owning meter's 'rules' list.  An empty list if there is no meter. */
+    struct list meter_list_node OVS_GUARDED_BY(ofproto_mutex);
+
+    /* Flow monitors (e.g. for NXST_FLOW_MONITOR, related to struct ofmonitor).
+     *
+     * 'add_seqno' is the sequence number when this rule was created.
+     * 'modify_seqno' is the sequence number when this rule was last modified.
+     * See 'monitor_seqno' in connmgr.c for more information. */
+    enum nx_flow_monitor_flags monitor_flags OVS_GUARDED_BY(ofproto_mutex);
+    uint64_t add_seqno OVS_GUARDED_BY(ofproto_mutex);
+    uint64_t modify_seqno OVS_GUARDED_BY(ofproto_mutex);
+
+    /* Optimisation for flow expiry.  In ofproto's 'expirable' list if this
+     * rule is expirable, otherwise empty. */
+    struct list expirable OVS_GUARDED_BY(ofproto_mutex);
 };
+
+void ofproto_rule_ref(struct rule *);
+void ofproto_rule_unref(struct rule *);
+
+struct rule_actions *rule_get_actions(const struct rule *rule)
+    OVS_EXCLUDED(rule->mutex);
+struct rule_actions *rule_get_actions__(const struct rule *rule)
+    OVS_REQUIRES(rule->mutex);
+
+/* A set of actions within a "struct rule".
+ *
+ *
+ * Thread-safety
+ * =============
+ *
+ * A struct rule_actions 'actions' may be accessed without a risk of being
+ * freed by code that holds a read-lock or write-lock on 'rule->mutex' (where
+ * 'rule' is the rule for which 'rule->actions == actions') or that owns a
+ * reference to 'actions->ref_count' (or both). */
+struct rule_actions {
+    atomic_uint ref_count;
+
+    /* These members are immutable: they do not change during the struct's
+     * lifetime.  */
+    struct ofpact *ofpacts;     /* Sequence of "struct ofpacts". */
+    unsigned int ofpacts_len;   /* Size of 'ofpacts', in bytes. */
+    uint32_t meter_id;          /* Non-zero OF meter_id, or zero. */
+};
+
+struct rule_actions *rule_actions_create(const struct ofpact *, size_t);
+void rule_actions_ref(struct rule_actions *);
+void rule_actions_unref(struct rule_actions *);
+
+/* A set of rules to which an OpenFlow operation applies. */
+struct rule_collection {
+    struct rule **rules;        /* The rules. */
+    size_t n;                   /* Number of rules collected. */
+
+    size_t capacity;            /* Number of rules that will fit in 'rules'. */
+    struct rule *stub[64];      /* Preallocated rules to avoid malloc(). */
+};
+
+void rule_collection_init(struct rule_collection *);
+void rule_collection_add(struct rule_collection *, struct rule *);
+void rule_collection_ref(struct rule_collection *) OVS_REQUIRES(ofproto_mutex);
+void rule_collection_unref(struct rule_collection *);
+void rule_collection_destroy(struct rule_collection *);
+
+/* Threshold at which to begin flow table eviction. Only affects the
+ * ofproto-dpif implementation */
+extern unsigned flow_eviction_threshold;
+
+/* Number of upcall handler threads. Only affects the ofproto-dpif
+ * implementation. */
+extern unsigned n_handler_threads;
+
+/* Determines which model to use for handling misses in the ofproto-dpif
+ * implementation */
+extern enum ofproto_flow_miss_model flow_miss_model;
 
 static inline struct rule *
 rule_from_cls_rule(const struct cls_rule *cls_rule)
@@ -137,11 +449,18 @@ rule_from_cls_rule(const struct cls_rule *cls_rule)
     return cls_rule ? CONTAINER_OF(cls_rule, struct rule, cr) : NULL;
 }
 
-void ofproto_rule_expire(struct rule *, uint8_t reason);
-void ofproto_rule_destroy(struct rule *);
+void ofproto_rule_expire(struct rule *rule, uint8_t reason)
+    OVS_REQUIRES(ofproto_mutex);
+void ofproto_rule_delete(struct ofproto *, struct rule *)
+    OVS_EXCLUDED(ofproto_mutex);
+void ofproto_rule_reduce_timeouts(struct rule *rule, uint16_t idle_timeout,
+                                  uint16_t hard_timeout)
+    OVS_EXCLUDED(ofproto_mutex);
 
-void ofoperation_complete(struct ofoperation *, int status);
-struct rule *ofoperation_get_victim(struct ofoperation *);
+void ofoperation_complete(struct ofoperation *, enum ofperr);
+
+bool ofoperation_has_out_port(const struct ofoperation *, ofp_port_t out_port)
+    OVS_REQUIRES(ofproto_mutex);
 
 /* ofproto class structure, to be defined by each ofproto implementation.
  *
@@ -179,6 +498,10 @@ struct rule *ofoperation_get_victim(struct ofoperation *);
  *   ofproto  ->alloc       ->construct       ->destruct       ->dealloc
  *   ofport   ->port_alloc  ->port_construct  ->port_destruct  ->port_dealloc
  *   rule     ->rule_alloc  ->rule_construct  ->rule_destruct  ->rule_dealloc
+ *
+ * "ofproto" and "ofport" have this exact life cycle.  The "rule" data
+ * structure also follow this life cycle with some additional elaborations
+ * described under "Rule Life Cycle" below.
  *
  * Any instance of a given data structure goes through the following life
  * cycle:
@@ -235,7 +558,7 @@ struct rule *ofoperation_get_victim(struct ofoperation *);
  *
  * Most of these functions return 0 if they are successful or a positive error
  * code on failure.  Depending on the function, valid error codes are either
- * errno values or OpenFlow error codes constructed with ofp_mkerr().
+ * errno values or OFPERR_* OpenFlow error codes.
  *
  * Most of these functions are expected to execute synchronously, that is, to
  * block as necessary to obtain a result.  Thus, these functions may return
@@ -246,6 +569,16 @@ struct ofproto_class {
 /* ## ----------------- ## */
 /* ## Factory Functions ## */
 /* ## ----------------- ## */
+
+    /* Initializes provider.  The caller may pass in 'iface_hints',
+     * which contains an shash of "struct iface_hint" elements indexed
+     * by the interface's name.  The provider may use these hints to
+     * describe the startup configuration in order to reinitialize its
+     * state.  The caller owns the provided data, so a provider must
+     * make copies of anything required.  An ofproto provider must
+     * remove any existing state that is not described by the hint, and
+     * may choose to remove it all. */
+    void (*init)(const struct shash *iface_hints);
 
     /* Enumerates the types of all support ofproto types into 'types'.  The
      * caller has already initialized 'types' and other ofproto classes might
@@ -273,6 +606,48 @@ struct ofproto_class {
      */
     int (*del)(const char *type, const char *name);
 
+    /* Returns the type to pass to netdev_open() when a datapath of type
+     * 'datapath_type' has a port of type 'port_type', for a few special
+     * cases when a netdev type differs from a port type.  For example,
+     * when using the userspace datapath, a port of type "internal"
+     * needs to be opened as "tap".
+     *
+     * Returns either 'type' itself or a string literal, which must not
+     * be freed. */
+    const char *(*port_open_type)(const char *datapath_type,
+                                  const char *port_type);
+
+/* ## ------------------------ ## */
+/* ## Top-Level type Functions ## */
+/* ## ------------------------ ## */
+
+    /* Performs any periodic activity required on ofprotos of type
+     * 'type'.
+     *
+     * An ofproto provider may implement it or not, depending on whether
+     * it needs type-level maintenance.
+     *
+     * Returns 0 if successful, otherwise a positive errno value. */
+    int (*type_run)(const char *type);
+
+    /* Performs periodic activity required on ofprotos of type 'type'
+     * that needs to be done with the least possible latency.
+     *
+     * This is run multiple times per main loop.  An ofproto provider may
+     * implement it or not, according to whether it provides a performance
+     * boost for that ofproto implementation.
+     *
+     * Returns 0 if successful, otherwise a positive errno value. */
+    int (*type_run_fast)(const char *type);
+
+    /* Causes the poll loop to wake up when a type 'type''s 'run'
+     * function needs to be called, e.g. by calling the timer or fd
+     * waiting functions in poll-loop.h.
+     *
+     * An ofproto provider may implement it or not, depending on whether
+     * it needs type-level maintenance. */
+    void (*type_wait)(const char *type);
+
 /* ## --------------------------- ## */
 /* ## Top-Level ofproto Functions ## */
 /* ## --------------------------- ## */
@@ -289,14 +664,16 @@ struct ofproto_class {
      *
      * When ->construct() is called, the client does not yet know how many flow
      * tables the datapath supports, so ofproto->n_tables will be 0 and
-     * ofproto->tables will be NULL.  ->construct() should store the number of
-     * flow tables supported by the datapath (between 1 and 255, inclusive)
-     * into '*n_tables'.  After a successful return, the client will initialize
-     * the base 'n_tables' member to '*n_tables' and allocate and initialize
-     * the base 'tables' member as the specified number of empty flow tables.
-     * Each flow table will be initially empty, so ->construct() should delete
-     * flows from the underlying datapath, if necessary, rather than populating
-     * the tables.
+     * ofproto->tables will be NULL.  ->construct() should call
+     * ofproto_init_tables() to allocate and initialize ofproto->n_tables and
+     * ofproto->tables.  Each flow table will be initially empty, so
+     * ->construct() should delete flows from the underlying datapath, if
+     * necessary, rather than populating the tables.
+     *
+     * If the ofproto knows the maximum port number that the datapath can have,
+     * then it can call ofproto_init_max_ports().  If it does so, then the
+     * client will ensure that the actions it allows to be used through
+     * OpenFlow do not refer to ports above that maximum number.
      *
      * Only one ofproto instance needs to be supported for any given datapath.
      * If a datapath is already open as part of one "ofproto", then another
@@ -314,12 +691,20 @@ struct ofproto_class {
      * must complete all of them by calling ofoperation_complete().
      *
      * ->destruct() must also destroy all remaining rules in the ofproto's
-     * tables, by passing each remaining rule to ofproto_rule_destroy().  The
-     * client will destroy the flow tables themselves after ->destruct()
+     * tables, by passing each remaining rule to ofproto_rule_delete(), and
+     * then complete each of those deletions in turn by calling
+     * ofoperation_complete().
+     *
+     * (Thus, there is a multi-step process for any rule currently being
+     * inserted or modified at the beginning of destruction: first
+     * ofoperation_complete() that operation, then ofproto_rule_delete() the
+     * rule, then ofoperation_complete() the deletion operation.)
+     *
+     * The client will destroy the flow tables themselves after ->destruct()
      * returns.
      */
     struct ofproto *(*alloc)(void);
-    int (*construct)(struct ofproto *ofproto, int *n_tables);
+    int (*construct)(struct ofproto *ofproto);
     void (*destruct)(struct ofproto *ofproto);
     void (*dealloc)(struct ofproto *ofproto);
 
@@ -331,6 +716,9 @@ struct ofproto_class {
      *
      *   - Call ofproto_rule_expire() for each OpenFlow flow that has reached
      *     its hard_timeout or idle_timeout, to expire the flow.
+     *
+     *     (But rules that are part of a pending operation, e.g. rules for
+     *     which ->pending is true, may not expire.)
      *
      * Returns 0 if successful, otherwise a positive errno value. */
     int (*run)(struct ofproto *ofproto);
@@ -347,6 +735,13 @@ struct ofproto_class {
      * be called, e.g. by calling the timer or fd waiting functions in
      * poll-loop.h.  */
     void (*wait)(struct ofproto *ofproto);
+
+    /* Adds some memory usage statistics for the implementation of 'ofproto'
+     * into 'usage', for use with memory_report().
+     *
+     * This function is optional. */
+    void (*get_memory_usage)(const struct ofproto *ofproto,
+                             struct simap *usage);
 
     /* Every "struct rule" in 'ofproto' is about to be deleted, one by one.
      * This function may prepare for that, for example by clearing state in
@@ -365,14 +760,10 @@ struct ofproto_class {
      * otherwise.
      *
      * The implementation should store in '*actions' a bitmap of the supported
-     * OpenFlow actions: the bit with value (1 << n) should be set to 1 if the
-     * implementation supports the action with value 'n', and to 0 otherwise.
-     * For example, if the implementation supports the OFPAT_OUTPUT and
-     * OFPAT_ENQUEUE actions, but no others, it would set '*actions' to (1 <<
-     * OFPAT_OUTPUT) | (1 << OFPAT_ENQUEUE).  Vendor actions are not included
-     * in '*actions'. */
+     * OpenFlow actions.  Vendor actions are not included in '*actions'. */
     void (*get_features)(struct ofproto *ofproto,
-                         bool *arp_match_ip, uint32_t *actions);
+                         bool *arp_match_ip,
+                         enum ofputil_action_bitmap *actions);
 
     /* Helper for the OpenFlow OFPST_TABLE statistics request.
      *
@@ -383,7 +774,17 @@ struct ofproto_class {
      *
      *   - 'name' to "table#" where # is the table ID.
      *
-     *   - 'wildcards' to OFPFW_ALL.
+     *   - 'match' and 'wildcards' to OFPXMT12_MASK.
+     *
+     *   - 'write_actions' and 'apply_actions' to OFPAT12_OUTPUT.
+     *
+     *   - 'write_setfields' and 'apply_setfields' to OFPXMT12_MASK.
+     *
+     *   - 'metadata_match' and 'metadata_write' to UINT64_MAX.
+     *
+     *   - 'instructions' to OFPIT11_ALL.
+     *
+     *   - 'config' to OFPTC11_TABLE_MISS_MASK.
      *
      *   - 'max_entries' to 1,000,000.
      *
@@ -399,6 +800,21 @@ struct ofproto_class {
      *   - 'wildcards' to the set of wildcards actually supported by the table
      *     (if it doesn't support all OpenFlow wildcards).
      *
+     *   - 'instructions' to set the instructions actually supported by
+     *     the table.
+     *
+     *   - 'write_actions' to set the write actions actually supported by
+     *     the table (if it doesn't support all OpenFlow actions).
+     *
+     *   - 'apply_actions' to set the apply actions actually supported by
+     *     the table (if it doesn't support all OpenFlow actions).
+     *
+     *   - 'write_setfields' to set the write setfields actually supported by
+     *     the table.
+     *
+     *   - 'apply_setfields' to set the apply setfields actually supported by
+     *     the table.
+     *
      *   - 'max_entries' to the maximum number of flows actually supported by
      *     the hardware.
      *
@@ -408,10 +824,10 @@ struct ofproto_class {
      *   - 'matched_count' to the number of packets looked up in this flow
      *     table so far that matched one of the flow entries.
      *
-     * Keep in mind that all of the members of struct ofp_table_stats are in
-     * network byte order.
+     * All of the members of struct ofp12_table_stats are in network byte
+     * order.
      */
-    void (*get_tables)(struct ofproto *ofproto, struct ofp_table_stats *ots);
+    void (*get_tables)(struct ofproto *ofproto, struct ofp12_table_stats *ots);
 
 /* ## ---------------- ## */
 /* ## ofport Functions ## */
@@ -420,6 +836,8 @@ struct ofproto_class {
     /* Life-cycle functions for a "struct ofport" (see "Life Cycle" above).
      *
      * ->port_construct() should not modify any base members of the ofport.
+     * An ofproto implementation should use the 'ofp_port' member of
+     * "struct ofport" as the OpenFlow port number.
      *
      * ofports are managed by the base ofproto code.  The ofproto
      * implementation should only create and destroy them in response to calls
@@ -458,15 +876,16 @@ struct ofproto_class {
      * function may use a null pointer. */
     void (*port_modified)(struct ofport *ofport);
 
-    /* Called after an OpenFlow OFPT_PORT_MOD request changes a port's
-     * configuration.  'ofport->opp.config' contains the new configuration.
-     * 'old_config' contains the previous configuration.
+    /* Called after an OpenFlow request changes a port's configuration.
+     * 'ofport->pp.config' contains the new configuration.  'old_config'
+     * contains the previous configuration.
      *
-     * The caller implements OFPPC_PORT_DOWN using netdev functions to turn
-     * NETDEV_UP on and off, so this function doesn't have to do anything for
-     * that bit (and it won't be called if that is the only bit that
+     * The caller implements OFPUTIL_PC_PORT_DOWN using netdev functions to
+     * turn NETDEV_UP on and off, so this function doesn't have to do anything
+     * for that bit (and it won't be called if that is the only bit that
      * changes). */
-    void (*port_reconfigured)(struct ofport *ofport, ovs_be32 old_config);
+    void (*port_reconfigured)(struct ofport *ofport,
+                              enum ofputil_port_config old_config);
 
     /* Looks up a port named 'devname' in 'ofproto'.  On success, initializes
      * '*port' appropriately.
@@ -477,14 +896,14 @@ struct ofproto_class {
                               const char *devname, struct ofproto_port *port);
 
     /* Attempts to add 'netdev' as a port on 'ofproto'.  Returns 0 if
-     * successful, otherwise a positive errno value.  If successful, sets
-     * '*ofp_portp' to the new port's port number.
+     * successful, otherwise a positive errno value.  The caller should
+     * inform the implementation of the OpenFlow port through the
+     * ->port_construct() method.
      *
      * It doesn't matter whether the new port will be returned by a later call
      * to ->port_poll(); the implementation may do whatever is more
      * convenient. */
-    int (*port_add)(struct ofproto *ofproto, struct netdev *netdev,
-                    uint16_t *ofp_portp);
+    int (*port_add)(struct ofproto *ofproto, struct netdev *netdev);
 
     /* Deletes port number 'ofp_port' from the datapath for 'ofproto'.  Returns
      * 0 if successful, otherwise a positive errno value.
@@ -492,7 +911,7 @@ struct ofproto_class {
      * It doesn't matter whether the new port will be returned by a later call
      * to ->port_poll(); the implementation may do whatever is more
      * convenient. */
-    int (*port_del)(struct ofproto *ofproto, uint16_t ofp_port);
+    int (*port_del)(struct ofproto *ofproto, ofp_port_t ofp_port);
 
     /* Get port stats */
     int (*port_get_stats)(const struct ofport *port,
@@ -502,11 +921,9 @@ struct ofproto_class {
      *
      * The client might not be entirely in control of the ports within an
      * ofproto.  Some hardware implementations, for example, might have a fixed
-     * set of ports in a datapath, and the Linux datapath allows the system
-     * administrator to externally add and remove ports with ovs-dpctl.  For
-     * this reason, the client needs a way to iterate through all the ports
-     * that are actually in a datapath.  These functions provide that
-     * functionality.
+     * set of ports in a datapath.  For this reason, the client needs a way to
+     * iterate through all the ports that are actually in a datapath.  These
+     * functions provide that functionality.
      *
      * The 'state' pointer provides the implementation a place to
      * keep track of its position.  Its format is opaque to the caller.
@@ -620,50 +1037,80 @@ struct ofproto_class {
 /* ## OpenFlow Rule Functions ## */
 /* ## ----------------------- ## */
 
-
-
-    /* Chooses an appropriate table for 'cls_rule' within 'ofproto'.  On
+    /* Chooses an appropriate table for 'match' within 'ofproto'.  On
      * success, stores the table ID into '*table_idp' and returns 0.  On
-     * failure, returns an OpenFlow error code (as returned by ofp_mkerr()).
+     * failure, returns an OpenFlow error code.
      *
-     * The choice of table should be a function of 'cls_rule' and 'ofproto''s
+     * The choice of table should be a function of 'match' and 'ofproto''s
      * datapath capabilities.  It should not depend on the flows already in
      * 'ofproto''s flow tables.  Failure implies that an OpenFlow rule with
-     * 'cls_rule' as its matching condition can never be inserted into
-     * 'ofproto', even starting from an empty flow table.
+     * 'match' as its matching condition can never be inserted into 'ofproto',
+     * even starting from an empty flow table.
      *
      * If multiple tables are candidates for inserting the flow, the function
      * should choose one arbitrarily (but deterministically).
      *
      * If this function is NULL then table 0 is always chosen. */
-    int (*rule_choose_table)(const struct ofproto *ofproto,
-                             const struct cls_rule *cls_rule,
-                             uint8_t *table_idp);
+    enum ofperr (*rule_choose_table)(const struct ofproto *ofproto,
+                                     const struct match *match,
+                                     uint8_t *table_idp);
 
-    /* Life-cycle functions for a "struct rule" (see "Life Cycle" above).
+    /* Life-cycle functions for a "struct rule".
+     *
+     *
+     * Rule Life Cycle
+     * ===============
+     *
+     * The life cycle of a struct rule is an elaboration of the basic life
+     * cycle described above under "Life Cycle".
+     *
+     * After a rule is successfully constructed, it is then inserted.  If
+     * insertion completes successfully, then before it is later destructed, it
+     * is deleted.
+     *
+     * You can think of a rule as having the following extra steps inserted
+     * between "Life Cycle" steps 4 and 5:
+     *
+     *   4.1. The client inserts the rule into the flow table, making it
+     *        visible in flow table lookups.
+     *
+     *   4.2. The client calls "rule_insert".  Immediately or eventually, the
+     *        implementation calls ofoperation_complete() to indicate that the
+     *        insertion completed.  If the operation failed, skip to step 5.
+     *
+     *   4.3. The rule is now installed in the flow table.  Eventually it will
+     *        be deleted.
+     *
+     *   4.4. The client removes the rule from the flow table.  It is no longer
+     *        visible in flow table lookups.
+     *
+     *   4.5. The client calls "rule_delete".  Immediately or eventually, the
+     *        implementation calls ofoperation_complete() to indicate that the
+     *        deletion completed.  Deletion is not allowed to fail, so it must
+     *        be successful.
      *
      *
      * Asynchronous Operation Support
      * ==============================
      *
-     * The life-cycle operations on rules can operate asynchronously, meaning
-     * that ->rule_construct() and ->rule_destruct() only need to initiate
-     * their respective operations and do not need to wait for them to complete
-     * before they return.  ->rule_modify_actions() also operates
-     * asynchronously.
+     * The "insert" and "delete" life-cycle operations on rules can operate
+     * asynchronously, meaning that ->rule_insert() and ->rule_delete() only
+     * need to initiate their respective operations and do not need to wait for
+     * them to complete before they return.  ->rule_modify_actions() also
+     * operates asynchronously.
      *
      * An ofproto implementation reports the success or failure of an
      * asynchronous operation on a rule using the rule's 'pending' member,
      * which points to a opaque "struct ofoperation" that represents the
-     * ongoing opreation.  When the operation completes, the ofproto
+     * ongoing operation.  When the operation completes, the ofproto
      * implementation calls ofoperation_complete(), passing the ofoperation and
      * an error indication.
      *
      * Only the following contexts may call ofoperation_complete():
      *
-     *   - The function called to initiate the operation,
-     *     e.g. ->rule_construct() or ->rule_destruct().  This is the best
-     *     choice if the operation completes quickly.
+     *   - The function called to initiate the operation, e.g. ->rule_insert()
+     *     or ->rule_delete().  This is the best choice if the operation
+     *     completes quickly.
      *
      *   - The implementation's ->run() function.
      *
@@ -672,22 +1119,22 @@ struct ofproto_class {
      * The ofproto base code updates the flow table optimistically, assuming
      * that the operation will probably succeed:
      *
-     *   - ofproto adds or replaces the rule in the flow table before calling
-     *     ->rule_construct().
+     *   - ofproto adds the rule in the flow table before calling
+     *     ->rule_insert().
      *
-     *   - ofproto updates the rule's actions before calling
-     *     ->rule_modify_actions().
+     *   - ofproto updates the rule's actions and other properties before
+     *     calling ->rule_modify_actions().
      *
-     *   - ofproto removes the rule before calling ->rule_destruct().
+     *   - ofproto removes the rule before calling ->rule_delete().
      *
      * With one exception, when an asynchronous operation completes with an
      * error, ofoperation_complete() backs out the already applied changes:
      *
-     *   - If adding or replacing a rule in the flow table fails, ofproto
-     *     removes the new rule or restores the original rule.
+     *   - If adding a rule in the flow table fails, ofproto removes the new
+     *     rule.
      *
-     *   - If modifying a rule's actions fails, ofproto restores the original
-     *     actions.
+     *   - If modifying a rule fails, ofproto restores the original actions
+     *     (and other properties).
      *
      *   - Removing a rule is not allowed to fail.  It must always succeed.
      *
@@ -703,79 +1150,78 @@ struct ofproto_class {
      * Construction
      * ============
      *
-     * When ->rule_construct() is called, the caller has already inserted
-     * 'rule' into 'rule->ofproto''s flow table numbered 'rule->table_id'.
-     * There are two cases:
+     * When ->rule_construct() is called, 'rule' is a new rule that is not yet
+     * inserted into a flow table.  ->rule_construct() should initialize enough
+     * of the rule's derived state for 'rule' to be suitable for inserting into
+     * a flow table.  ->rule_construct() should not modify any base members of
+     * struct rule.
      *
-     *   - 'rule' is a new rule in its flow table.  In this case,
-     *     ofoperation_get_victim(rule) returns NULL.
+     * If ->rule_construct() fails (as indicated by returning a nonzero
+     * OpenFlow error code), the ofproto base code will uninitialize and
+     * deallocate 'rule'.  See "Rule Life Cycle" above for more details.
      *
-     *   - 'rule' is replacing an existing rule in its flow table that had the
-     *     same matching criteria and priority.  In this case,
-     *     ofoperation_get_victim(rule) returns the rule being replaced (the
-     *     "victim" rule).
+     * ->rule_construct() may also:
      *
-     * ->rule_construct() should set the following in motion:
-     *
-     *   - Validate that the matching rule in 'rule->cr' is supported by the
+     *   - Validate that the datapath supports the matching rule in 'rule->cr'
      *     datapath.  For example, if the rule's table does not support
      *     registers, then it is an error if 'rule->cr' does not wildcard all
      *     registers.
      *
-     *   - Validate that 'rule->actions' and 'rule->n_actions' are well-formed
-     *     OpenFlow actions that the datapath can correctly implement.  The
-     *     validate_actions() function (in ofp-util.c) can be useful as a model
-     *     for action validation, but it accepts all of the OpenFlow actions
-     *     that OVS understands.  If your ofproto implementation only
-     *     implements a subset of those, then you should implement your own
-     *     action validation.
+     *   - Validate that the datapath can correctly implement 'rule->ofpacts'.
      *
-     *   - If the rule is valid, update the datapath flow table, adding the new
-     *     rule or replacing the existing one.
+     * Some implementations might need to defer these tasks to ->rule_insert(),
+     * which is also acceptable.
      *
-     *   - If 'rule' is replacing an existing rule, uninitialize any derived
-     *     state for the victim rule, as in step 5 in the "Life Cycle"
-     *     described above.
      *
-     * (On failure, the ofproto code will roll back the insertion from the flow
-     * table, either removing 'rule' or replacing it by the victim rule if
-     * there is one.)
+     * Insertion
+     * =========
      *
-     * ->rule_construct() must act in one of the following ways:
+     * Following successful construction, the ofproto base case inserts 'rule'
+     * into its flow table, then it calls ->rule_insert().  ->rule_insert()
+     * should set in motion adding the new rule to the datapath flow table.  It
+     * must act as follows:
      *
-     *   - If it succeeds, it must call ofoperation_complete() and return 0.
+     *   - If it completes insertion, either by succeeding or failing, it must
+     *     call ofoperation_complete()
      *
-     *   - If it fails, it must act in one of the following ways:
+     *   - If insertion is only partially complete, then it must return without
+     *     calling ofoperation_complete().  Later, when the insertion is
+     *     complete, the ->run() or ->destruct() function must call
+     *     ofoperation_complete() to report success or failure.
      *
-     *       * Call ofoperation_complete() and return 0.
+     * If ->rule_insert() fails, the ofproto base code will remove 'rule' from
+     * the flow table, destruct, uninitialize, and deallocate 'rule'.  See
+     * "Rule Life Cycle" above for more details.
      *
-     *       * Return an OpenFlow error code (as returned by ofp_mkerr()).  (Do
-     *         not call ofoperation_complete() in this case.)
      *
-     *     Either way, ->rule_destruct() will not be called for 'rule', but
-     *     ->rule_dealloc() will be.
+     * Deletion
+     * ========
      *
-     *   - If the operation is only partially complete, then it must return 0.
-     *     Later, when the operation is complete, the ->run() or ->destruct()
-     *     function must call ofoperation_complete() to report success or
-     *     failure.
+     * The ofproto base code removes 'rule' from its flow table before it calls
+     * ->rule_delete().  ->rule_delete() should set in motion removing 'rule'
+     * from the datapath flow table.  It must act as follows:
      *
-     * ->rule_construct() should not modify any base members of struct rule.
+     *   - If it completes deletion, it must call ofoperation_complete().
+     *
+     *   - If deletion is only partially complete, then it must return without
+     *     calling ofoperation_complete().  Later, when the deletion is
+     *     complete, the ->run() or ->destruct() function must call
+     *     ofoperation_complete().
+     *
+     * Rule deletion must not fail.
      *
      *
      * Destruction
      * ===========
      *
-     * When ->rule_destruct() is called, the caller has already removed 'rule'
-     * from 'rule->ofproto''s flow table.  ->rule_destruct() should set in
-     * motion removing 'rule' from the datapath flow table.  If removal
-     * completes synchronously, it should call ofoperation_complete().
-     * Otherwise, the ->run() or ->destruct() function must later call
-     * ofoperation_complete() after the operation completes.
+     * ->rule_destruct() must uninitialize derived state.
      *
      * Rule destruction must not fail. */
     struct rule *(*rule_alloc)(void);
-    int (*rule_construct)(struct rule *rule);
+    enum ofperr (*rule_construct)(struct rule *rule)
+        /* OVS_REQUIRES(ofproto_mutex) */;
+    void (*rule_insert)(struct rule *rule) /* OVS_REQUIRES(ofproto_mutex) */;
+    void (*rule_delete)(struct rule *rule) /* OVS_REQUIRES(ofproto_mutex) */;
     void (*rule_destruct)(struct rule *rule);
     void (*rule_dealloc)(struct rule *rule);
 
@@ -784,7 +1230,8 @@ struct ofproto_class {
      * in '*byte_count'.  UINT64_MAX indicates that the packet count or byte
      * count is unknown. */
     void (*rule_get_stats)(struct rule *rule, uint64_t *packet_count,
-                           uint64_t *byte_count);
+                           uint64_t *byte_count)
+        /* OVS_EXCLUDED(ofproto_mutex) */;
 
     /* Applies the actions in 'rule' to 'packet'.  (This implements sending
      * buffered packets for OpenFlow OFPT_FLOW_MOD commands.)
@@ -794,15 +1241,16 @@ struct ofproto_class {
      *
      * 'flow' reflects the flow information for 'packet'.  All of the
      * information in 'flow' is extracted from 'packet', except for
-     * flow->tun_id and flow->in_port, which are assigned the correct values
-     * for the incoming packet.  The register values are zeroed.
+     * flow->tunnel and flow->in_port, which are assigned the correct values
+     * for the incoming packet.  The register values are zeroed.  'packet''s
+     * header pointers (e.g. packet->l3) are appropriately initialized.
+     * packet->l3 is aligned on a 32-bit boundary.
      *
-     * The statistics for 'packet' should be included in 'rule'.
+     * The implementation should add the statistics for 'packet' into 'rule'.
      *
-     * Returns 0 if successful, otherwise an OpenFlow error code (as returned
-     * by ofp_mkerr()). */
-    int (*rule_execute)(struct rule *rule, const struct flow *flow,
-                        struct ofpbuf *packet);
+     * Returns 0 if successful, otherwise an OpenFlow error code. */
+    enum ofperr (*rule_execute)(struct rule *rule, const struct flow *flow,
+                                struct ofpbuf *packet);
 
     /* When ->rule_modify_actions() is called, the caller has already replaced
      * the OpenFlow actions in 'rule' by a new set.  (The original actions are
@@ -810,10 +1258,14 @@ struct ofproto_class {
      *
      * ->rule_modify_actions() should set the following in motion:
      *
-     *   - Validate that the actions now in 'rule' are well-formed OpenFlow
-     *     actions that the datapath can correctly implement.
+     *   - Validate that the datapath can correctly implement the actions now
+     *     in 'rule'.
      *
      *   - Update the datapath flow table with the new actions.
+     *
+     *   - Only if 'reset_counters' is true, reset any packet or byte counters
+     *     associated with the rule to zero, so that rule_get_stats() will not
+     *     longer count those packets or bytes.
      *
      * If the operation synchronously completes, ->rule_modify_actions() may
      * call ofoperation_complete() before it returns.  Otherwise, ->run()
@@ -825,7 +1277,8 @@ struct ofproto_class {
      *
      * ->rule_modify_actions() should not modify any base members of struct
      * rule. */
-    void (*rule_modify_actions)(struct rule *rule);
+    void (*rule_modify_actions)(struct rule *rule, bool reset_counters)
+        /* OVS_REQUIRES(ofproto_mutex) */;
 
     /* Changes the OpenFlow IP fragment handling policy to 'frag_handling',
      * which takes one of the following values, with the corresponding
@@ -859,34 +1312,33 @@ struct ofproto_class {
                               enum ofp_config_flags frag_handling);
 
     /* Implements the OpenFlow OFPT_PACKET_OUT command.  The datapath should
-     * execute the 'n_actions' in the 'actions' array on 'packet'.
+     * execute the 'ofpacts_len' bytes of "struct ofpacts" in 'ofpacts'.
      *
-     * The caller retains ownership of 'packet', so ->packet_out() should not
-     * modify or free it.
+     * The caller retains ownership of 'packet' and of 'ofpacts', so
+     * ->packet_out() should not modify or free them.
      *
-     * This function must validate that the 'n_actions' elements in 'actions'
-     * are well-formed OpenFlow actions that can be correctly implemented by
-     * the datapath.  If not, then it should return an OpenFlow error code (as
-     * returned by ofp_mkerr()).
+     * This function must validate that it can correctly implement 'ofpacts'.
+     * If not, then it should return an OpenFlow error code.
      *
      * 'flow' reflects the flow information for 'packet'.  All of the
      * information in 'flow' is extracted from 'packet', except for
-     * flow->in_port (see below).  flow->tun_id and its register values are
+     * flow->in_port (see below).  flow->tunnel and its register values are
      * zeroed.
      *
      * flow->in_port comes from the OpenFlow OFPT_PACKET_OUT message.  The
      * implementation should reject invalid flow->in_port values by returning
-     * OFPERR_NXBRC_BAD_IN_PORT.  For consistency, the implementation should
-     * consider valid for flow->in_port any value that could possibly be seen
-     * in a packet that it passes to connmgr_send_packet_in().  Ideally, even
-     * an implementation that never generates packet-ins (e.g. due to hardware
-     * limitations) should still allow flow->in_port values for every possible
-     * physical port and OFPP_LOCAL.  The only virtual ports (those above
-     * OFPP_MAX) that the caller will ever pass in as flow->in_port, other than
-     * OFPP_LOCAL, are OFPP_NONE and OFPP_CONTROLLER.  The implementation
-     * should allow both of these, treating each of them as packets generated
-     * by the controller as opposed to packets originating from some switch
-     * port.
+     * OFPERR_OFPBRC_BAD_PORT.  (If the implementation called
+     * ofproto_init_max_ports(), then the client will reject these ports
+     * itself.)  For consistency, the implementation should consider valid for
+     * flow->in_port any value that could possibly be seen in a packet that it
+     * passes to connmgr_send_packet_in().  Ideally, even an implementation
+     * that never generates packet-ins (e.g. due to hardware limitations)
+     * should still allow flow->in_port values for every possible physical port
+     * and OFPP_LOCAL.  The only virtual ports (those above OFPP_MAX) that the
+     * caller will ever pass in as flow->in_port, other than OFPP_LOCAL, are
+     * OFPP_NONE and OFPP_CONTROLLER.  The implementation should allow both of
+     * these, treating each of them as packets generated by the controller as
+     * opposed to packets originating from some switch port.
      *
      * (Ordinarily the only effect of flow->in_port is on output actions that
      * involve the input port, such as actions that output to OFPP_IN_PORT,
@@ -896,12 +1348,11 @@ struct ofproto_class {
      * 'packet' is not matched against the OpenFlow flow table, so its
      * statistics should not be included in OpenFlow flow statistics.
      *
-     * Returns 0 if successful, otherwise an OpenFlow error code (as returned
-     * by ofp_mkerr()). */
-    int (*packet_out)(struct ofproto *ofproto, struct ofpbuf *packet,
-                      const struct flow *flow,
-                      const union ofp_action *actions,
-                      size_t n_actions);
+     * Returns 0 if successful, otherwise an OpenFlow error code. */
+    enum ofperr (*packet_out)(struct ofproto *ofproto, struct ofpbuf *packet,
+                              const struct flow *flow,
+                              const struct ofpact *ofpacts,
+                              size_t ofpacts_len);
 
 /* ## ------------------------- ## */
 /* ## OFPP_NORMAL configuration ## */
@@ -926,6 +1377,20 @@ struct ofproto_class {
     int (*set_sflow)(struct ofproto *ofproto,
                      const struct ofproto_sflow_options *sflow_options);
 
+    /* Configures IPFIX on 'ofproto' according to the options in
+     * 'bridge_exporter_options' and the 'flow_exporters_options'
+     * array, or turns off IPFIX if 'bridge_exporter_options' and
+     * 'flow_exporters_options' is NULL.
+     *
+     * EOPNOTSUPP as a return value indicates that 'ofproto' does not support
+     * IPFIX, as does a null pointer. */
+    int (*set_ipfix)(
+        struct ofproto *ofproto,
+        const struct ofproto_ipfix_bridge_exporter_options
+            *bridge_exporter_options,
+        const struct ofproto_ipfix_flow_exporter_options
+            *flow_exporters_options, size_t n_flow_exporters_options);
+
     /* Configures connectivity fault management on 'ofport'.
      *
      * If 'cfm_settings' is nonnull, configures CFM according to its members.
@@ -937,23 +1402,30 @@ struct ofproto_class {
      * support CFM, as does a null pointer. */
     int (*set_cfm)(struct ofport *ofport, const struct cfm_settings *s);
 
-    /* Checks the fault status of CFM configured on 'ofport'.  Returns 1 if CFM
-     * is faulted (generally indicating a connectivity problem), 0 if CFM is
-     * not faulted, or -1 if CFM is not enabled on 'port'
+    /* Checks the status of CFM configured on 'ofport'.  Returns true if the
+     * port's CFM status was successfully stored into '*status'.  Returns false
+     * if the port did not have CFM configured, in which case '*status' is
+     * indeterminate.
      *
-     * This function may be a null pointer if the ofproto implementation does
-     * not support CFM. */
-    int (*get_cfm_fault)(const struct ofport *ofport);
+     * The caller must provide and owns '*status', but it does not own and must
+     * not modify or free the array returned in 'status->rmps'. */
+    bool (*get_cfm_status)(const struct ofport *ofport,
+                           struct ofproto_cfm_status *status);
 
-    /* Gets the MPIDs of the remote maintenance points broadcasting to
-     * 'ofport'.  Populates 'rmps' with a provider owned array of MPIDs, and
-     * 'n_rmps' with the number of MPIDs in 'rmps'. Returns a number less than
-     * 0 if CFM is not enabled of 'ofport'.
+    /* Configures BFD on 'ofport'.
      *
-     * This function may be a null pointer if the ofproto implementation does
-     * not support CFM. */
-    int (*get_cfm_remote_mpids)(const struct ofport *ofport,
-                                const uint64_t **rmps, size_t *n_rmps);
+     * If 'cfg' is NULL, or 'cfg' does not contain the key value pair
+     * "enable=true", removes BFD from 'ofport'.  Otherwise, configures BFD
+     * according to 'cfg'.
+     *
+     * EOPNOTSUPP as a return value indicates that this ofproto_class does not
+     * support BFD, as does a null pointer. */
+    int (*set_bfd)(struct ofport *ofport, const struct smap *cfg);
+
+    /* Populates 'smap' with the status of BFD on 'ofport'.  Returns 0 on
+     * success, or a positive errno.  EOPNOTSUPP as a return value indicates
+     * that this ofproto_class does not support BFD, as does a null pointer. */
+    int (*get_bfd_status)(struct ofport *ofport, struct smap *smap);
 
     /* Configures spanning tree protocol (STP) on 'ofproto' using the
      * settings defined in 's'.
@@ -1083,9 +1555,14 @@ struct ofproto_class {
      * will be invoked. */
     void (*forward_bpdu_changed)(struct ofproto *ofproto);
 
-    /* Sets the MAC aging timeout for the OFPP_NORMAL action to 'idle_time',
-     * in seconds. */
-    void (*set_mac_idle_time)(struct ofproto *ofproto, unsigned int idle_time);
+    /* Sets the MAC aging timeout for the OFPP_NORMAL action to 'idle_time', in
+     * seconds, and the maximum number of MAC table entries to
+     * 'max_entries'.
+     *
+     * An implementation that doesn't support configuring these features may
+     * set this function to NULL or implement it as a no-op. */
+    void (*set_mac_table_config)(struct ofproto *ofproto,
+                                 unsigned int idle_time, size_t max_entries);
 
 /* Linux VLAN device support (e.g. "eth0.10" for VLAN 10.)
  *
@@ -1101,10 +1578,52 @@ struct ofproto_class {
      * If 'realdev_ofp_port' is zero, then this function deconfigures 'ofport'
      * as a VLAN splinter port.
      *
-     * This function should be NULL if a an implementation does not support
-     * it. */
+     * This function should be NULL if an implementation does not support it.
+     */
     int (*set_realdev)(struct ofport *ofport,
-                       uint16_t realdev_ofp_port, int vid);
+                       ofp_port_t realdev_ofp_port, int vid);
+
+/* ## ------------------------ ## */
+/* ## OpenFlow meter functions ## */
+/* ## ------------------------ ## */
+
+    /* These functions should be NULL if an implementation does not support
+     * them.  They must be all null or all non-null.. */
+
+    /* Initializes 'features' to describe the metering features supported by
+     * 'ofproto'. */
+    void (*meter_get_features)(const struct ofproto *ofproto,
+                               struct ofputil_meter_features *features);
+
+    /* If '*id' is UINT32_MAX, adds a new meter with the given 'config'.  On
+     * success the function must store a provider meter ID other than
+     * UINT32_MAX in '*id'.  All further references to the meter will be made
+     * with the returned provider meter id rather than the OpenFlow meter id.
+     * The caller does not try to interpret the provider meter id, giving the
+     * implementation the freedom to either use the OpenFlow meter_id value
+     * provided in the meter configuration, or any other value suitable for the
+     * implementation.
+     *
+     * If '*id' is a value other than UINT32_MAX, modifies the existing meter
+     * with that meter provider ID to have configuration 'config'.  On failure,
+     * the existing meter configuration is left intact.  Regardless of success,
+     * any change to '*id' updates the provider meter id used for this
+     * meter. */
+    enum ofperr (*meter_set)(struct ofproto *ofproto, ofproto_meter_id *id,
+                             const struct ofputil_meter_config *config);
+
+    /* Gets the meter and meter band packet and byte counts for maximum of
+     * 'stats->n_bands' bands for the meter with provider ID 'id' within
+     * 'ofproto'.  The caller fills in the other stats values.  The band stats
+     * are copied to memory at 'stats->bands' provided by the caller.  The
+     * number of returned band stats is returned in 'stats->n_bands'. */
+    enum ofperr (*meter_get)(const struct ofproto *ofproto,
+                             ofproto_meter_id id,
+                             struct ofputil_meter_stats *stats);
+
+    /* Deletes a meter, making the 'ofproto_meter_id' invalid for any
+     * further calls. */
+    void (*meter_del)(struct ofproto *, ofproto_meter_id);
 };
 
 extern const struct ofproto_class ofproto_dpif_class;
@@ -1118,15 +1637,21 @@ int ofproto_class_unregister(const struct ofproto_class *);
  *
  * ofproto.c also uses this value internally for additional (similar) purposes.
  *
- * This particular value is a good choice because it is negative (so it won't
- * collide with any errno value or any value returned by ofp_mkerr()) and large
- * (so it won't accidentally collide with EOF or a negative errno value). */
-enum { OFPROTO_POSTPONE = -100000 };
+ * This particular value is a good choice because it is large, so that it does
+ * not collide with any errno value, but not large enough to collide with an
+ * OFPERR_* value. */
+enum { OFPROTO_POSTPONE = 1 << 16 };
+BUILD_ASSERT_DECL(OFPROTO_POSTPONE < OFPERR_OFS);
 
-int ofproto_flow_mod(struct ofproto *, const struct ofputil_flow_mod *);
-void ofproto_add_flow(struct ofproto *, const struct cls_rule *,
-                      const union ofp_action *, size_t n_actions);
-bool ofproto_delete_flow(struct ofproto *, const struct cls_rule *);
+int ofproto_flow_mod(struct ofproto *, struct ofputil_flow_mod *)
+    OVS_EXCLUDED(ofproto_mutex);
+void ofproto_add_flow(struct ofproto *, const struct match *,
+                      unsigned int priority,
+                      const struct ofpact *ofpacts, size_t ofpacts_len)
+    OVS_EXCLUDED(ofproto_mutex);
+bool ofproto_delete_flow(struct ofproto *,
+                         const struct match *, unsigned int priority)
+    OVS_EXCLUDED(ofproto_mutex);
 void ofproto_flush_flows(struct ofproto *);
 
 #endif /* ofproto/ofproto-provider.h */

@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,7 @@
 #include <rte_memzone.h>
 #include <rte_malloc.h>
 #include <rte_string_fns.h>
+#include <rte_ivshmem.h>
 
 #include "init.h"
 #include "vport.h"
@@ -44,6 +45,8 @@
 #include "args.h"
 #include "kni.h"
 #include "veth.h"
+
+#include "flow.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define NO_FLAGS        0
@@ -63,8 +66,12 @@
 /* Ring size for communication with clients */
 #define CLIENT_QUEUE_RINGSIZE     4096
 
-#define BURST_TX_DRAIN_US   (100) /* TX drain every ~100us */
-#define CLIENT_MBUF_CACHE_SIZE 32
+/* Template used to create QEMU's command line files */
+#define QEMU_CMD_FILE_FMT "/tmp/.ivshmem_qemu_cmdline_client_%u"
+
+#define PORT_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
+#define CACHE_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
+#define LOCAL_MBUF_CACHE_SIZE 32
 #define CACHE_NAME_LEN 32
 #define MAX_QUEUE_NAME_SIZE 32
 
@@ -124,11 +131,14 @@ struct vport_client {
 };
 
 /*
- * Local cache used to buffer the mbufs before enqueueing to the client's TX
+ * Local cache used to buffer the mbufs before enqueueing them to client's
+ * or port's TX queues.
  */
-struct mbuf_cache {
-	struct rte_mbuf *cache[CLIENT_MBUF_CACHE_SIZE];
-	unsigned count;
+struct local_mbuf_cache {
+	struct rte_mbuf *cache[LOCAL_MBUF_CACHE_SIZE];
+	                   /* per-port and per-core local mbuf cache */
+	unsigned count;    /* number of mbufs in the local cache */
+	uint64_t next_tsc; /* tsc at which next flush is required */
 };
 
 struct vport_kni {
@@ -140,12 +150,14 @@ struct vport_veth {
 };
 
 /*
- * Per-core per-client buffer to cache mbufs before sending them in bursts.
- * It uses a two dimensions array. One list of all clients per each used lcore.
+ * Per-core local buffers to cache mbufs before sending them in bursts.
+ * They use a two dimensions array. One list of all vports per each used lcore.
  * Since it's based on the idea that all working threads use different cores
  * no concurrency issues should occur.
  */
-static struct mbuf_cache **client_mbuf_cache = NULL;
+static struct local_mbuf_cache **client_mbuf_cache = NULL;
+static struct local_mbuf_cache **port_mbuf_cache = NULL;
+
 #define VPORT_INFO_NAMESZ	(32)
 
 struct vport_info {
@@ -167,10 +179,15 @@ static uint16_t receive_from_client(uint8_t client, struct rte_mbuf **bufs);
 static uint16_t receive_from_port(uint8_t vportid, struct rte_mbuf **bufs);
 static uint16_t receive_from_kni(uint8_t vportid, struct rte_mbuf **bufs);
 static uint16_t receive_from_veth(uint8_t vportid, struct rte_mbuf **bufs);
-
+static void flush_phy_port_cache(uint8_t vportid);
+static void flush_client_port_cache(uint8_t clientid);
 
 /* vports details */
 static struct vport_info *vports;
+
+/* Drain period to flush packets out of the physical ports and caches */
+static uint64_t port_flush_period;
+static uint64_t cache_flush_period;
 
 static void set_vport_name(unsigned i, const char *fmt, ...)
 {
@@ -216,6 +233,26 @@ get_port_tx_queue_name(unsigned id)
 	return get_queue_name(id, MP_PORT_TXQ_NAME);
 }
 
+
+static void
+save_ivshmem_cmdline_to_file(const char *cmdline, unsigned clientid)
+{
+	FILE *file;
+	char path[PATH_MAX];
+
+	rte_snprintf(path, sizeof(path), QEMU_CMD_FILE_FMT, clientid);
+
+	file = fopen(path, "w");
+	if (file == NULL)
+	    rte_exit(EXIT_FAILURE, "Cannot create QEMU cmdline for client %u\n",
+	            clientid);
+
+	RTE_LOG(INFO, APP, "QEMU cmdline for client '%u': %s \n", clientid, cmdline);
+	fprintf(file, "%s\n", cmdline);
+	fclose(file);
+}
+
+
 /*
  * Attempts to create a ring or exit
  */
@@ -230,44 +267,6 @@ queue_create(const char *ring_name, int flags)
 	return ring;
 }
 
-/*
- * Flushes all the per-client mbuf cache for the current lcore.
- */
-inline void
-flush_clients(void)
-{
-	struct vport_client *cl = NULL;
-	struct mbuf_cache *per_core_cache = NULL;
-	struct mbuf_cache *per_cl_cache = NULL;
-	int tx_count;
-	unsigned clientid, i;
-
-	per_core_cache = client_mbuf_cache[rte_lcore_id()];
-
-	for (i = 0; i < num_clients; i++) {
-		per_cl_cache = &per_core_cache[i];
-		if (per_cl_cache->count == 0)
-			continue;
-		clientid = CLIENT1 + i;
-		cl = &vports[clientid].client;
-
-		tx_count = rte_ring_mp_enqueue_burst(cl->rx_q,
-				(void **)per_cl_cache->cache, per_cl_cache->count);
-
-		if (unlikely(tx_count < (int)per_cl_cache->count)) {
-			uint8_t dropped = per_cl_cache->count - tx_count;
-			stats_vswitch_tx_drop_increment(dropped);
-			stats_vport_rx_drop_increment(clientid, dropped);
-			/* TODO: stats_vport_overrun_increment */
-		}
-		else {
-			stats_vport_rx_increment(clientid, tx_count);
-		}
-
-		per_cl_cache->count = 0;
-	}
-
-}
 
 /**
  * Initialise an individual port:
@@ -286,8 +285,6 @@ init_port(uint8_t port_num)
 		}
 	};
 	const uint16_t rx_rings = 1, tx_rings = num_clients;
-	const uint16_t rx_ring_size = RTE_MP_RX_DESC_DEFAULT;
-	const uint16_t tx_ring_size = RTE_MP_TX_DESC_DEFAULT;
 	struct rte_eth_link link = {0};
 	uint16_t q = 0;
 	int retval = 0;
@@ -302,21 +299,23 @@ init_port(uint8_t port_num)
 		return retval;
 
 	for (q = 0; q < rx_rings; q++) {
-		retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
+		retval = rte_eth_rx_queue_setup(port_num, q, RTE_MP_RX_DESC_DEFAULT,
 				SOCKET0, &rx_conf_default, pktmbuf_pool);
 		if (retval < 0) return retval;
 	}
 
-	for ( q = 0; q < tx_rings; q ++ ) {
-		retval = rte_eth_tx_queue_setup(port_num, q, tx_ring_size,
+	for (q = 0; q < tx_rings; q ++) {
+		retval = rte_eth_tx_queue_setup(port_num, q, RTE_MP_TX_DESC_DEFAULT,
 				SOCKET0, &tx_conf_default);
-		if (retval < 0) return retval;
+		if (retval < 0)
+			return retval;
 	}
 
 	rte_eth_promiscuous_enable(port_num);
 
-	retval  = rte_eth_dev_start(port_num);
-	if (retval < 0) return retval;
+	retval = rte_eth_dev_start(port_num);
+	if (retval < 0)
+		return retval;
 
 	printf( "done: ");
 
@@ -324,9 +323,9 @@ init_port(uint8_t port_num)
 	rte_eth_link_get(port_num, &link);
 	if (link.link_status) {
 		printf(" Link Up - speed %u Mbps - %s\n",
-		       (uint32_t) link.link_speed,
-		       (link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
-		       ("full-duplex") : ("half-duplex\n"));
+			   (uint32_t) link.link_speed,
+			   (link.link_duplex == ETH_LINK_FULL_DUPLEX) ?
+		       ("full-duplex") : ("half-duplex"));
 	} else {
 		printf(" Link Down\n");
 	}
@@ -356,31 +355,62 @@ init_shm_rings(void)
 {
 	unsigned i, clientid;
 	char cache_name[CACHE_NAME_LEN];
+	char ivshmem_config_name[IVSHMEM_NAME_LEN];
+	char cmdline[PATH_MAX];
+
 
 	client_mbuf_cache = secure_rte_zmalloc("per-core-client cache",
 			sizeof(*client_mbuf_cache) * rte_lcore_count(), 0);
 
 	for (i = 0; i < rte_lcore_count(); i++) {
-		rte_snprintf(cache_name, sizeof(cache_name), "core%u cache", i);
+		rte_snprintf(cache_name, sizeof(cache_name), "core%u client cache", i);
 		client_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
 				sizeof(**client_mbuf_cache) * num_clients, 0);
 	}
 
+	port_mbuf_cache = secure_rte_zmalloc("per-core-core cache",
+			sizeof(*port_mbuf_cache) * rte_lcore_count(), 0);
+
+	for (i = 0; i < rte_lcore_count(); i++) {
+		rte_snprintf(cache_name, sizeof(cache_name), "core%u port cache", i);
+		port_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
+				sizeof(**port_mbuf_cache) * ports->num_ports, 0);
+	}
+
 	for (i = 0; i < num_clients; i++) {
-	  clientid = CLIENT1 + i;
+		clientid = CLIENT1 + i;
+
+		rte_snprintf(ivshmem_config_name, IVSHMEM_NAME_LEN, "ovs_config_%d", clientid);
+
+		/* Create IVSHMEM config file for this client */
+		if (rte_ivshmem_metadata_create(ivshmem_config_name) < 0)
+			rte_exit(EXIT_FAILURE, "Cannot create ivshmem config '%s'\n",
+					ivshmem_config_name);
+
 		struct vport_client *cl = &vports[clientid].client;
 		RTE_LOG(INFO, APP, "Initialising Client %d\n", clientid);
 		/* Create a "multi producer multi consumer" queue for each client */
 		cl->rx_q = queue_create(get_rx_queue_name(clientid), NO_FLAGS);
-		cl->tx_q = queue_create(get_tx_queue_name(clientid),NO_FLAGS);
-		cl->free_q = queue_create(get_free_queue_name(clientid),NO_FLAGS);
+		cl->tx_q = queue_create(get_tx_queue_name(clientid), NO_FLAGS);
+		cl->free_q = queue_create(get_free_queue_name(clientid), NO_FLAGS);
+
+		/* Adding the rings to be shared with the current client */
+		rte_ivshmem_metadata_add_ring(cl->rx_q, ivshmem_config_name);
+		rte_ivshmem_metadata_add_ring(cl->tx_q, ivshmem_config_name);
+		rte_ivshmem_metadata_add_ring(cl->free_q, ivshmem_config_name);
+
+		/* Generate QEMU's command line */
+		rte_ivshmem_metadata_cmdline_generate(cmdline, sizeof(cmdline),
+				ivshmem_config_name);
+
+		save_ivshmem_cmdline_to_file(cmdline, clientid);
 	}
 
 	for (i = 0; i < ports->num_ports; i++) {
 		struct vport_phy *phy = &vports[PHYPORT0 + i].phy;
 		RTE_LOG(INFO, APP, "Initialising Port %d\n", i);
 		/* Create an RX queue for each ports */
-		phy->tx_q = queue_create(get_port_tx_queue_name(i),RING_F_SC_DEQ);
+		phy->tx_q = queue_create(get_port_tx_queue_name(i), RING_F_SC_DEQ);
 	}
 
 	return 0;
@@ -441,7 +471,7 @@ void vport_init(void)
 
 	/* now initialise the ports we will use */
 	for (i = 0; i < ports->num_ports; i++) {
-		unsigned int vportid = cfg_params[i].port_id;
+		unsigned vportid = cfg_params[i].port_id;
 
 		vports[vportid].type = VPORT_TYPE_PHY;
 		vports[vportid].phy.index = port_cfg.id[i];
@@ -449,8 +479,7 @@ void vport_init(void)
 
 		retval = init_port(port_cfg.id[i]);
 		if (retval != 0)
-			rte_exit(EXIT_FAILURE, "Cannot initialise port %u\n",
-					(unsigned)i);
+			rte_exit(EXIT_FAILURE, "Cannot initialise port %u\n", i);
 	}
 
 	/* initialise the client queues/rings for inter process comms */
@@ -461,6 +490,12 @@ void vport_init(void)
 
 	/* initalise veth queues */
 	init_veth();
+
+	/* initialize flush periods using CPU frequency */
+	port_flush_period = (rte_get_tsc_hz() + US_PER_S - 1) /
+	        US_PER_S * PORT_FLUSH_PERIOD_US;
+	cache_flush_period = (rte_get_tsc_hz() + US_PER_S - 1) /
+	        US_PER_S * CACHE_FLUSH_PERIOD_US;
 }
 
 /*
@@ -472,14 +507,14 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 	int ret, i;
 	struct rte_mbuf *freebufs[PKT_BURST_SIZE];
 	struct vport_client *cl = NULL;
-	struct mbuf_cache *per_cl_cache = NULL;
+	struct local_mbuf_cache *per_cl_cache = NULL;
 
 	per_cl_cache = &client_mbuf_cache[rte_lcore_id()][client - CLIENT1];
 
 	per_cl_cache->cache[per_cl_cache->count++] = buf;
 
-	if (unlikely(per_cl_cache->count == CLIENT_MBUF_CACHE_SIZE - 1))
-		flush_clients();
+	if (unlikely(per_cl_cache->count == LOCAL_MBUF_CACHE_SIZE))
+		flush_client_port_cache(client);
 
 	cl = &vports[client].client;
 	ret = rte_ring_sc_dequeue_burst(cl->free_q, (void *)freebufs, PKT_BURST_SIZE);
@@ -495,14 +530,13 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 static inline int
 send_to_port(uint8_t vportid, struct rte_mbuf *buf)
 {
-	struct vport_phy *phy = &vports[vportid].phy;
-	int tx_count = 0;
+	struct local_mbuf_cache *per_port_cache =
+			&port_mbuf_cache[rte_lcore_id()][vportid - PHYPORT0];
 
-	tx_count = rte_ring_mp_enqueue(phy->tx_q, (void *)buf);
+	per_port_cache->cache[per_port_cache->count++] = buf;
 
-	if (tx_count == -ENOBUFS) {
-		rte_pktmbuf_free(buf);
-	}
+	if (unlikely(per_port_cache->count == LOCAL_MBUF_CACHE_SIZE))
+		flush_phy_port_cache(vportid);
 
 	return 0;
 }
@@ -657,7 +691,7 @@ receive_from_port(uint8_t vportid, struct rte_mbuf **bufs)
 	uint16_t rx_count = 0;
 
 	/* Read a port */
-	rx_count = rte_eth_rx_burst( vports[vportid].phy.index, 0,
+	rx_count = rte_eth_rx_burst(vports[vportid].phy.index, 0,
 			bufs, PKT_BURST_SIZE);
 
 	/* Now process the NIC packets read */
@@ -697,13 +731,13 @@ receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs)
 /*
  * Flush packets scheduled for transmit on ports
  */
-void flush_pkts(unsigned action)
+inline void
+flush_nic_tx_ring(unsigned vportid)
 {
 	unsigned i = 0;
-	struct rte_mbuf *pkts[PKT_BURST_SIZE] =  {0};
-	struct vport_phy *phy = &vports[action].phy;
+	struct rte_mbuf *pkts[PKT_BURST_SIZE];
+	struct vport_phy *phy = &vports[vportid].phy;
 	uint8_t portid = phy->index;
-	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 	uint64_t diff_tsc = 0;
 	static uint64_t prev_tsc[MAX_PHYPORTS] = {0};
 	uint64_t cur_tsc = rte_rdtsc();
@@ -714,12 +748,12 @@ void flush_pkts(unsigned action)
 	num_pkts = rte_ring_count(phy->tx_q);
 
 	/* If queue idles with less than PKT_BURST packets, drain it*/
-	if ((num_pkts < PKT_BURST_SIZE))
-		if(unlikely(diff_tsc < drain_tsc))
+	if (num_pkts < PKT_BURST_SIZE)
+		if(unlikely(diff_tsc < port_flush_period))
 			return;
 
 	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
-	if (unlikely(num_pkts >= PKT_BURST_SIZE))
+	if (unlikely(num_pkts > PKT_BURST_SIZE))
 		num_pkts = PKT_BURST_SIZE;
 
 	if (unlikely(rte_ring_dequeue_bulk(phy->tx_q, (void **)pkts, num_pkts) != 0))
@@ -727,16 +761,138 @@ void flush_pkts(unsigned action)
 
 	const uint16_t sent = rte_eth_tx_burst(portid, 0, pkts, num_pkts);
 
-	prev_tsc[action & PORT_MASK] = cur_tsc;
+	prev_tsc[vportid & PORT_MASK] = cur_tsc;
 
-	if (unlikely(sent < num_pkts))
-	{
+	if (unlikely(sent < num_pkts)) {
 		for (i = sent; i < num_pkts; i++)
 			rte_pktmbuf_free(pkts[i]);
 
-		stats_vport_tx_drop_increment(action, num_pkts - sent);
+		stats_vport_tx_drop_increment(vportid, num_pkts - sent);
 	}
-	stats_vport_tx_increment(action, sent);
+	stats_vport_tx_increment(vportid, sent);
+}
+
+/* 
+ * This function must be called periodically to ensure that no mbufs get
+ * stuck in the port mbuf cache. 
+ *
+ * This must be called by each core that calls send_to_port()
+ *
+ */
+void flush_ports(void) 
+{
+	uint8_t portid = 0;
+	uint8_t lcore_id = rte_lcore_id();
+	struct local_mbuf_cache *per_port_cache = NULL;
+
+	/* iterate over all port caches for this core */
+	for (portid = 0; portid < ports->num_ports; portid++) {
+		per_port_cache = &port_mbuf_cache[lcore_id][portid];
+		/* only flush when we have exceeded our deadline */
+		if (curr_tsc > per_port_cache->next_tsc) {
+				flush_phy_port_cache(portid + PHYPORT0);
+		}
+	}
+	
+	return;
+}
+
+/* 
+ * Flush any mbufs in port's cache to NIC TX pre-queue ring.
+ *
+ * Update 'next_tsc' to indicate when next flush is required
+ */
+static inline void
+flush_phy_port_cache(uint8_t vportid)
+{
+	unsigned i = 0, tx_count = 0;
+	struct local_mbuf_cache *per_port_cache = NULL;
+	uint8_t portid = vportid - PHYPORT0;
+	
+	per_port_cache = &port_mbuf_cache[rte_lcore_id()][portid];
+
+	if (unlikely(per_port_cache->count == 0))
+		return;
+
+	tx_count = rte_ring_mp_enqueue_burst(vports[vportid].phy.tx_q,
+			(void **) per_port_cache->cache, per_port_cache->count);
+
+	if (unlikely(tx_count < per_port_cache->count)) {
+		uint8_t dropped = per_port_cache->count - tx_count;
+		for (i = tx_count; i < per_port_cache->count; i++)
+			rte_pktmbuf_free(per_port_cache->cache[i]);
+		
+		stats_vswitch_tx_drop_increment(dropped);
+		stats_vport_tx_drop_increment(vportid, dropped);
+		/* TODO: stats_vport_overrun_increment */
+	} 
+
+	per_port_cache->count = 0;
+	per_port_cache->next_tsc = curr_tsc + cache_flush_period;
+}
+
+/* 
+ * This function must be called periodically to ensure that no mbufs get
+ * stuck in the client mbuf cache. 
+ *
+ * This must be called by each core that calls send_to_client()
+ *
+ */
+void flush_clients(void) 
+{
+	uint8_t clientid = 0;
+	uint8_t lcore_id = rte_lcore_id();
+	struct local_mbuf_cache *per_client_cache = NULL;
+
+	/* iterate over all client caches for this core */
+	for (clientid = 0; clientid < num_clients; clientid++) {
+		per_client_cache = &client_mbuf_cache[lcore_id][clientid];
+		/* only flush when we have exceeded our deadline */
+		if (curr_tsc > per_client_cache->next_tsc) {
+			flush_client_port_cache(clientid + CLIENT1);
+		}
+	}
+	
+	return;
+}
+
+/* 
+ * Flush any mbufs in 'clientid' client's cache to client ring.
+ *
+ * Update 'next_tsc' to indicate when next flush is required
+ */
+static inline void
+flush_client_port_cache(uint8_t clientid)
+{
+	struct vport_client *cl = NULL;
+	struct local_mbuf_cache *per_cl_cache = NULL;
+	unsigned tx_count = 0, i = 0;
+
+	per_cl_cache = &client_mbuf_cache[rte_lcore_id()][clientid - CLIENT1];
+		
+	if (unlikely(per_cl_cache->count == 0))
+		return;
+		
+	cl = &vports[clientid].client;
+
+	tx_count = rte_ring_mp_enqueue_burst(cl->rx_q,
+				(void **)per_cl_cache->cache, per_cl_cache->count);
+
+	if (unlikely(tx_count < per_cl_cache->count)) {
+		uint8_t dropped = per_cl_cache->count - tx_count;
+		for (i = tx_count; i < per_cl_cache->count; i++)
+			rte_pktmbuf_free(per_cl_cache->cache[i]);
+	
+		stats_vswitch_tx_drop_increment(dropped);
+		stats_vport_rx_drop_increment(clientid, dropped);
+		/* TODO: stats_vport_overrun_increment */
+	}
+
+	stats_vport_rx_increment(clientid, tx_count);
+
+	per_cl_cache->count = 0;
+	per_cl_cache->next_tsc = curr_tsc + cache_flush_period;
+
 }
 
 const char *vport_name(unsigned vportid)

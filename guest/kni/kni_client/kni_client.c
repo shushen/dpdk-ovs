@@ -46,7 +46,7 @@
 
 #define KNI_FIFO_COUNT_MAX   1024
 #define RTE_LOGTYPE_APP      RTE_LOGTYPE_USER1
-#define PKTMBUF_POOL_NAME    "MProc_pktmbuf_pool"
+#define PKTMBUF_POOL_NAME    "MP_MProc_pktmbuf_pool"
 #define BASE_10              10
 #define BASE_16              16
 #define QUEUE_NAME_SIZE      32
@@ -84,7 +84,6 @@ static struct rte_kni kni_list[MAX_KNI_PORTS];
 /* Mask of enabled ports */
 static uint32_t ports_mask = 0;
 static volatile int kni_fd = -1;
-static phys_addr_t host_hugepage_phys = 0;
 
 /* Function Prototypes */
 static int
@@ -95,8 +94,6 @@ static int
 kni_change_mtu(uint8_t port_id, unsigned new_mtu);
 static int
 kni_config_network_interface(uint8_t port_id, uint8_t if_up);
-static uint64_t
-convert_host_phys_to_offset(phys_addr_t host_phys);
 
 static struct rte_kni_ops kni_ops = {
 	.change_mtu = kni_change_mtu,
@@ -201,29 +198,6 @@ kni_memzone_lookup(const char *queue_string, uint8_t port_id)
 
 }
 
-/* Find the offset of the memzone from the start
- * of the hugepage
- */
-uint64_t
-convert_host_phys_to_offset(phys_addr_t host_phys)
-{
-
-	uint64_t offset = 0;
-
-	/* Because we only use one hugepage, we can assume that
-	 * the address of host_phys will be greater than the
-	 * address of the hugepage
-	 */
-	offset = host_phys - host_hugepage_phys;
-	RTE_LOG(INFO, KNI,
-	        "%lx host_phys, %lx host_hugepage_phys\n", host_phys, host_hugepage_phys);
-	RTE_LOG(INFO, KNI, "offset is %lu\n", offset);
-
-	return(offset);
-
-}
-
-
 /* Fill the dev_info struct and call the ioctl so the
  * kni device is created
  */
@@ -232,8 +206,6 @@ create_kni_device(uint8_t port_id)
 {
 	const struct rte_memzone *mz = NULL;
 	struct rte_kni_device_info dev_info;
-	struct rte_mempool *mempool = NULL;
-	char mz_name[QUEUE_NAME_SIZE];
 
 	if (kni_list[port_id].in_use != 0) {
 		RTE_LOG(ERR, KNI, "Port %d has been used\n", port_id);
@@ -243,64 +215,75 @@ create_kni_device(uint8_t port_id)
 	if (kni_fd < 0) {
 		kni_fd = open("/dev/" KNI_DEVICE, O_RDWR);
 		if (kni_fd < 0) {
-			RTE_LOG(ERR, KNI, "Can not open /dev/%s\n",
-							KNI_DEVICE);
+			RTE_LOG(ERR, KNI, "Can not open /dev/%s\n", KNI_DEVICE);
 			return -1;
 		}
 	}
 
+	dev_info.group_id = port_id;
+
 	rte_snprintf(dev_info.name, RTE_KNI_NAMESIZE, "vEth%u", port_id);
 
 	/* We store the guest virtual address in our kni structure and
-	 * write the physical address offset into the dev struct to
-	 * be sent to the driver
+	 * write the physical address (I/O mem address not RAM address)
+	 * into the dev struct to be sent to the driver
 	 */
-	mz = kni_memzone_lookup("kni_port_%u_rx", port_id);
-	kni_list[port_id].rx_q = mz->addr;
-	dev_info.rx_phys = convert_host_phys_to_offset(mz->phys_addr);
 
+	/* TX RING */
 	mz = kni_memzone_lookup("kni_port_%u_tx", port_id);
 	kni_list[port_id].tx_q = mz->addr;
-	dev_info.tx_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.tx_phys = mz->ioremap_addr;
 
+	/* RX RING */
+	mz = kni_memzone_lookup("kni_port_%u_rx", port_id);
+	kni_list[port_id].rx_q = mz->addr;
+	dev_info.rx_phys = mz->ioremap_addr;
+
+	/* ALLOC RING */
 	mz = kni_memzone_lookup("kni_port_%u_alloc", port_id);
 	kni_list[port_id].alloc_q = mz->addr;
-	dev_info.alloc_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.alloc_phys = mz->ioremap_addr;
 
+	/* FREE RING */
 	mz = kni_memzone_lookup("kni_port_%u_free", port_id);
 	kni_list[port_id].free_q = mz->addr;
-	dev_info.free_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.free_phys = mz->ioremap_addr;
 
+	/* Request RING */
 	mz = kni_memzone_lookup("kni_port_%u_req", port_id);
 	kni_list[port_id].req_q = mz->addr;
-	dev_info.req_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.req_phys = mz->ioremap_addr;
 
+	/* Response RING */
 	mz = kni_memzone_lookup("kni_port_%u_resp", port_id);
 	kni_list[port_id].resp_q = mz->addr;
-	dev_info.resp_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.resp_phys = mz->ioremap_addr;
 
+	/* Req/Resp sync mem area */
 	mz = kni_memzone_lookup("kni_port_%u_sync", port_id);
 	kni_list[port_id].sync_addr = mz->addr;
 	dev_info.sync_va = mz->addr;
-	dev_info.sync_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.sync_phys = mz->ioremap_addr;
 
-	mempool = rte_mempool_lookup("MProc_pktmbuf_pool");
-	rte_snprintf(mz_name, sizeof(mz_name), "MP_%s", mempool->name);
-	mz = rte_memzone_lookup(mz_name);
+	mz = rte_memzone_lookup(PKTMBUF_POOL_NAME);
 	if (mz == NULL) {
-		rte_exit(EXIT_FAILURE, "Memzone lookup of %s failed\n", mz_name);
+		rte_exit(EXIT_FAILURE, "Memzone lookup of %s failed\n", PKTMBUF_POOL_NAME);
 	}
 	dev_info.mbuf_va = mz->addr;
-	dev_info.mbuf_phys = convert_host_phys_to_offset(mz->phys_addr);
+	dev_info.mbuf_phys = mz->ioremap_addr;
 
 	kni_list[port_id].mbuf_size = MBUF_SIZE;
 	/* Configure the buffer size which will be checked in kernel module */
 	dev_info.mbuf_size = kni_list[port_id].mbuf_size;
+	dev_info.mempool_size = mz->len;
 
 	memcpy(&kni_list[port_id].ops, &kni_ops, sizeof(struct rte_kni_ops));
-	kni_list[port_id].ops.port_id = port_id;
 
-	ioctl(kni_fd, RTE_KNI_IOCTL_CREATE, &dev_info);
+	if (ioctl(kni_fd, RTE_KNI_IOCTL_CREATE, &dev_info) < 0) {
+		RTE_LOG(ERR, KNI, "ioctl call on /dev/%s failed", KNI_DEVICE);
+		return -1;
+	}
+
 	kni_list[port_id].in_use = 1;
 	return 0;
 }
@@ -315,18 +298,11 @@ main(int argc, char *argv[])
 {
 	int retval = 0;
 	uint8_t port = 0;
-	const struct rte_memseg *layout = NULL;
-
 
 	if ((retval = rte_eal_init(argc, argv)) < 0) {
 		RTE_LOG(INFO, APP, "EAL init failed.\n");
 		return -1;
 	}
-
-	layout = rte_eal_get_physmem_layout();
-	/* We assume only one hugepage */
-	host_hugepage_phys = (layout[0].phys_addr);
-	RTE_LOG(INFO, KNI, "Host hugepage phys is %lx\n", host_hugepage_phys);
 
 	argc -= retval;
 	argv += retval;
@@ -346,8 +322,8 @@ main(int argc, char *argv[])
 		create_kni_device(port);
 		RTE_LOG(INFO, APP, "Finished Process Init.\n");
 		RTE_LOG(INFO, APP, "KNI queues ready.\n");
-		printf("[Press Ctrl-C to quit ...]\n");
 	}
+	printf("[Press Ctrl-C to quit ...]\n");
 
 	for (;;) {
 		for (port = 0; port < MAX_KNI_PORTS; port++) {

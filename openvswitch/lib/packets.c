@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,15 +16,20 @@
 
 #include <config.h>
 #include "packets.h"
-#include <assert.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/ip6.h>
 #include <stdlib.h>
 #include "byte-order.h"
 #include "csum.h"
+#include "crc32c.h"
+#include "flow.h"
+#include "hmap.h"
 #include "dynamic-string.h"
 #include "ofpbuf.h"
+#include "ovs-thread.h"
+#include "unaligned.h"
 
 const struct in6_addr in6addr_exact = IN6ADDR_EXACT_INIT;
 
@@ -42,6 +47,86 @@ dpid_from_string(const char *s, uint64_t *dpidp)
     return *dpidp != 0;
 }
 
+/* Returns true if 'ea' is a reserved address, that a bridge must never
+ * forward, false otherwise.
+ *
+ * If you change this function's behavior, please update corresponding
+ * documentation in vswitch.xml at the same time. */
+bool
+eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN])
+{
+    struct eth_addr_node {
+        struct hmap_node hmap_node;
+        const uint64_t ea64;
+    };
+
+    static struct eth_addr_node nodes[] = {
+        /* STP, IEEE pause frames, and other reserved protocols. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000000ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000001ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000002ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000003ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000004ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000005ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000006ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000007ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000008ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c2000009ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000aULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000bULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000cULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000dULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000eULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x0180c200000fULL },
+
+        /* Extreme protocols. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x00e02b000000ULL }, /* EDP. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x00e02b000004ULL }, /* EAPS. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x00e02b000006ULL }, /* EAPS. */
+
+        /* Cisco protocols. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000c000000ULL }, /* ISL. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccccULL }, /* PAgP, UDLD, CDP,
+                                                            * DTP, VTP. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000ccccccdULL }, /* PVST+. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000ccdcdcdULL }, /* STP Uplink Fast,
+                                                            * FlexLink. */
+
+        /* Cisco CFM. */
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc0ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc1ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc2ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc3ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc4ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc5ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc6ULL },
+        { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc7ULL },
+    };
+
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+    struct eth_addr_node *node;
+    static struct hmap addrs;
+    uint64_t ea64;
+
+    if (ovsthread_once_start(&once)) {
+        hmap_init(&addrs);
+        for (node = nodes; node < &nodes[ARRAY_SIZE(nodes)]; node++) {
+            hmap_insert(&addrs, &node->hmap_node,
+                        hash_2words(node->ea64, node->ea64 >> 32));
+        }
+        ovsthread_once_done(&once);
+    }
+
+    ea64 = eth_addr_to_uint64(ea);
+    HMAP_FOR_EACH_IN_BUCKET (node, hmap_node, hash_2words(ea64, ea64 >> 32),
+                             &addrs) {
+        if (node->ea64 == ea64) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool
 eth_addr_from_string(const char *s, uint8_t ea[ETH_ADDR_LEN])
 {
@@ -54,27 +139,37 @@ eth_addr_from_string(const char *s, uint8_t ea[ETH_ADDR_LEN])
     }
 }
 
-/* Fills 'b' with an 802.2 SNAP packet with Ethernet source address 'eth_src',
- * the Nicira OUI as SNAP organization and 'snap_type' as SNAP type.  The text
- * string in 'tag' is enclosed as the packet payload.
- *
+/* Fills 'b' with a Reverse ARP packet with Ethernet source address 'eth_src'.
  * This function is used by Open vSwitch to compose packets in cases where
- * context is important but content doesn't (or shouldn't) matter.  For this
- * purpose, 'snap_type' should be a random number and 'tag' should be an
- * English phrase that explains the purpose of the packet.  (The English phrase
- * gives hapless admins running Wireshark the opportunity to figure out what's
- * going on.) */
+ * context is important but content doesn't (or shouldn't) matter.
+ *
+ * The returned packet has enough headroom to insert an 802.1Q VLAN header if
+ * desired. */
 void
-compose_benign_packet(struct ofpbuf *b, const char *tag, uint16_t snap_type,
-                      const uint8_t eth_src[ETH_ADDR_LEN])
+compose_rarp(struct ofpbuf *b, const uint8_t eth_src[ETH_ADDR_LEN])
 {
-    size_t tag_size = strlen(tag) + 1;
-    char *payload;
+    struct eth_header *eth;
+    struct arp_eth_header *arp;
 
-    payload = snap_compose(b, eth_addr_broadcast, eth_src, 0x002320, snap_type,
-                           tag_size + ETH_ADDR_LEN);
-    memcpy(payload, tag, tag_size);
-    memcpy(payload + tag_size, eth_src, ETH_ADDR_LEN);
+    ofpbuf_clear(b);
+    ofpbuf_prealloc_tailroom(b, 2 + ETH_HEADER_LEN + VLAN_HEADER_LEN
+                             + ARP_ETH_HEADER_LEN);
+    ofpbuf_reserve(b, 2 + VLAN_HEADER_LEN);
+    eth = ofpbuf_put_uninit(b, sizeof *eth);
+    memcpy(eth->eth_dst, eth_addr_broadcast, ETH_ADDR_LEN);
+    memcpy(eth->eth_src, eth_src, ETH_ADDR_LEN);
+    eth->eth_type = htons(ETH_TYPE_RARP);
+
+    arp = ofpbuf_put_uninit(b, sizeof *arp);
+    arp->ar_hrd = htons(ARP_HRD_ETHERNET);
+    arp->ar_pro = htons(ARP_PRO_IP);
+    arp->ar_hln = sizeof arp->ar_sha;
+    arp->ar_pln = sizeof arp->ar_spa;
+    arp->ar_op = htons(ARP_OP_RARP);
+    memcpy(arp->ar_sha, eth_src, ETH_ADDR_LEN);
+    put_16aligned_be32(&arp->ar_spa, htonl(0));
+    memcpy(arp->ar_tha, eth_src, ETH_ADDR_LEN);
+    put_16aligned_be32(&arp->ar_tpa, htonl(0));
 }
 
 /* Insert VLAN header according to given TCI. Packet passed must be Ethernet
@@ -103,7 +198,8 @@ eth_push_vlan(struct ofpbuf *packet, ovs_be16 tci)
 
 /* Removes outermost VLAN header (if any is present) from 'packet'.
  *
- * 'packet->l2' must initially point to 'packet''s Ethernet header. */
+ * 'packet->l2_5' should initially point to 'packet''s outer-most MPLS header
+ * or may be NULL if there are no MPLS headers. */
 void
 eth_pop_vlan(struct ofpbuf *packet)
 {
@@ -122,15 +218,194 @@ eth_pop_vlan(struct ofpbuf *packet)
     }
 }
 
+/* Return depth of mpls stack.
+ *
+ * 'packet->l2_5' should initially point to 'packet''s outer-most MPLS header
+ * or may be NULL if there are no MPLS headers. */
+uint16_t
+eth_mpls_depth(const struct ofpbuf *packet)
+{
+    struct mpls_hdr *mh = packet->l2_5;
+    uint16_t depth;
+
+    if (!mh) {
+        return 0;
+    }
+
+    depth = 0;
+    while (packet->size >= ((char *)mh - (char *)packet->data) + sizeof *mh) {
+        depth++;
+        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+            break;
+        }
+        mh++;
+    }
+
+    return depth;
+}
+
+/* Set ethertype of the packet. */
+void
+set_ethertype(struct ofpbuf *packet, ovs_be16 eth_type)
+{
+    struct eth_header *eh = packet->data;
+
+    if (eh->eth_type == htons(ETH_TYPE_VLAN)) {
+        ovs_be16 *p;
+        p = ALIGNED_CAST(ovs_be16 *,
+                (char *)(packet->l2_5 ? packet->l2_5 : packet->l3) - 2);
+        *p = eth_type;
+    } else {
+        eh->eth_type = eth_type;
+    }
+}
+
+static bool is_mpls(struct ofpbuf *packet)
+{
+    return packet->l2_5 != NULL;
+}
+
+/* Set time to live (TTL) of an MPLS label stack entry (LSE). */
+void
+set_mpls_lse_ttl(ovs_be32 *lse, uint8_t ttl)
+{
+    *lse &= ~htonl(MPLS_TTL_MASK);
+    *lse |= htonl((ttl << MPLS_TTL_SHIFT) & MPLS_TTL_MASK);
+}
+
+/* Set traffic class (TC) of an MPLS label stack entry (LSE). */
+void
+set_mpls_lse_tc(ovs_be32 *lse, uint8_t tc)
+{
+    *lse &= ~htonl(MPLS_TC_MASK);
+    *lse |= htonl((tc << MPLS_TC_SHIFT) & MPLS_TC_MASK);
+}
+
+/* Set label of an MPLS label stack entry (LSE). */
+void
+set_mpls_lse_label(ovs_be32 *lse, ovs_be32 label)
+{
+    *lse &= ~htonl(MPLS_LABEL_MASK);
+    *lse |= htonl((ntohl(label) << MPLS_LABEL_SHIFT) & MPLS_LABEL_MASK);
+}
+
+/* Set bottom of stack (BoS) bit of an MPLS label stack entry (LSE). */
+void
+set_mpls_lse_bos(ovs_be32 *lse, uint8_t bos)
+{
+    *lse &= ~htonl(MPLS_BOS_MASK);
+    *lse |= htonl((bos << MPLS_BOS_SHIFT) & MPLS_BOS_MASK);
+}
+
+/* Compose an MPLS label stack entry (LSE) from its components:
+ * label, traffic class (TC), time to live (TTL) and
+ * bottom of stack (BoS) bit. */
+ovs_be32
+set_mpls_lse_values(uint8_t ttl, uint8_t tc, uint8_t bos, ovs_be32 label)
+{
+    ovs_be32 lse = htonl(0);
+    set_mpls_lse_ttl(&lse, ttl);
+    set_mpls_lse_tc(&lse, tc);
+    set_mpls_lse_bos(&lse, bos);
+    set_mpls_lse_label(&lse, label);
+    return lse;
+}
+
+/* Push an new MPLS stack entry onto the MPLS stack and adjust 'packet->l2' and
+ * 'packet->l2_5' accordingly.  The new entry will be the outermost entry on
+ * the stack.
+ *
+ * Previous to calling this function, 'packet->l2_5' must be set; if the MPLS
+ * label to be pushed will be the first label in 'packet', then it should be
+ * the same as 'packet->l3'. */
+static void
+push_mpls_lse(struct ofpbuf *packet, struct mpls_hdr *mh)
+{
+    char * header;
+    size_t len;
+    header = ofpbuf_push_uninit(packet, MPLS_HLEN);
+    len = (char *)packet->l2_5 - (char *)packet->l2;
+    memmove(header, packet->l2, len);
+    memcpy(header + len, mh, sizeof *mh);
+    packet->l2 = (char*)packet->l2 - MPLS_HLEN;
+    packet->l2_5 = (char*)packet->l2_5 - MPLS_HLEN;
+}
+
+/* Set MPLS label stack entry to outermost MPLS header.*/
+void
+set_mpls_lse(struct ofpbuf *packet, ovs_be32 mpls_lse)
+{
+    struct mpls_hdr *mh = packet->l2_5;
+
+    /* Packet type should be MPLS to set label stack entry. */
+    if (is_mpls(packet)) {
+        /* Update mpls label stack entry. */
+        mh->mpls_lse = mpls_lse;
+    }
+}
+
+/* Push MPLS label stack entry 'lse' onto 'packet' as the the outermost MPLS
+ * header.  If 'packet' does not already have any MPLS labels, then its
+ * Ethertype is changed to 'ethtype' (which must be an MPLS Ethertype). */
+void
+push_mpls(struct ofpbuf *packet, ovs_be16 ethtype, ovs_be32 lse)
+{
+    struct mpls_hdr mh;
+
+    if (!eth_type_mpls(ethtype)) {
+        return;
+    }
+
+    if (!is_mpls(packet)) {
+        /* Set ethtype and MPLS label stack entry. */
+        set_ethertype(packet, ethtype);
+        packet->l2_5 = packet->l3;
+    }
+
+    /* Push new MPLS shim header onto packet. */
+    mh.mpls_lse = lse;
+    push_mpls_lse(packet, &mh);
+}
+
+/* If 'packet' is an MPLS packet, removes its outermost MPLS label stack entry.
+ * If the label that was removed was the only MPLS label, changes 'packet''s
+ * Ethertype to 'ethtype' (which ordinarily should not be an MPLS
+ * Ethertype). */
+void
+pop_mpls(struct ofpbuf *packet, ovs_be16 ethtype)
+{
+    struct mpls_hdr *mh = NULL;
+
+    if (is_mpls(packet)) {
+        size_t len;
+        mh = packet->l2_5;
+        len = (char*)packet->l2_5 - (char*)packet->l2;
+        set_ethertype(packet, ethtype);
+        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+            packet->l2_5 = NULL;
+        } else {
+            packet->l2_5 = (char*)packet->l2_5 + MPLS_HLEN;
+        }
+        /* Shift the l2 header forward. */
+        memmove((char*)packet->data + MPLS_HLEN, packet->data, len);
+        packet->size -= MPLS_HLEN;
+        packet->data = (char*)packet->data + MPLS_HLEN;
+        packet->l2 = (char*)packet->l2 + MPLS_HLEN;
+    }
+}
+
 /* Converts hex digits in 'hex' to an Ethernet packet in '*packetp'.  The
  * caller must free '*packetp'.  On success, returns NULL.  On failure, returns
- * an error message and stores NULL in '*packetp'. */
+ * an error message and stores NULL in '*packetp'.
+ *
+ * Aligns the L3 header of '*packetp' on a 32-bit boundary. */
 const char *
 eth_from_hex(const char *hex, struct ofpbuf **packetp)
 {
     struct ofpbuf *packet;
 
-    packet = *packetp = ofpbuf_new(strlen(hex) / 2);
+    /* Use 2 bytes of headroom to 32-bit align the L3 header. */
+    packet = *packetp = ofpbuf_new_with_headroom(strlen(hex) / 2, 2);
 
     if (ofpbuf_put_hex(packet, hex, NULL)[0] != '\0') {
         ofpbuf_delete(packet);
@@ -147,25 +422,48 @@ eth_from_hex(const char *hex, struct ofpbuf **packetp)
     return NULL;
 }
 
+void
+eth_format_masked(const uint8_t eth[ETH_ADDR_LEN],
+                  const uint8_t mask[ETH_ADDR_LEN], struct ds *s)
+{
+    ds_put_format(s, ETH_ADDR_FMT, ETH_ADDR_ARGS(eth));
+    if (mask && !eth_mask_is_exact(mask)) {
+        ds_put_format(s, "/"ETH_ADDR_FMT, ETH_ADDR_ARGS(mask));
+    }
+}
+
+void
+eth_addr_bitand(const uint8_t src[ETH_ADDR_LEN],
+                const uint8_t mask[ETH_ADDR_LEN],
+                uint8_t dst[ETH_ADDR_LEN])
+{
+    int i;
+
+    for (i = 0; i < ETH_ADDR_LEN; i++) {
+        dst[i] = src[i] & mask[i];
+    }
+}
+
 /* Given the IP netmask 'netmask', returns the number of bits of the IP address
- * that it specifies, that is, the number of 1-bits in 'netmask'.  'netmask'
- * must be a CIDR netmask (see ip_is_cidr()). */
+ * that it specifies, that is, the number of 1-bits in 'netmask'.
+ *
+ * If 'netmask' is not a CIDR netmask (see ip_is_cidr()), the return value will
+ * still be in the valid range but isn't otherwise meaningful. */
 int
 ip_count_cidr_bits(ovs_be32 netmask)
 {
-    assert(ip_is_cidr(netmask));
     return 32 - ctz(ntohl(netmask));
 }
 
 void
 ip_format_masked(ovs_be32 ip, ovs_be32 mask, struct ds *s)
 {
-    ds_put_format(s, IP_FMT, IP_ARGS(&ip));
+    ds_put_format(s, IP_FMT, IP_ARGS(ip));
     if (mask != htonl(UINT32_MAX)) {
         if (ip_is_cidr(mask)) {
             ds_put_format(s, "/%d", ip_count_cidr_bits(mask));
         } else {
-            ds_put_format(s, "/"IP_FMT, IP_ARGS(&mask));
+            ds_put_format(s, "/"IP_FMT, IP_ARGS(mask));
         }
     }
 }
@@ -251,15 +549,16 @@ ipv6_create_mask(int mask)
 
 /* Given the IPv6 netmask 'netmask', returns the number of bits of the IPv6
  * address that it specifies, that is, the number of 1-bits in 'netmask'.
- * 'netmask' must be a CIDR netmask (see ipv6_is_cidr()). */
+ * 'netmask' must be a CIDR netmask (see ipv6_is_cidr()).
+ *
+ * If 'netmask' is not a CIDR netmask (see ipv6_is_cidr()), the return value
+ * will still be in the valid range but isn't otherwise meaningful. */
 int
 ipv6_count_cidr_bits(const struct in6_addr *netmask)
 {
     int i;
     int count = 0;
     const uint8_t *netmaskp = &netmask->s6_addr[0];
-
-    assert(ipv6_is_cidr(netmask));
 
     for (i=0; i<16; i++) {
         if (netmaskp[i] == 0xff) {
@@ -307,7 +606,8 @@ ipv6_is_cidr(const struct in6_addr *netmask)
  * 'eth_src' and 'eth_type' parameters.  A payload of 'size' bytes is allocated
  * in 'b' and returned.  This payload may be populated with appropriate
  * information by the caller.  Sets 'b''s 'l2' and 'l3' pointers to the
- * Ethernet header and payload respectively.
+ * Ethernet header and payload respectively.  Aligns b->l3 on a 32-bit
+ * boundary.
  *
  * The returned packet has enough headroom to insert an 802.1Q VLAN header if
  * desired. */
@@ -321,8 +621,10 @@ eth_compose(struct ofpbuf *b, const uint8_t eth_dst[ETH_ADDR_LEN],
 
     ofpbuf_clear(b);
 
-    ofpbuf_prealloc_tailroom(b, ETH_HEADER_LEN + VLAN_HEADER_LEN + size);
-    ofpbuf_reserve(b, VLAN_HEADER_LEN);
+    /* The magic 2 here ensures that the L3 header (when it is added later)
+     * will be 32-bit aligned. */
+    ofpbuf_prealloc_tailroom(b, 2 + ETH_HEADER_LEN + VLAN_HEADER_LEN + size);
+    ofpbuf_reserve(b, 2 + VLAN_HEADER_LEN);
     eth = ofpbuf_put_uninit(b, ETH_HEADER_LEN);
     data = ofpbuf_put_uninit(b, size);
 
@@ -336,70 +638,161 @@ eth_compose(struct ofpbuf *b, const uint8_t eth_dst[ETH_ADDR_LEN],
     return data;
 }
 
-/* Populates 'b' with an Ethernet LLC+SNAP packet headed with the given
- * 'eth_dst', 'eth_src', 'snap_org', and 'snap_type'.  A payload of 'size'
- * bytes is allocated in 'b' and returned.  This payload may be populated with
- * appropriate information by the caller.
- *
- * The returned packet has enough headroom to insert an 802.1Q VLAN header if
- * desired. */
-void *
-snap_compose(struct ofpbuf *b, const uint8_t eth_dst[ETH_ADDR_LEN],
-             const uint8_t eth_src[ETH_ADDR_LEN],
-             unsigned int oui, uint16_t snap_type, size_t size)
-{
-    struct eth_header *eth;
-    struct llc_snap_header *llc_snap;
-    void *payload;
-
-    /* Compose basic packet structure.  (We need the payload size to stick into
-     * the 802.2 header.) */
-    ofpbuf_clear(b);
-    ofpbuf_prealloc_tailroom(b, ETH_HEADER_LEN + VLAN_HEADER_LEN
-                             + LLC_SNAP_HEADER_LEN + size);
-    ofpbuf_reserve(b, VLAN_HEADER_LEN);
-    eth = ofpbuf_put_zeros(b, ETH_HEADER_LEN);
-    llc_snap = ofpbuf_put_zeros(b, LLC_SNAP_HEADER_LEN);
-    payload = ofpbuf_put_uninit(b, size);
-
-    /* Compose 802.2 header. */
-    memcpy(eth->eth_dst, eth_dst, ETH_ADDR_LEN);
-    memcpy(eth->eth_src, eth_src, ETH_ADDR_LEN);
-    eth->eth_type = htons(b->size - ETH_HEADER_LEN);
-
-    /* Compose LLC, SNAP headers. */
-    llc_snap->llc.llc_dsap = LLC_DSAP_SNAP;
-    llc_snap->llc.llc_ssap = LLC_SSAP_SNAP;
-    llc_snap->llc.llc_cntl = LLC_CNTL_SNAP;
-    llc_snap->snap.snap_org[0] = oui >> 16;
-    llc_snap->snap.snap_org[1] = oui >> 8;
-    llc_snap->snap.snap_org[2] = oui;
-    llc_snap->snap.snap_type = htons(snap_type);
-
-    return payload;
-}
-
 static void
-packet_set_ipv4_addr(struct ofpbuf *packet, ovs_be32 *addr, ovs_be32 new_addr)
+packet_set_ipv4_addr(struct ofpbuf *packet,
+                     ovs_16aligned_be32 *addr, ovs_be32 new_addr)
 {
     struct ip_header *nh = packet->l3;
+    ovs_be32 old_addr = get_16aligned_be32(addr);
 
     if (nh->ip_proto == IPPROTO_TCP && packet->l7) {
         struct tcp_header *th = packet->l4;
 
-        th->tcp_csum = recalc_csum32(th->tcp_csum, *addr, new_addr);
+        th->tcp_csum = recalc_csum32(th->tcp_csum, old_addr, new_addr);
     } else if (nh->ip_proto == IPPROTO_UDP && packet->l7) {
         struct udp_header *uh = packet->l4;
 
         if (uh->udp_csum) {
-            uh->udp_csum = recalc_csum32(uh->udp_csum, *addr, new_addr);
+            uh->udp_csum = recalc_csum32(uh->udp_csum, old_addr, new_addr);
             if (!uh->udp_csum) {
                 uh->udp_csum = htons(0xffff);
             }
         }
     }
-    nh->ip_csum = recalc_csum32(nh->ip_csum, *addr, new_addr);
-    *addr = new_addr;
+    nh->ip_csum = recalc_csum32(nh->ip_csum, old_addr, new_addr);
+    put_16aligned_be32(addr, new_addr);
+}
+
+/* Returns true, if packet contains at least one routing header where
+ * segements_left > 0.
+ *
+ * This function assumes that L3 and L4 markers are set in the packet. */
+static bool
+packet_rh_present(struct ofpbuf *packet)
+{
+    const struct ovs_16aligned_ip6_hdr *nh;
+    int nexthdr;
+    size_t len;
+    size_t remaining;
+    uint8_t *data = packet->l3;
+
+    remaining = (uint8_t *)packet->l4 - (uint8_t *)packet->l3;
+
+    if (remaining < sizeof *nh) {
+        return false;
+    }
+    nh = ALIGNED_CAST(struct ovs_16aligned_ip6_hdr *, data);
+    data += sizeof *nh;
+    remaining -= sizeof *nh;
+    nexthdr = nh->ip6_nxt;
+
+    while (1) {
+        if ((nexthdr != IPPROTO_HOPOPTS)
+                && (nexthdr != IPPROTO_ROUTING)
+                && (nexthdr != IPPROTO_DSTOPTS)
+                && (nexthdr != IPPROTO_AH)
+                && (nexthdr != IPPROTO_FRAGMENT)) {
+            /* It's either a terminal header (e.g., TCP, UDP) or one we
+             * don't understand.  In either case, we're done with the
+             * packet, so use it to fill in 'nw_proto'. */
+            break;
+        }
+
+        /* We only verify that at least 8 bytes of the next header are
+         * available, but many of these headers are longer.  Ensure that
+         * accesses within the extension header are within those first 8
+         * bytes. All extension headers are required to be at least 8
+         * bytes. */
+        if (remaining < 8) {
+            return false;
+        }
+
+        if (nexthdr == IPPROTO_AH) {
+            /* A standard AH definition isn't available, but the fields
+             * we care about are in the same location as the generic
+             * option header--only the header length is calculated
+             * differently. */
+            const struct ip6_ext *ext_hdr = (struct ip6_ext *)data;
+
+            nexthdr = ext_hdr->ip6e_nxt;
+            len = (ext_hdr->ip6e_len + 2) * 4;
+        } else if (nexthdr == IPPROTO_FRAGMENT) {
+            const struct ovs_16aligned_ip6_frag *frag_hdr
+                = ALIGNED_CAST(struct ovs_16aligned_ip6_frag *, data);
+
+            nexthdr = frag_hdr->ip6f_nxt;
+            len = sizeof *frag_hdr;
+        } else if (nexthdr == IPPROTO_ROUTING) {
+            const struct ip6_rthdr *rh = (struct ip6_rthdr *)data;
+
+            if (rh->ip6r_segleft > 0) {
+                return true;
+            }
+
+            nexthdr = rh->ip6r_nxt;
+            len = (rh->ip6r_len + 1) * 8;
+        } else {
+            const struct ip6_ext *ext_hdr = (struct ip6_ext *)data;
+
+            nexthdr = ext_hdr->ip6e_nxt;
+            len = (ext_hdr->ip6e_len + 1) * 8;
+        }
+
+        if (remaining < len) {
+            return false;
+        }
+        remaining -= len;
+        data += len;
+    }
+
+    return false;
+}
+
+static void
+packet_update_csum128(struct ofpbuf *packet, uint8_t proto,
+                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4])
+{
+    if (proto == IPPROTO_TCP && packet->l7) {
+        struct tcp_header *th = packet->l4;
+
+        th->tcp_csum = recalc_csum128(th->tcp_csum, addr, new_addr);
+    } else if (proto == IPPROTO_UDP && packet->l7) {
+        struct udp_header *uh = packet->l4;
+
+        if (uh->udp_csum) {
+            uh->udp_csum = recalc_csum128(uh->udp_csum, addr, new_addr);
+            if (!uh->udp_csum) {
+                uh->udp_csum = htons(0xffff);
+            }
+        }
+    }
+}
+
+static void
+packet_set_ipv6_addr(struct ofpbuf *packet, uint8_t proto,
+                     ovs_16aligned_be32 *addr, const ovs_be32 new_addr[4],
+                     bool recalculate_csum)
+{
+    if (recalculate_csum) {
+        packet_update_csum128(packet, proto, addr, new_addr);
+    }
+    memcpy(addr, new_addr, sizeof(*addr));
+}
+
+static void
+packet_set_ipv6_flow_label(ovs_16aligned_be32 *flow_label, ovs_be32 flow_key)
+{
+    ovs_be32 old_label = get_16aligned_be32(flow_label);
+    ovs_be32 new_label = (old_label & htonl(~IPV6_LABEL_MASK)) | flow_key;
+    put_16aligned_be32(flow_label, new_label);
+}
+
+static void
+packet_set_ipv6_tc(ovs_16aligned_be32 *flow_label, uint8_t tc)
+{
+    ovs_be32 old_label = get_16aligned_be32(flow_label);
+    ovs_be32 new_label = (old_label & htonl(0xF00FFFFF)) | htonl(tc << 20);
+    put_16aligned_be32(flow_label, new_label);
 }
 
 /* Modifies the IPv4 header fields of 'packet' to be consistent with 'src',
@@ -412,11 +805,11 @@ packet_set_ipv4(struct ofpbuf *packet, ovs_be32 src, ovs_be32 dst,
 {
     struct ip_header *nh = packet->l3;
 
-    if (nh->ip_src != src) {
+    if (get_16aligned_be32(&nh->ip_src) != src) {
         packet_set_ipv4_addr(packet, &nh->ip_src, src);
     }
 
-    if (nh->ip_dst != dst) {
+    if (get_16aligned_be32(&nh->ip_dst) != dst) {
         packet_set_ipv4_addr(packet, &nh->ip_dst, dst);
     }
 
@@ -435,6 +828,33 @@ packet_set_ipv4(struct ofpbuf *packet, ovs_be32 src, ovs_be32 dst,
                                     htons(ttl << 8));
         *field = ttl;
     }
+}
+
+/* Modifies the IPv6 header fields of 'packet' to be consistent with 'src',
+ * 'dst', 'traffic class', and 'next hop'.  Updates 'packet''s L4 checksums as
+ * appropriate. 'packet' must contain a valid IPv6 packet with correctly
+ * populated l[347] markers. */
+void
+packet_set_ipv6(struct ofpbuf *packet, uint8_t proto, const ovs_be32 src[4],
+                const ovs_be32 dst[4], uint8_t key_tc, ovs_be32 key_fl,
+                uint8_t key_hl)
+{
+    struct ovs_16aligned_ip6_hdr *nh = packet->l3;
+
+    if (memcmp(&nh->ip6_src, src, sizeof(ovs_be32[4]))) {
+        packet_set_ipv6_addr(packet, proto, nh->ip6_src.be32, src, true);
+    }
+
+    if (memcmp(&nh->ip6_dst, dst, sizeof(ovs_be32[4]))) {
+        packet_set_ipv6_addr(packet, proto, nh->ip6_dst.be32, dst,
+                             !packet_rh_present(packet));
+    }
+
+    packet_set_ipv6_tc(&nh->ip6_flow, key_tc);
+
+    packet_set_ipv6_flow_label(&nh->ip6_flow, key_fl);
+
+    nh->ip6_hlim = key_hl;
 }
 
 static void
@@ -476,5 +896,79 @@ packet_set_udp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
     } else {
         uh->udp_src = src;
         uh->udp_dst = dst;
+    }
+}
+
+/* Sets the SCTP source and destination port ('src' and 'dst' respectively) of
+ * the SCTP header contained in 'packet'.  'packet' must be a valid SCTP packet
+ * with its l4 marker properly populated. */
+void
+packet_set_sctp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
+{
+    struct sctp_header *sh = packet->l4;
+    ovs_be32 old_csum, old_correct_csum, new_csum;
+    uint16_t tp_len = packet->size - ((uint8_t*)sh - (uint8_t*)packet->data);
+
+    old_csum = sh->sctp_csum;
+    sh->sctp_csum = 0;
+    old_correct_csum = crc32c(packet->l4, tp_len);
+
+    sh->sctp_src = src;
+    sh->sctp_dst = dst;
+
+    new_csum = crc32c(packet->l4, tp_len);
+    sh->sctp_csum = old_csum ^ old_correct_csum ^ new_csum;
+}
+
+/* If 'packet' is a TCP packet, returns the TCP flags.  Otherwise, returns 0.
+ *
+ * 'flow' must be the flow corresponding to 'packet' and 'packet''s header
+ * pointers must be properly initialized (e.g. with flow_extract()). */
+uint8_t
+packet_get_tcp_flags(const struct ofpbuf *packet, const struct flow *flow)
+{
+    if (dl_type_is_ip_any(flow->dl_type) &&
+        flow->nw_proto == IPPROTO_TCP && packet->l7) {
+        const struct tcp_header *tcp = packet->l4;
+        return TCP_FLAGS(tcp->tcp_ctl);
+    } else {
+        return 0;
+    }
+}
+
+/* Appends a string representation of the TCP flags value 'tcp_flags'
+ * (e.g. obtained via packet_get_tcp_flags() or TCP_FLAGS) to 's', in the
+ * format used by tcpdump. */
+void
+packet_format_tcp_flags(struct ds *s, uint8_t tcp_flags)
+{
+    if (!tcp_flags) {
+        ds_put_cstr(s, "none");
+        return;
+    }
+
+    if (tcp_flags & TCP_SYN) {
+        ds_put_char(s, 'S');
+    }
+    if (tcp_flags & TCP_FIN) {
+        ds_put_char(s, 'F');
+    }
+    if (tcp_flags & TCP_PSH) {
+        ds_put_char(s, 'P');
+    }
+    if (tcp_flags & TCP_RST) {
+        ds_put_char(s, 'R');
+    }
+    if (tcp_flags & TCP_URG) {
+        ds_put_char(s, 'U');
+    }
+    if (tcp_flags & TCP_ACK) {
+        ds_put_char(s, '.');
+    }
+    if (tcp_flags & 0x40) {
+        ds_put_cstr(s, "[40]");
+    }
+    if (tcp_flags & 0x80) {
+        ds_put_cstr(s, "[80]");
     }
 }

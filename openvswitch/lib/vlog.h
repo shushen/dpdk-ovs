@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,23 @@
 #ifndef VLOG_H
 #define VLOG_H 1
 
+/* Logging.
+ *
+ *
+ * Thread-safety
+ * =============
+ *
+ * Fully thread safe.
+ */
+
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <time.h>
 #include "compiler.h"
+#include "ovs-thread.h"
+#include "sat-math.h"
+#include "token-bucket.h"
 #include "util.h"
 
 #ifdef  __cplusplus
@@ -49,10 +61,10 @@ const char *vlog_get_level_name(enum vlog_level);
 enum vlog_level vlog_get_level_val(const char *name);
 
 /* Facilities that we can log to. */
-#define VLOG_FACILITIES                                         \
-    VLOG_FACILITY(SYSLOG, "%05N|%c|%p|%m")                      \
-    VLOG_FACILITY(CONSOLE, "%d{%b %d %H:%M:%S}|%05N|%c|%p|%m")  \
-    VLOG_FACILITY(FILE, "%d{%b %d %H:%M:%S}|%05N|%c|%p|%m")
+#define VLOG_FACILITIES                                                 \
+    VLOG_FACILITY(SYSLOG, "ovs|%05N|%c%T|%p|%m")                            \
+    VLOG_FACILITY(CONSOLE, "%D{%Y-%m-%dT%H:%M:%SZ}|%05N|%c%T|%p|%m")    \
+    VLOG_FACILITY(FILE, "%D{%Y-%m-%dT%H:%M:%S.###Z}|%05N|%c%T|%p|%m")
 enum vlog_facility {
 #define VLOG_FACILITY(NAME, PATTERN) VLF_##NAME,
     VLOG_FACILITIES
@@ -69,14 +81,15 @@ struct vlog_module {
     const char *name;             /* User-visible name. */
     int levels[VLF_N_FACILITIES]; /* Minimum log level for each facility. */
     int min_level;                /* Minimum log level for any facility. */
+    bool honor_rate_limits;       /* Set false to ignore rate limits. */
 };
 
 /* Creates and initializes a global instance of a module named MODULE. */
 #if USE_LINKER_SECTIONS
 #define VLOG_DEFINE_MODULE(MODULE)                                      \
         VLOG_DEFINE_MODULE__(MODULE)                                    \
-        extern struct vlog_module *vlog_module_ptr_##MODULE;            \
-        struct vlog_module *vlog_module_ptr_##MODULE                    \
+        extern struct vlog_module *const vlog_module_ptr_##MODULE;      \
+        struct vlog_module *const vlog_module_ptr_##MODULE              \
             __attribute__((section("vlog_modules"))) = &VLM_##MODULE
 #else
 #define VLOG_DEFINE_MODULE(MODULE) extern struct vlog_module VLM_##MODULE
@@ -87,42 +100,34 @@ struct vlog_module *vlog_module_from_name(const char *name);
 
 /* Rate-limiter for log messages. */
 struct vlog_rate_limit {
-    /* Configuration settings. */
-    unsigned int rate;          /* Tokens per second. */
-    unsigned int burst;         /* Max cumulative tokens credit. */
-
-    /* Current status. */
-    unsigned int tokens;        /* Current number of tokens. */
-    time_t last_fill;           /* Last time tokens added. */
+    struct token_bucket token_bucket;
     time_t first_dropped;       /* Time first message was dropped. */
     time_t last_dropped;        /* Time of most recent message drop. */
     unsigned int n_dropped;     /* Number of messages dropped. */
+    struct ovs_mutex mutex;     /* Mutual exclusion for rate limit. */
 };
 
-/* Number of tokens to emit a message.  We add 'rate' tokens per second, which
- * is 60 times the unit used for 'rate', thus 60 tokens are required to emit
- * one message. */
-#define VLOG_MSG_TOKENS 60
+/* Number of tokens to emit a message.  We add 'rate' tokens per millisecond,
+ * thus 60,000 tokens are required to emit one message per minute. */
+#define VLOG_MSG_TOKENS (60 * 1000)
 
 /* Initializer for a struct vlog_rate_limit, to set up a maximum rate of RATE
  * messages per minute and a maximum burst size of BURST messages. */
-#define VLOG_RATE_LIMIT_INIT(RATE, BURST)                   \
-        {                                                   \
-            RATE,                           /* rate */      \
-            (MIN(BURST, UINT_MAX / VLOG_MSG_TOKENS)         \
-             * VLOG_MSG_TOKENS),            /* burst */     \
-            0,                              /* tokens */    \
-            0,                              /* last_fill */ \
-            0,                              /* first_dropped */ \
-            0,                              /* last_dropped */ \
-            0,                              /* n_dropped */ \
+#define VLOG_RATE_LIMIT_INIT(RATE, BURST)                               \
+        {                                                               \
+            TOKEN_BUCKET_INIT(RATE, SAT_MUL(BURST, VLOG_MSG_TOKENS)),   \
+            0,                              /* first_dropped */         \
+            0,                              /* last_dropped */          \
+            0,                              /* n_dropped */             \
+            OVS_MUTEX_INITIALIZER           /* mutex */                 \
         }
 
 /* Configuring how each module logs messages. */
 enum vlog_level vlog_get_level(const struct vlog_module *, enum vlog_facility);
 void vlog_set_levels(struct vlog_module *,
                      enum vlog_facility, enum vlog_level);
-char *vlog_set_levels_from_string(const char *);
+char *vlog_set_levels_from_string(const char *) WARN_UNUSED_RESULT;
+void vlog_set_levels_from_string_assert(const char *);
 char *vlog_get_levels(void);
 bool vlog_is_enabled(const struct vlog_module *, enum vlog_level);
 bool vlog_should_drop(const struct vlog_module *, enum vlog_level,
@@ -131,13 +136,12 @@ void vlog_set_verbosity(const char *arg);
 
 /* Configuring log facilities. */
 void vlog_set_pattern(enum vlog_facility, const char *pattern);
-const char *vlog_get_log_file(void);
 int vlog_set_log_file(const char *file_name);
 int vlog_reopen_log_file(void);
 
 /* Initialization. */
 void vlog_init(void);
-void vlog_exit(void);
+void vlog_enable_async(void);
 
 /* Functions for actual logging. */
 void vlog(const struct vlog_module *, enum vlog_level, const char *format, ...)
@@ -149,6 +153,11 @@ void vlog_valist(const struct vlog_module *, enum vlog_level,
 void vlog_fatal(const struct vlog_module *, const char *format, ...)
     PRINTF_FORMAT (2, 3) NO_RETURN;
 void vlog_fatal_valist(const struct vlog_module *, const char *format, va_list)
+    PRINTF_FORMAT (2, 0) NO_RETURN;
+
+void vlog_abort(const struct vlog_module *, const char *format, ...)
+    PRINTF_FORMAT (2, 3) NO_RETURN;
+void vlog_abort_valist(const struct vlog_module *, const char *format, va_list)
     PRINTF_FORMAT (2, 0) NO_RETURN;
 
 void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
@@ -169,6 +178,7 @@ void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
  * Guaranteed to preserve errno.
  */
 #define VLOG_FATAL(...) vlog_fatal(THIS_MODULE, __VA_ARGS__)
+#define VLOG_ABORT(...) vlog_abort(THIS_MODULE, __VA_ARGS__)
 #define VLOG_EMER(...) VLOG(VLL_EMER, __VA_ARGS__)
 #define VLOG_ERR(...) VLOG(VLL_ERR, __VA_ARGS__)
 #define VLOG_WARN(...) VLOG(VLL_WARN, __VA_ARGS__)
@@ -231,22 +241,23 @@ void vlog_usage(void);
             vlog_rate_limit(THIS_MODULE, level__, RL, __VA_ARGS__); \
         }                                                           \
     } while (0)
-#define VLOG_ONCE(LEVEL, ...)                       \
-    do {                                            \
-        static bool already_logged;                 \
-        if (!already_logged) {                      \
-            already_logged = true;                  \
-            vlog(THIS_MODULE, LEVEL, __VA_ARGS__);  \
-        }                                           \
+#define VLOG_ONCE(LEVEL, ...)                                           \
+    do {                                                                \
+        static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER; \
+        if (ovsthread_once_start(&once)) {                              \
+            vlog(THIS_MODULE, LEVEL, __VA_ARGS__);                      \
+            ovsthread_once_done(&once);                                 \
+        }                                                               \
     } while (0)
 
 #define VLOG_DEFINE_MODULE__(MODULE)                                    \
         extern struct vlog_module VLM_##MODULE;                         \
         struct vlog_module VLM_##MODULE =                               \
         {                                                               \
-            #MODULE,                                      /* name */    \
+            #MODULE,                                        /* name */  \
             { [ 0 ... VLF_N_FACILITIES - 1] = VLL_INFO }, /* levels */  \
-            VLL_INFO,                                     /* min_level */ \
+            VLL_INFO,                                  /* min_level */  \
+            true                               /* honor_rate_limits */  \
         };
 
 #ifdef  __cplusplus

@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011 Nicira Networks
+/* Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 
 #include "log.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -49,7 +48,7 @@ struct ovsdb_log {
     struct lockfile *lockfile;
     FILE *stream;
     struct ovsdb_error *read_error;
-    struct ovsdb_error *write_error;
+    bool write_error;
     enum ovsdb_log_mode mode;
 };
 
@@ -75,12 +74,12 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
 
     *filep = NULL;
 
-    assert(locking == -1 || locking == false || locking == true);
+    ovs_assert(locking == -1 || locking == false || locking == true);
     if (locking < 0) {
         locking = open_mode != OVSDB_LOG_READ_ONLY;
     }
     if (locking) {
-        int retval = lockfile_lock(name, 0, &lockfile);
+        int retval = lockfile_lock(name, &lockfile);
         if (retval) {
             error = ovsdb_io_error(retval, "%s: failed to lock lockfile",
                                    name);
@@ -95,7 +94,16 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
     } else if (open_mode == OVSDB_LOG_READ_WRITE) {
         flags = O_RDWR;
     } else if (open_mode == OVSDB_LOG_CREATE) {
-        flags = O_RDWR | O_CREAT | O_EXCL;
+        if (stat(name, &s) == -1 && errno == ENOENT
+            && lstat(name, &s) == 0 && S_ISLNK(s.st_mode)) {
+            /* 'name' is a dangling symlink.  We want to create the file that
+             * the symlink points to, but POSIX says that open() with O_EXCL
+             * must fail with EEXIST if the named file is a symlink.  So, we
+             * have to leave off O_EXCL and accept the race. */
+            flags = O_RDWR | O_CREAT;
+        } else {
+            flags = O_RDWR | O_CREAT | O_EXCL;
+        }
     } else {
         NOT_REACHED();
     }
@@ -125,7 +133,7 @@ ovsdb_log_open(const char *name, enum ovsdb_log_open_mode open_mode,
     file->prev_offset = 0;
     file->offset = 0;
     file->read_error = NULL;
-    file->write_error = NULL;
+    file->write_error = false;
     file->mode = OVSDB_LOG_READ;
     *filep = file;
     return NULL;
@@ -146,7 +154,6 @@ ovsdb_log_close(struct ovsdb_log *file)
         fclose(file->stream);
         lockfile_unlock(file->lockfile);
         ovsdb_error_destroy(file->read_error);
-        ovsdb_error_destroy(file->write_error);
         free(file);
     }
 }
@@ -309,7 +316,7 @@ error:
 void
 ovsdb_log_unread(struct ovsdb_log *file)
 {
-    assert(file->mode == OVSDB_LOG_READ);
+    ovs_assert(file->mode == OVSDB_LOG_READ);
     file->offset = file->prev_offset;
 }
 
@@ -324,10 +331,9 @@ ovsdb_log_write(struct ovsdb_log *file, struct json *json)
 
     json_string = NULL;
 
-    if (file->write_error) {
-        return ovsdb_error_clone(file->write_error);
-    } else if (file->mode == OVSDB_LOG_READ) {
+    if (file->mode == OVSDB_LOG_READ || file->write_error) {
         file->mode = OVSDB_LOG_WRITE;
+        file->write_error = false;
         if (fseeko(file->stream, file->offset, SEEK_SET)) {
             error = ovsdb_io_error(errno, "%s: cannot seek to offset %lld",
                                    file->name, (long long int) file->offset);
@@ -375,7 +381,7 @@ ovsdb_log_write(struct ovsdb_log *file, struct json *json)
     return NULL;
 
 error:
-    file->write_error = ovsdb_error_clone(error);
+    file->write_error = true;
     free(json_string);
     return error;
 }

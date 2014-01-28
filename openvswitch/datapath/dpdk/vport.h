@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -71,10 +71,11 @@ void vport_fini(void);
 
 int send_to_vport(uint8_t vportid, struct rte_mbuf *buf);
 uint16_t receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs);
-void flush_pkts(unsigned vportid);
+void flush_nic_tx_ring(unsigned vportid);
 const char *vport_name(unsigned vportid);
 
 void flush_clients(void);
+void flush_ports(void);
 
 #endif /* __VPORT_H_ */
 

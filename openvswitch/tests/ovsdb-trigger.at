@@ -9,11 +9,11 @@ m4_define([OVSDB_CHECK_TRIGGER],
   [AT_SETUP([$1])
    AT_KEYWORDS([ovsdb execute execution trigger positive $4])
    AT_CHECK([test-ovsdb trigger $2], [0], [stdout], [])
-   AT_CHECK([perl $srcdir/uuidfilt.pl stdout], [0], [$3])
+   AT_CHECK([${PERL} $srcdir/uuidfilt.pl stdout], [0], [$3])
    AT_CLEANUP])
 
 OVSDB_CHECK_TRIGGER([trigger fires immediately],
-  ['ORDINAL_SCHEMA' [\
+  ["`ordinal_schema`" [\
     '["ordinals",
       {"op": "insert",
        "table": "ordinals",
@@ -36,7 +36,7 @@ OVSDB_CHECK_TRIGGER([trigger fires immediately],
 ]])
 
 OVSDB_CHECK_TRIGGER([trigger times out],
-  ['ORDINAL_SCHEMA' [\
+  ["`ordinal_schema`" [\
     '["ordinals",
       {"op": "insert",
        "table": "ordinals",
@@ -59,7 +59,7 @@ t=10: trigger 0 (delayed): [{"uuid":["uuid","<0>"]},{"uuid":["uuid","<1>"]},{"de
 ]])
 
 OVSDB_CHECK_TRIGGER([trigger fires after delay],
-  ['ORDINAL_SCHEMA' [\
+  ["`ordinal_schema`" [\
     '["ordinals",
       {"op": "insert",
        "table": "ordinals",
@@ -90,7 +90,7 @@ t=10: trigger 1 (delayed): [{}]
 ]])
 
 OVSDB_CHECK_TRIGGER([delayed trigger modifies database],
-  ['ORDINAL_SCHEMA' [\
+  ["`ordinal_schema`" [\
     '["ordinals",
       {"op": "insert",
        "table": "ordinals",
@@ -130,7 +130,7 @@ t=15: trigger 3 (immediate): [{"rows":[{"_uuid":["uuid","<2>"],"_version":["uuid
 ]])
 
 OVSDB_CHECK_TRIGGER([one delayed trigger wakes up another],
-  ['ORDINAL_SCHEMA' [\
+  ["`ordinal_schema`" [\
     '["ordinals",
       {"op": "insert",
        "table": "ordinals",

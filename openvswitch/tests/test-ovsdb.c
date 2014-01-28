@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ main(int argc, char *argv[])
 static void
 parse_options(int argc, char *argv[])
 {
-    static struct option long_options[] = {
+    static const struct option long_options[] = {
         {"timeout", required_argument, NULL, 't'},
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
@@ -218,13 +218,16 @@ unbox_json(struct json *json)
     }
 }
 
-static void
+static size_t
 print_and_free_json(struct json *json)
 {
     char *string = json_to_string(json, JSSF_SORT);
+    size_t length = strlen(string);
     json_destroy(json);
     puts(string);
     free(string);
+
+    return length;
 }
 
 static void
@@ -442,7 +445,10 @@ do_parse_atoms(int argc, char *argv[])
         if (error) {
             print_and_free_ovsdb_error(error);
         } else {
-            print_and_free_json(ovsdb_atom_to_json(&atom, base.type));
+            size_t length;
+
+            length = print_and_free_json(ovsdb_atom_to_json(&atom, base.type));
+            ovs_assert(length == ovsdb_atom_json_length(&atom, base.type));
             ovsdb_atom_destroy(&atom, base.type);
         }
     }
@@ -494,12 +500,14 @@ do_parse_data__(int argc, char *argv[],
 
     for (i = 2; i < argc; i++) {
         struct ovsdb_datum datum;
+        size_t length;
 
         json = unbox_json(parse_json(argv[i]));
         check_ovsdb_error(parse(&datum, &type, json, NULL));
         json_destroy(json);
 
-        print_and_free_json(ovsdb_datum_to_json(&datum, &type));
+        length = print_and_free_json(ovsdb_datum_to_json(&datum, &type));
+        ovs_assert(length == ovsdb_datum_json_length(&datum, &type));
 
         ovsdb_datum_destroy(&datum, &type);
     }
@@ -1294,6 +1302,7 @@ do_trigger(int argc OVS_UNUSED, char *argv[])
 {
     struct ovsdb_schema *schema;
     struct ovsdb_session session;
+    struct ovsdb_server server;
     struct json *json;
     struct ovsdb *db;
     long long int now;
@@ -1306,7 +1315,9 @@ do_trigger(int argc OVS_UNUSED, char *argv[])
     json_destroy(json);
     db = ovsdb_create(schema);
 
-    ovsdb_session_init(&session, db);
+    ovsdb_server_init(&server);
+    ovsdb_server_add_db(&server, db);
+    ovsdb_session_init(&session, &server);
 
     now = 0;
     number = 0;
@@ -1321,7 +1332,7 @@ do_trigger(int argc OVS_UNUSED, char *argv[])
             json_destroy(params);
         } else {
             struct test_trigger *t = xmalloc(sizeof *t);
-            ovsdb_trigger_init(&session, &t->trigger, params, now);
+            ovsdb_trigger_init(&session, db, &t->trigger, params, now);
             t->number = number++;
             if (ovsdb_trigger_is_complete(&t->trigger)) {
                 do_trigger_dump(t, now, "immediate");
@@ -1342,6 +1353,7 @@ do_trigger(int argc OVS_UNUSED, char *argv[])
         poll_block();
     }
 
+    ovsdb_server_destroy(&server);
     ovsdb_destroy(db);
 }
 
@@ -1825,10 +1837,19 @@ idl_set(struct ovsdb_idl *idl, char *commands, int step)
                           arg2);
             }
         } else if (!strcmp(name, "increment")) {
-            if (!arg2 || arg3) {
-                ovs_fatal(0, "\"increment\" command requires 2 arguments");
+            const struct idltest_simple *s;
+
+            if (!arg1 || arg2) {
+                ovs_fatal(0, "\"increment\" command requires 1 argument");
             }
-            ovsdb_idl_txn_increment(txn, arg1, arg2, NULL);
+
+            s = idltest_find_simple(idl, atoi(arg1));
+            if (!s) {
+                ovs_fatal(0, "\"set\" command asks for nonexistent "
+                          "i=%d", atoi(arg1));
+            }
+
+            ovsdb_idl_txn_increment(txn, &s->header_, &idltest_simple_col_i);
             increment = true;
         } else if (!strcmp(name, "abort")) {
             ovsdb_idl_txn_abort(txn);
@@ -1867,12 +1888,12 @@ do_idl(int argc, char *argv[])
 
     idltest_init();
 
-    idl = ovsdb_idl_create(argv[1], &idltest_idl_class, true);
+    idl = ovsdb_idl_create(argv[1], &idltest_idl_class, true, true);
     if (argc > 2) {
         struct stream *stream;
 
-        error = stream_open_block(jsonrpc_stream_open(argv[1], &stream),
-                                  &stream);
+        error = stream_open_block(jsonrpc_stream_open(argv[1], &stream,
+                                  DSCP_DEFAULT), &stream);
         if (error) {
             ovs_fatal(error, "failed to connect to \"%s\"", argv[1]);
         }
@@ -1893,7 +1914,11 @@ do_idl(int argc, char *argv[])
             arg++;
         } else {
             /* Wait for update. */
-            while (ovsdb_idl_get_seqno(idl) == seqno && !ovsdb_idl_run(idl)) {
+            for (;;) {
+                ovsdb_idl_run(idl);
+                if (ovsdb_idl_get_seqno(idl) != seqno) {
+                    break;
+                }
                 jsonrpc_run(rpc);
 
                 ovsdb_idl_wait(idl);
@@ -1916,7 +1941,7 @@ do_idl(int argc, char *argv[])
             substitute_uuids(json, symtab);
             request = jsonrpc_create_request("transact", json, NULL);
             error = jsonrpc_transact_block(rpc, request, &reply);
-            if (error) {
+            if (error || reply->error) {
                 ovs_fatal(error, "jsonrpc transaction failed");
             }
             printf("%03d: ", step++);
@@ -1933,7 +1958,11 @@ do_idl(int argc, char *argv[])
     if (rpc) {
         jsonrpc_close(rpc);
     }
-    while (ovsdb_idl_get_seqno(idl) == seqno && !ovsdb_idl_run(idl)) {
+    for (;;) {
+        ovsdb_idl_run(idl);
+        if (ovsdb_idl_get_seqno(idl) != seqno) {
+            break;
+        }
         ovsdb_idl_wait(idl);
         poll_block();
     }

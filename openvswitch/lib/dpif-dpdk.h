@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@
 #define DPIF_DPDK_H 1
 
 #include <stdbool.h>
-
 #include <rte_ether.h>
+#include <linux/openvswitch.h>
 
 #include "ofpbuf.h"
 #include "dpif.h"
@@ -28,7 +28,7 @@
 #define DPIF_DPDK_PACKET_FAMILY	0x1F
 
 struct dpif_dpdk_flow_key {
-	uint32_t in_port;
+	odp_port_t in_port; 
 	struct ether_addr ether_dst;
 	struct ether_addr ether_src;
 	uint16_t ether_type;
@@ -64,6 +64,10 @@ enum dpif_dpdk_action_type {
 	ACTION_OUTPUT,   /* Output packet to port */
 	ACTION_POP_VLAN, /* Remove 802.1Q header */
 	ACTION_PUSH_VLAN,/* Add 802.1Q VLAN header to packet */
+	ACTION_SET_ETHERNET, /* Modify Ethernet header */
+	ACTION_SET_IPV4, /* Modify IPV4 header */
+	ACTION_SET_TCP, /* Modify TCP header */
+	ACTION_SET_UDP, /* Modify UDP header */
 	ACTION_MAX       /* Maximum number of supported actions */
 };
 
@@ -81,6 +85,10 @@ struct dpif_dpdk_action {
 	union { /* union of different action types */
 		struct dpif_dpdk_action_output output;
 		struct dpif_action_push_vlan vlan;
+		struct ovs_key_ethernet ethernet;
+		struct ovs_key_ipv4 ipv4;
+		struct ovs_key_tcp tcp;
+		struct ovs_key_udp udp;
 		/* add other action structs here */
 	} data;
 };

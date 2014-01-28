@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,10 @@
 
 #include "vlog.h"
 
+#include <unistd.h>
 #include <assert.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 
 VLOG_DEFINE_THIS_MODULE(dpdk_link);
 
@@ -85,6 +87,8 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
                 rte_pktmbuf_free(mbufs[i]);
             return ENOBUFS;
         }
+        
+	mbufs[i]->pkt.nb_segs = 1;
 
         if (request->type == DPIF_DPDK_FLOW_FAMILY)
             request[i].flow_msg.id = (uint32_t) syscall(SYS_gettid);
@@ -139,14 +143,14 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 
     for (;;) {
         while (rte_ring_mc_dequeue(reply_ring, (void **)&mbuf) != 0)
-            ;
-
+        ;
         pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
         pktmbuf_len = rte_pktmbuf_data_len(mbuf);
 
         if (((struct dpif_dpdk_message *)pktmbuf_data)->flow_msg.id != (uint32_t)syscall(SYS_gettid) ){
             while (rte_ring_mp_enqueue(reply_ring, (void *)mbuf) != 0)
-                ;
+            ;
+            break;
         } else {
            break;
         }

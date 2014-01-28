@@ -1,5 +1,5 @@
-# Copyright (C) 2007, 2008, 2009, 2010, 2011 Nicira Networks, Inc.
-# Copyright (C) 2013 Intel Corporation.
+# Copyright (C) 2007, 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+# Copyright (C) 2013-2014 Intel Corporation.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -9,35 +9,38 @@
 AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
 SUBDIRS = datapath
-if DPDK_ENABLE
+if HAVE_DPDK
 SUBDIRS += . datapath/dpdk
-export RTE_SDK
-OVS_DIR = @abs_srcdir@
-export OVS_DIR
-export RTE_SDK
 endif
 
-@HAVE_DPDK_TRUE@dpdk_dir=$(RTE_SDK)
-@HAVE_DPDK_TRUE@dpdk_lib_dir=$(dpdk_dir)/x86_64-default-linuxapp-gcc/lib
-@HAVE_DPDK_TRUE@dpdk_inc_dir=$(dpdk_dir)/x86_64-default-linuxapp-gcc/include
+if HAVE_DPDK
+OVS_DIR = $(abs_top_srcdir)
+export OVS_DIR
+export RTE_SDK
 
-@HAVE_DPDK_TRUE@dpdk_libs=@HAVE_DPDK_TRUE@$(dpdk_lib_dir)/libethdev.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_cmdline.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_hash.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_lpm.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_mbuf.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_ring.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_mempool.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_eal.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_pmd_ring.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/libethdev.a \
-      @HAVE_DPDK_TRUE@$(dpdk_lib_dir)/librte_malloc.a
+dpdk_dir=$(RTE_SDK)
+dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
+dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
+
+dpdk_libs=$(dpdk_lib_dir)/libethdev.a \
+      $(dpdk_lib_dir)/librte_cmdline.a \
+      $(dpdk_lib_dir)/librte_hash.a \
+      $(dpdk_lib_dir)/librte_lpm.a \
+      $(dpdk_lib_dir)/librte_mbuf.a \
+      $(dpdk_lib_dir)/librte_mempool.a \
+      $(dpdk_lib_dir)/librte_ring.a \
+      $(dpdk_lib_dir)/librte_eal.a \
+      $(dpdk_lib_dir)/librte_pmd_ring.a \
+      $(dpdk_lib_dir)/libethdev.a \
+      $(dpdk_lib_dir)/librte_malloc.a \
+      $(dpdk_lib_dir)/librte_ivshmem.a 
+endif
 
 AM_CPPFLAGS = $(SSL_CFLAGS)
 AM_CPPFLAGS += -I $(top_srcdir)/include
 AM_CPPFLAGS += -I $(top_srcdir)/lib
 AM_CPPFLAGS += -I $(top_builddir)/lib
-if DPDK_ENABLE
+if HAVE_DPDK
 AM_CPPFLAGS += -I $(dpdk_inc_dir)
 endif
 
@@ -51,29 +54,42 @@ else
 AM_LDFLAGS = -export-dynamic -lpthread
 endif
 
-install:
-	@echo "Install not currently supported"
-	@echo "Use make instead"
-
+# PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo
+# files.  Creating .py[co] works OK for any given version of Open
+# vSwitch, but it causes trouble if you switch from a version with
+# foo/__init__.py into an (older) version with plain foo.py, since
+# foo/__init__.pyc will cause Python to ignore foo.py.
+run_python = \
+	PYTHONDONTWRITEBYTECODE=yes \
+	PYTHONPATH=$(top_srcdir)/python:$$PYTHONPATH \
+	$(PYTHON)
 
 ALL_LOCAL =
 BUILT_SOURCES =
 CLEANFILES =
 CLEAN_LOCAL =
 DISTCLEANFILES =
+PYCOV_CLEAN_FILES = build-aux/check-structs,cover
 EXTRA_DIST = \
 	CodingStyle \
 	DESIGN \
+	FAQ \
+	INSTALL \
+	INSTALL.Debian \
+	INSTALL.Fedora \
 	INSTALL.KVM \
-	INSTALL.Linux \
+	INSTALL.Libvirt \
 	INSTALL.RHEL \
 	INSTALL.SSL \
 	INSTALL.XenServer \
-	INSTALL.bridge \
 	INSTALL.userspace \
+	IntegrationGuide \
 	NOTICE \
+	OPENFLOW-1.1+ \
 	PORTING \
+	README-OFTest \
 	README-gcov \
+	README-lisp \
 	REPORTING-BUGS \
 	SubmittingPatches \
 	WHY-OVS \
@@ -128,11 +144,11 @@ SUFFIXES += .in
 	    sed \
 		-e 's,[@]PKIDIR[@],$(PKIDIR),g' \
                 -e 's,[@]LOGDIR[@],$(LOGDIR),g' \
+                -e 's,[@]DBDIR[@],$(DBDIR),g' \
                 -e 's,[@]PERL[@],$(PERL),g' \
                 -e 's,[@]PYTHON[@],$(PYTHON),g' \
                 -e 's,[@]RUNDIR[@],$(RUNDIR),g' \
                 -e 's,[@]VERSION[@],$(VERSION),g' \
-                -e 's,[@]BUILDNR[@],$(BUILDNR),g' \
                 -e 's,[@]localstatedir[@],$(localstatedir),g' \
                 -e 's,[@]pkgdatadir[@],$(pkgdatadir),g' \
                 -e 's,[@]sysconfdir[@],$(sysconfdir),g' \
@@ -147,8 +163,18 @@ SUFFIXES += .in
 	fi
 	mv $@.tmp $@
 
+.PHONY: clean-pycov
+clean-pycov:
+	cd $(srcdir) && rm -f $(PYCOV_CLEAN_FILES)
+CLEAN_LOCAL += clean-pycov
+
 # If we're checked out from a Git repository, make sure that every
 # file that is in Git is distributed.
+#
+# We only enable this check when GNU make is in use because the
+# Makefile in datapath/linux, needed to get the list of files to
+# distribute, requires GNU make extensions.
+if GNU_MAKE
 ALL_LOCAL += dist-hook-git
 dist-hook-git: distfiles
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1; then \
@@ -174,17 +200,61 @@ distfiles: Makefile
 	  sed -e "s|^$$srcdirstrip/||;t" \
 	      -e "s|^$$topsrcdirstrip/|$(top_builddir)/|;t" | sort -u > $@
 CLEANFILES += distfiles
+endif
+.PHONY: dist-hook-git
 
-# Check that "struct vlog_ratelimit" is always declared "static".
-ALL_LOCAL += rate-limit-check
-rate-limit-check:
+# Check that every .c file includes <config.h>.
+ALL_LOCAL += config-h-check
+config-h-check:
+	@cd $(srcdir); \
+	if test -e .git && (git --version) >/dev/null 2>&1 && \
+	   git --no-pager grep -L '#include <config\.h>' `git ls-files | grep '\.c$$' | \
+               grep -vE '^datapath|^lib/sflow|^third-party'`; \
+	then \
+	    echo "See above for list of violations of the rule that"; \
+	    echo "every C source file must #include <config.h>."; \
+	    exit 1; \
+	fi
+.PHONY: config-h-check
+
+# Check that certain data structures are always declared "static".
+ALL_LOCAL += static-check
+static-check:
 	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
-	    git --no-pager grep -n -E '^[ 	]+struct vlog_rate_limit.*=' $(srcdir); \
+	    git --no-pager grep -n -E '^[ 	]+(struct vlog_rate_limit|pthread_once_t|struct ovsthread_once).*=' $(srcdir); \
          then \
 	    echo "See above for list of violations of the rule that "; \
-	    echo "'struct vlog_rate_limit' must always be 'static'"; \
+	    echo "certain data structures must always be 'static'"; \
 	    exit 1; \
 	 fi
+.PHONY: static-check
+
+# Check that assert.h is not used outside a whitelist of files.
+ALL_LOCAL += check-assert-h-usage
+check-assert-h-usage:
+	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
+	    (cd $(srcdir) && git --no-pager grep -l -E '[<]assert.h[>]') | \
+	    $(EGREP) -v '^lib/(sflow_receiver|vlog).c$$|^tests/'; \
+         then \
+	    echo "Files listed above unexpectedly #include <""assert.h"">."; \
+	    echo "Please use ovs_assert (from util.h) instead of assert."; \
+	    exit 1; \
+	 fi
+.PHONY: check-assert-h-usage
+
+ALL_LOCAL += thread-safety-check
+thread-safety-check:
+	@if test -e '$(srcdir)'/.git && (git --version) >/dev/null 2>&1 && \
+	   grep -n -f '$(srcdir)'/build-aux/thread-safety-blacklist \
+	       `git ls-files '$(srcdir)' | grep '\.[ch]$$' \
+                | $(EGREP) -v '^datapath|^lib/sflow|^third-party'` \
+	       | $(EGREP) -v ':[ 	]*/?\*'; \
+	then \
+	    echo "See above for list of calls to functions that are"; \
+	    echo "blacklisted due to thread safety issues"; \
+	    exit 1; \
+	fi
+EXTRA_DIST += build-aux/thread-safety-blacklist
 
 if HAVE_GROFF
 ALL_LOCAL += manpage-check
@@ -217,6 +287,11 @@ install-data-local: $(INSTALL_DATA_LOCAL)
 uninstall-local: $(UNINSTALL_LOCAL)
 .PHONY: $(DIST_HOOKS) $(CLEAN_LOCAL) $(INSTALL_DATA_LOCAL) $(UNINSTALL_LOCAL)
 
+modules_install:
+if LINUX_ENABLED
+	cd datapath/linux && $(MAKE) modules_install
+endif
+
 include lib/automake.mk
 include ofproto/automake.mk
 include utilities/automake.mk
@@ -230,3 +305,4 @@ include rhel/automake.mk
 include xenserver/automake.mk
 include python/automake.mk
 include python/compat/automake.mk
+include tutorial/automake.mk

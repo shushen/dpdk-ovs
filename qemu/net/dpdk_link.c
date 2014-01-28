@@ -76,6 +76,7 @@ int dpdk_link_send(int client_id, char *ofpbuf, int size)
     rte_memcpy_func(data, ofpbuf, size);
     buf->pkt.pkt_len = size;
     buf->pkt.data_len = size;
+    buf->pkt.nb_segs = 1;
 
     rslt = rte_ring_sp_enqueue(clients[client_id].tx_ring, (void *)buf);
     if (rslt < 0) {

@@ -1,8 +1,6 @@
-Intel(R) DPDK vSwitch
-=====================
+# Intel(R) DPDK vSwitch
 
-What is Intel(R) DPDK vSwitch?
-------------------------------
+## What is Intel(R) DPDK vSwitch?
 
 The Intel(R) DPDK Accelerated Open vSwitch (Intel(R) DPDK vSwitch) is a fork
 of the open source Open vSwitch multilayer virtual switch found at
@@ -11,17 +9,20 @@ of the open source Open vSwitch multilayer virtual switch found at
 For more information on the project, check out the Intel(R) DPDK vSwitch
 homepage at [01.org](https://01.org/packet-processing/intel%C2%AE-ovdk).
 
-Getting Started
----------------
+## Getting Started
 
-To get started right away, we recommend that you check out the latest version of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on [01.org][ovdk gsg]. This document gives an in-depth overview of the components, system requirements and basic operation of Intel(R) DPDK vSwitch.
+To get started right away, we recommend that you check out the latest version
+of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on
+[01.org][ovdk gsg]. This document gives an in-depth overview of the components,
+system requirements and basic operation of Intel(R) DPDK vSwitch.
 
 [ovdk gsg]: https://01.org/downloads/222
 
-Build Instructions
-------------------
+## Build Instructions
 
-Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK, QEMU and Open vSwitch. Of these, DPDK must be built first due to dependencies in DPDK vSwitch.
+Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK,
+QEMU and Open vSwitch. Of these, DPDK must be built first due to dependencies
+in DPDK vSwitch.
 
  * DPDK
 
@@ -29,7 +30,7 @@ Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK, QE
     a relevant make target, eg:
 
         cd $(DPDK_DIR)
-        make install T=x86_64-default-linuxapp-gcc
+        make install T=x86_64-ivshmem-linuxapp-gcc
 
  * Openvswitch
 
@@ -44,13 +45,14 @@ Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK, QE
         ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --target-list=x86_64-softmmu
         make
 
-Further Information
--------------------
+## Further Information
 
-For further information, please check out the Getting Started Guide, or use the mailing list.
+For further information, please check out the Getting Started Guide, or use
+the mailing list.
 
-Contribute
-----------
+## Contribute
 
-Please submit all questions, bugs and patch requests to the official [mailing list](https://lists.01.org/mailman/listinfo/dpdk-ovs).
+Please submit all questions, bugs and patch requests to the official
+[mailing list](https://lists.01.org/mailman/listinfo/dpdk-ovs). For further
+information on this process, please refer to the ``CONTRIBUTE`` file.
 

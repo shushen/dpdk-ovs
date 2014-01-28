@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <config.h>
 #include "shash.h"
-#include <assert.h>
 #include "hash.h"
 
 static struct shash_node *shash_find__(const struct shash *,
@@ -109,7 +108,7 @@ shash_add_nocopy__(struct shash *sh, char *name, const void *data, size_t hash)
 {
     struct shash_node *node = xmalloc(sizeof *node);
     node->name = name;
-    node->data = (void *) data;
+    node->data = CONST_CAST(void *, data);
     hmap_insert(&sh->map, &node->node, hash);
     return node;
 }
@@ -145,7 +144,7 @@ void
 shash_add_assert(struct shash *sh, const char *name, const void *data)
 {
     bool added OVS_UNUSED = shash_add_once(sh, name, data);
-    assert(added);
+    ovs_assert(added);
 }
 
 /* Searches for 'name' in 'sh'.  If it does not already exist, adds it along
@@ -163,7 +162,7 @@ shash_replace(struct shash *sh, const char *name, const void *data)
         return NULL;
     } else {
         void *old_data = node->data;
-        node->data = (void *) data;
+        node->data = CONST_CAST(void *, data);
         return old_data;
     }
 }
@@ -242,7 +241,7 @@ void *
 shash_find_and_delete_assert(struct shash *sh, const char *name)
 {
     void *data = shash_find_and_delete(sh, name);
-    assert(data != NULL);
+    ovs_assert(data != NULL);
     return data;
 }
 
@@ -277,7 +276,7 @@ shash_sort(const struct shash *sh)
         SHASH_FOR_EACH (node, sh) {
             nodes[i++] = node;
         }
-        assert(i == n);
+        ovs_assert(i == n);
 
         qsort(nodes, n, sizeof *nodes, compare_nodes_by_name);
 
@@ -312,59 +311,4 @@ struct shash_node *
 shash_random_node(struct shash *sh)
 {
     return CONTAINER_OF(hmap_random_node(&sh->map), struct shash_node, node);
-}
-
-/* String-to-string maps (smaps). */
-
-/* Frees 'smap', including its keys and string values. */
-void
-smap_destroy(struct shash *smap)
-{
-    shash_destroy_free_data(smap);
-}
-
-/* Returns true if string-to-string maps 'a' and 'b' contain the same keys and
- * values, false otherwise. */
-bool
-smap_equal(const struct shash *a, const struct shash *b)
-{
-    struct shash_node *a_node;
-
-    if (shash_count(a) != shash_count(b)) {
-        return false;
-    }
-
-    SHASH_FOR_EACH (a_node, a) {
-        uint32_t hash = a_node->node.hash;
-        size_t len = strlen(a_node->name);
-        struct shash_node *b_node = shash_find__(b, a_node->name, len, hash);
-        if (!b_node || strcmp(a_node->data, b_node->data)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/* Initializes 'dst' as a clone of 'src'. */
-void
-smap_clone(struct shash *dst, const struct shash *src)
-{
-    struct shash_node *node;
-
-    shash_init(dst);
-    SHASH_FOR_EACH (node, src) {
-        shash_add_nocopy__(dst, xstrdup(node->name), xstrdup(node->data),
-                           node->node.hash);
-    }
-}
-
-/* Adds 'key' with string 'value' to 'smap', making a copy of each.
- *
- * It is the caller's responsibility to avoid duplicate names, if that is
- * desirable. */
-void
-smap_add(struct shash *smap, const char *key, const char *value)
-{
-    shash_add(smap, key, xstrdup(value));
 }

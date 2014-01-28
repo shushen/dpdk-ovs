@@ -2,7 +2,7 @@
 #
 #   BSD LICENSE
 #
-#   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+#   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
 #   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,8 @@ $(error "Please define RTE_SDK environment variable")
 endif
 
 all: app ut
+
+distclean: clean
 
 app:
 	$(MAKE) -f Makefile.app

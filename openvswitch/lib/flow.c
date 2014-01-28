@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,22 @@
 #include <config.h>
 #include <sys/types.h>
 #include "flow.h"
-#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
 #include <netinet/ip6.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "byte-order.h"
 #include "coverage.h"
+#include "csum.h"
 #include "dynamic-string.h"
 #include "hash.h"
+#include "jhash.h"
+#include "match.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "packets.h"
@@ -37,6 +41,7 @@
 VLOG_DEFINE_THIS_MODULE(flow);
 
 COVERAGE_DEFINE(flow_extract);
+COVERAGE_DEFINE(miniflow_malloc);
 
 static struct arp_eth_header *
 pull_arp(struct ofpbuf *packet)
@@ -76,6 +81,12 @@ pull_udp(struct ofpbuf *packet)
     return ofpbuf_try_pull(packet, UDP_HEADER_LEN);
 }
 
+static struct sctp_header *
+pull_sctp(struct ofpbuf *packet)
+{
+    return ofpbuf_try_pull(packet, SCTP_HEADER_LEN);
+}
+
 static struct icmp_header *
 pull_icmp(struct ofpbuf *packet)
 {
@@ -86,6 +97,21 @@ static struct icmp6_hdr *
 pull_icmpv6(struct ofpbuf *packet)
 {
     return ofpbuf_try_pull(packet, sizeof(struct icmp6_hdr));
+}
+
+static void
+parse_mpls(struct ofpbuf *b, struct flow *flow)
+{
+    struct mpls_hdr *mh;
+
+    while ((mh = ofpbuf_try_pull(b, sizeof *mh))) {
+        if (flow->mpls_depth++ == 0) {
+            flow->mpls_lse = mh->mpls_lse;
+        }
+        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+            break;
+        }
+    }
 }
 
 static void
@@ -127,13 +153,18 @@ parse_ethertype(struct ofpbuf *b)
     }
 
     ofpbuf_pull(b, sizeof *llc);
-    return llc->snap.snap_type;
+
+    if (ntohs(llc->snap.snap_type) >= ETH_TYPE_MIN) {
+        return llc->snap.snap_type;
+    }
+
+    return htons(FLOW_DL_TYPE_NONE);
 }
 
 static int
 parse_ipv6(struct ofpbuf *packet, struct flow *flow)
 {
-    const struct ip6_hdr *nh;
+    const struct ovs_16aligned_ip6_hdr *nh;
     ovs_be32 tc_flow;
     int nexthdr;
 
@@ -144,10 +175,10 @@ parse_ipv6(struct ofpbuf *packet, struct flow *flow)
 
     nexthdr = nh->ip6_nxt;
 
-    flow->ipv6_src = nh->ip6_src;
-    flow->ipv6_dst = nh->ip6_dst;
+    memcpy(&flow->ipv6_src, &nh->ip6_src, sizeof flow->ipv6_src);
+    memcpy(&flow->ipv6_dst, &nh->ip6_dst, sizeof flow->ipv6_dst);
 
-    tc_flow = get_unaligned_be32(&nh->ip6_flow);
+    tc_flow = get_16aligned_be32(&nh->ip6_flow);
     flow->nw_tos = ntohl(tc_flow) >> 20;
     flow->ipv6_label = tc_flow & htonl(IPV6_LABEL_MASK);
     flow->nw_ttl = nh->ip6_hlim;
@@ -179,7 +210,7 @@ parse_ipv6(struct ofpbuf *packet, struct flow *flow)
                 || (nexthdr == IPPROTO_DSTOPTS)) {
             /* These headers, while different, have the fields we care about
              * in the same location and with the same interpretation. */
-            const struct ip6_ext *ext_hdr = (struct ip6_ext *)packet->data;
+            const struct ip6_ext *ext_hdr = packet->data;
             nexthdr = ext_hdr->ip6e_nxt;
             if (!ofpbuf_try_pull(packet, (ext_hdr->ip6e_len + 1) * 8)) {
                 return EINVAL;
@@ -189,13 +220,13 @@ parse_ipv6(struct ofpbuf *packet, struct flow *flow)
              * we care about are in the same location as the generic
              * option header--only the header length is calculated
              * differently. */
-            const struct ip6_ext *ext_hdr = (struct ip6_ext *)packet->data;
+            const struct ip6_ext *ext_hdr = packet->data;
             nexthdr = ext_hdr->ip6e_nxt;
             if (!ofpbuf_try_pull(packet, (ext_hdr->ip6e_len + 2) * 4)) {
                return EINVAL;
             }
         } else if (nexthdr == IPPROTO_FRAGMENT) {
-            const struct ip6_frag *frag_hdr = (struct ip6_frag *)packet->data;
+            const struct ovs_16aligned_ip6_frag *frag_hdr = packet->data;
 
             nexthdr = frag_hdr->ip6f_nxt;
             if (!ofpbuf_try_pull(packet, sizeof *frag_hdr)) {
@@ -204,9 +235,8 @@ parse_ipv6(struct ofpbuf *packet, struct flow *flow)
 
             /* We only process the first fragment. */
             if (frag_hdr->ip6f_offlg != htons(0)) {
-                if ((frag_hdr->ip6f_offlg & IP6F_OFF_MASK) == htons(0)) {
-                    flow->nw_frag = FLOW_NW_FRAG_ANY;
-                } else {
+                flow->nw_frag = FLOW_NW_FRAG_ANY;
+                if ((frag_hdr->ip6f_offlg & IP6F_OFF_MASK) != htons(0)) {
                     flow->nw_frag |= FLOW_NW_FRAG_LATER;
                     nexthdr = IPPROTO_FRAGMENT;
                     break;
@@ -237,6 +267,17 @@ parse_udp(struct ofpbuf *packet, struct ofpbuf *b, struct flow *flow)
     if (udp) {
         flow->tp_src = udp->udp_src;
         flow->tp_dst = udp->udp_dst;
+        packet->l7 = b->data;
+    }
+}
+
+static void
+parse_sctp(struct ofpbuf *packet, struct ofpbuf *b, struct flow *flow)
+{
+    const struct sctp_header *sctp = pull_sctp(b);
+    if (sctp) {
+        flow->tp_src = sctp->sctp_src;
+        flow->tp_dst = sctp->sctp_dst;
         packet->l7 = b->data;
     }
 }
@@ -312,12 +353,14 @@ invalid:
 
 }
 
-/* Initializes 'flow' members from 'packet', 'skb_priority', 'tun_id', and
- * 'ofp_in_port'.
+/* Initializes 'flow' members from 'packet', 'skb_priority', 'tnl', and
+ * 'in_port'.
  *
  * Initializes 'packet' header pointers as follows:
  *
  *    - packet->l2 to the start of the Ethernet header.
+ *
+ *    - packet->l2_5 to the start of the MPLS shim header.
  *
  *    - packet->l3 to just past the Ethernet header, or just past the
  *      vlan_header if one is present, to the first byte of the payload of the
@@ -326,12 +369,13 @@ invalid:
  *    - packet->l4 to just past the IPv4 header, if one is present and has a
  *      correct length, and otherwise NULL.
  *
- *    - packet->l7 to just past the TCP or UDP or ICMP header, if one is
+ *    - packet->l7 to just past the TCP/UDP/SCTP/ICMP header, if one is
  *      present and has a correct length, and otherwise NULL.
  */
 void
-flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
-             uint16_t ofp_in_port, struct flow *flow)
+flow_extract(struct ofpbuf *packet, uint32_t skb_priority, uint32_t pkt_mark,
+             const struct flow_tnl *tnl, const union flow_in_port *in_port,
+             struct flow *flow)
 {
     struct ofpbuf b = *packet;
     struct eth_header *eth;
@@ -339,14 +383,22 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
     COVERAGE_INC(flow_extract);
 
     memset(flow, 0, sizeof *flow);
-    flow->tun_id = tun_id;
-    flow->in_port = ofp_in_port;
-    flow->skb_priority = skb_priority;
 
-    packet->l2 = b.data;
-    packet->l3 = NULL;
-    packet->l4 = NULL;
-    packet->l7 = NULL;
+    if (tnl) {
+        ovs_assert(tnl != &flow->tunnel);
+        flow->tunnel = *tnl;
+    }
+    if (in_port) {
+        flow->in_port = *in_port;
+    }
+    flow->skb_priority = skb_priority;
+    flow->pkt_mark = pkt_mark;
+
+    packet->l2   = b.data;
+    packet->l2_5 = NULL;
+    packet->l3   = NULL;
+    packet->l4   = NULL;
+    packet->l7   = NULL;
 
     if (b.size < sizeof *eth) {
         return;
@@ -364,6 +416,12 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
     }
     flow->dl_type = parse_ethertype(&b);
 
+    /* Parse mpls, copy l3 ttl. */
+    if (eth_type_mpls(flow->dl_type)) {
+        packet->l2_5 = b.data;
+        parse_mpls(&b, flow);
+    }
+
     /* Network layer. */
     packet->l3 = b.data;
     if (flow->dl_type == htons(ETH_TYPE_IP)) {
@@ -371,8 +429,8 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
         if (nh) {
             packet->l4 = b.data;
 
-            flow->nw_src = get_unaligned_be32(&nh->ip_src);
-            flow->nw_dst = get_unaligned_be32(&nh->ip_dst);
+            flow->nw_src = get_16aligned_be32(&nh->ip_src);
+            flow->nw_dst = get_16aligned_be32(&nh->ip_dst);
             flow->nw_proto = nh->ip_proto;
 
             flow->nw_tos = nh->ip_tos;
@@ -389,6 +447,8 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
                     parse_tcp(packet, &b, flow);
                 } else if (flow->nw_proto == IPPROTO_UDP) {
                     parse_udp(packet, &b, flow);
+                } else if (flow->nw_proto == IPPROTO_SCTP) {
+                    parse_sctp(packet, &b, flow);
                 } else if (flow->nw_proto == IPPROTO_ICMP) {
                     const struct icmp_header *icmp = pull_icmp(&b);
                     if (icmp) {
@@ -409,12 +469,15 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
             parse_tcp(packet, &b, flow);
         } else if (flow->nw_proto == IPPROTO_UDP) {
             parse_udp(packet, &b, flow);
+        } else if (flow->nw_proto == IPPROTO_SCTP) {
+            parse_sctp(packet, &b, flow);
         } else if (flow->nw_proto == IPPROTO_ICMPV6) {
             if (parse_icmpv6(&b, flow)) {
                 packet->l7 = b.data;
             }
         }
-    } else if (flow->dl_type == htons(ETH_TYPE_ARP)) {
+    } else if (flow->dl_type == htons(ETH_TYPE_ARP) ||
+               flow->dl_type == htons(ETH_TYPE_RARP)) {
         const struct arp_eth_header *arp = pull_arp(&b);
         if (arp && arp->ar_hrd == htons(1)
             && arp->ar_pro == htons(ETH_TYPE_IP)
@@ -425,13 +488,10 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
                 flow->nw_proto = ntohs(arp->ar_op);
             }
 
-            if ((flow->nw_proto == ARP_OP_REQUEST)
-                || (flow->nw_proto == ARP_OP_REPLY)) {
-                flow->nw_src = arp->ar_spa;
-                flow->nw_dst = arp->ar_tpa;
-                memcpy(flow->arp_sha, arp->ar_sha, ETH_ADDR_LEN);
-                memcpy(flow->arp_tha, arp->ar_tha, ETH_ADDR_LEN);
-            }
+            flow->nw_src = get_16aligned_be32(&arp->ar_spa);
+            flow->nw_dst = get_16aligned_be32(&arp->ar_tpa);
+            memcpy(flow->arp_sha, arp->ar_sha, ETH_ADDR_LEN);
+            memcpy(flow->arp_tha, arp->ar_tha, ETH_ADDR_LEN);
         }
     }
 }
@@ -441,83 +501,28 @@ flow_extract(struct ofpbuf *packet, uint32_t skb_priority, ovs_be64 tun_id,
 void
 flow_zero_wildcards(struct flow *flow, const struct flow_wildcards *wildcards)
 {
-    const flow_wildcards_t wc = wildcards->wildcards;
-    int i;
+    uint32_t *flow_u32 = (uint32_t *) flow;
+    const uint32_t *wc_u32 = (const uint32_t *) &wildcards->masks;
+    size_t i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 7);
-
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        flow->regs[i] &= wildcards->reg_masks[i];
+    for (i = 0; i < FLOW_U32S; i++) {
+        flow_u32[i] &= wc_u32[i];
     }
-    flow->tun_id &= wildcards->tun_id_mask;
-    flow->nw_src &= wildcards->nw_src_mask;
-    flow->nw_dst &= wildcards->nw_dst_mask;
-    if (wc & FWW_IN_PORT) {
-        flow->in_port = 0;
-    }
-    flow->vlan_tci &= wildcards->vlan_tci_mask;
-    if (wc & FWW_DL_TYPE) {
-        flow->dl_type = htons(0);
-    }
-    if (wc & FWW_TP_SRC) {
-        flow->tp_src = htons(0);
-    }
-    if (wc & FWW_TP_DST) {
-        flow->tp_dst = htons(0);
-    }
-    if (wc & FWW_DL_SRC) {
-        memset(flow->dl_src, 0, sizeof flow->dl_src);
-    }
-    if (wc & FWW_DL_DST) {
-        flow->dl_dst[0] &= 0x01;
-        memset(&flow->dl_dst[1], 0, 5);
-    }
-    if (wc & FWW_ETH_MCAST) {
-        flow->dl_dst[0] &= 0xfe;
-    }
-    if (wc & FWW_NW_PROTO) {
-        flow->nw_proto = 0;
-    }
-    if (wc & FWW_IPV6_LABEL) {
-        flow->ipv6_label = htonl(0);
-    }
-    if (wc & FWW_NW_DSCP) {
-        flow->nw_tos &= ~IP_DSCP_MASK;
-    }
-    if (wc & FWW_NW_ECN) {
-        flow->nw_tos &= ~IP_ECN_MASK;
-    }
-    if (wc & FWW_NW_TTL) {
-        flow->nw_ttl = 0;
-    }
-    flow->nw_frag &= wildcards->nw_frag_mask;
-    if (wc & FWW_ARP_SHA) {
-        memset(flow->arp_sha, 0, sizeof flow->arp_sha);
-    }
-    if (wc & FWW_ARP_THA) {
-        memset(flow->arp_tha, 0, sizeof flow->arp_tha);
-    }
-    flow->ipv6_src = ipv6_addr_bitand(&flow->ipv6_src,
-            &wildcards->ipv6_src_mask);
-    flow->ipv6_dst = ipv6_addr_bitand(&flow->ipv6_dst,
-            &wildcards->ipv6_dst_mask);
-    if (wc & FWW_ND_TARGET) {
-        memset(&flow->nd_target, 0, sizeof flow->nd_target);
-    }
-    flow->skb_priority = 0;
 }
 
 /* Initializes 'fmd' with the metadata found in 'flow'. */
 void
 flow_get_metadata(const struct flow *flow, struct flow_metadata *fmd)
 {
-    fmd->tun_id = flow->tun_id;
-    fmd->tun_id_mask = htonll(UINT64_MAX);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 20);
 
+    fmd->tun_id = flow->tunnel.tun_id;
+    fmd->tun_src = flow->tunnel.ip_src;
+    fmd->tun_dst = flow->tunnel.ip_dst;
+    fmd->metadata = flow->metadata;
     memcpy(fmd->regs, flow->regs, sizeof fmd->regs);
-    memset(fmd->reg_masks, 0xff, sizeof fmd->reg_masks);
-
-    fmd->in_port = flow->in_port;
+    fmd->pkt_mark = flow->pkt_mark;
+    fmd->in_port = flow->in_port.ofp_port;
 }
 
 char *
@@ -528,60 +533,57 @@ flow_to_string(const struct flow *flow)
     return ds_cstr(&ds);
 }
 
+const char *
+flow_tun_flag_to_string(uint32_t flags)
+{
+    switch (flags) {
+    case FLOW_TNL_F_DONT_FRAGMENT:
+        return "df";
+    case FLOW_TNL_F_CSUM:
+        return "csum";
+    case FLOW_TNL_F_KEY:
+        return "key";
+    default:
+        return NULL;
+    }
+}
+
+void
+format_flags(struct ds *ds, const char *(*bit_to_string)(uint32_t),
+             uint32_t flags, char del)
+{
+    uint32_t bad = 0;
+
+    if (!flags) {
+        return;
+    }
+    while (flags) {
+        uint32_t bit = rightmost_1bit(flags);
+        const char *s;
+
+        s = bit_to_string(bit);
+        if (s) {
+            ds_put_format(ds, "%s%c", s, del);
+        } else {
+            bad |= bit;
+        }
+
+        flags &= ~bit;
+    }
+
+    if (bad) {
+        ds_put_format(ds, "0x%"PRIx32"%c", bad, del);
+    }
+    ds_chomp(ds, del);
+}
+
 void
 flow_format(struct ds *ds, const struct flow *flow)
 {
-    ds_put_format(ds, "priority:%"PRIu32
-                      ",tunnel:%#"PRIx64
-                      ",in_port:%04"PRIx16,
-                      flow->skb_priority,
-                      ntohll(flow->tun_id),
-                      flow->in_port);
+    struct match match;
 
-    ds_put_format(ds, ",tci(");
-    if (flow->vlan_tci) {
-        ds_put_format(ds, "vlan:%"PRIu16",pcp:%d",
-                      vlan_tci_to_vid(flow->vlan_tci),
-                      vlan_tci_to_pcp(flow->vlan_tci));
-    } else {
-        ds_put_char(ds, '0');
-    }
-    ds_put_format(ds, ") mac("ETH_ADDR_FMT"->"ETH_ADDR_FMT
-                      ") type:%04"PRIx16,
-                  ETH_ADDR_ARGS(flow->dl_src),
-                  ETH_ADDR_ARGS(flow->dl_dst),
-                  ntohs(flow->dl_type));
-
-    if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
-        ds_put_format(ds, " label:%#"PRIx32" proto:%"PRIu8" tos:%#"PRIx8
-                          " ttl:%"PRIu8" ipv6(",
-                      ntohl(flow->ipv6_label), flow->nw_proto,
-                      flow->nw_tos, flow->nw_ttl);
-        print_ipv6_addr(ds, &flow->ipv6_src);
-        ds_put_cstr(ds, "->");
-        print_ipv6_addr(ds, &flow->ipv6_dst);
-        ds_put_char(ds, ')');
-    } else {
-        ds_put_format(ds, " proto:%"PRIu8" tos:%#"PRIx8" ttl:%"PRIu8
-                          " ip("IP_FMT"->"IP_FMT")",
-                          flow->nw_proto, flow->nw_tos, flow->nw_ttl,
-                          IP_ARGS(&flow->nw_src), IP_ARGS(&flow->nw_dst));
-    }
-    if (flow->nw_frag) {
-        ds_put_format(ds, " frag(%s)",
-                      flow->nw_frag == FLOW_NW_FRAG_ANY ? "first"
-                      : flow->nw_frag == (FLOW_NW_FRAG_ANY | FLOW_NW_FRAG_LATER)
-                      ? "later" : "<error>");
-    }
-    if (flow->tp_src || flow->tp_dst) {
-        ds_put_format(ds, " port(%"PRIu16"->%"PRIu16")",
-                ntohs(flow->tp_src), ntohs(flow->tp_dst));
-    }
-    if (!eth_addr_is_zero(flow->arp_sha) || !eth_addr_is_zero(flow->arp_tha)) {
-        ds_put_format(ds, " arp_ha("ETH_ADDR_FMT"->"ETH_ADDR_FMT")",
-                ETH_ADDR_ARGS(flow->arp_sha),
-                ETH_ADDR_ARGS(flow->arp_tha));
-    }
+    match_wc_init(&match, flow);
+    match_format(&match, ds, OFP_DEFAULT_PRIORITY);
 }
 
 void
@@ -598,18 +600,7 @@ flow_print(FILE *stream, const struct flow *flow)
 void
 flow_wildcards_init_catchall(struct flow_wildcards *wc)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 7);
-
-    wc->wildcards = FWW_ALL;
-    wc->tun_id_mask = htonll(0);
-    wc->nw_src_mask = htonl(0);
-    wc->nw_dst_mask = htonl(0);
-    wc->ipv6_src_mask = in6addr_any;
-    wc->ipv6_dst_mask = in6addr_any;
-    memset(wc->reg_masks, 0, sizeof wc->reg_masks);
-    wc->vlan_tci_mask = htons(0);
-    wc->nw_frag_mask = 0;
-    memset(wc->zeros, 0, sizeof wc->zeros);
+    memset(&wc->masks, 0, sizeof wc->masks);
 }
 
 /* Initializes 'wc' as an exact-match set of wildcards; that is, 'wc' does not
@@ -617,47 +608,8 @@ flow_wildcards_init_catchall(struct flow_wildcards *wc)
 void
 flow_wildcards_init_exact(struct flow_wildcards *wc)
 {
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 7);
-
-    wc->wildcards = 0;
-    wc->tun_id_mask = htonll(UINT64_MAX);
-    wc->nw_src_mask = htonl(UINT32_MAX);
-    wc->nw_dst_mask = htonl(UINT32_MAX);
-    wc->ipv6_src_mask = in6addr_exact;
-    wc->ipv6_dst_mask = in6addr_exact;
-    memset(wc->reg_masks, 0xff, sizeof wc->reg_masks);
-    wc->vlan_tci_mask = htons(UINT16_MAX);
-    wc->nw_frag_mask = UINT8_MAX;
-    memset(wc->zeros, 0, sizeof wc->zeros);
-}
-
-/* Returns true if 'wc' is exact-match, false if 'wc' wildcards any bits or
- * fields. */
-bool
-flow_wildcards_is_exact(const struct flow_wildcards *wc)
-{
-    int i;
-
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 7);
-
-    if (wc->wildcards
-        || wc->tun_id_mask != htonll(UINT64_MAX)
-        || wc->nw_src_mask != htonl(UINT32_MAX)
-        || wc->nw_dst_mask != htonl(UINT32_MAX)
-        || wc->vlan_tci_mask != htons(UINT16_MAX)
-        || !ipv6_mask_is_exact(&wc->ipv6_src_mask)
-        || !ipv6_mask_is_exact(&wc->ipv6_dst_mask)
-        || wc->nw_frag_mask != UINT8_MAX) {
-        return false;
-    }
-
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        if (wc->reg_masks[i] != UINT32_MAX) {
-            return false;
-        }
-    }
-
-    return true;
+    memset(&wc->masks, 0xff, sizeof wc->masks);
+    memset(wc->masks.zeros, 0, sizeof wc->masks.zeros);
 }
 
 /* Returns true if 'wc' matches every packet, false if 'wc' fixes any bits or
@@ -665,63 +617,85 @@ flow_wildcards_is_exact(const struct flow_wildcards *wc)
 bool
 flow_wildcards_is_catchall(const struct flow_wildcards *wc)
 {
-    int i;
+    const uint32_t *wc_u32 = (const uint32_t *) &wc->masks;
+    size_t i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 7);
-
-    if (wc->wildcards != FWW_ALL
-        || wc->tun_id_mask != htonll(0)
-        || wc->nw_src_mask != htonl(0)
-        || wc->nw_dst_mask != htonl(0)
-        || wc->vlan_tci_mask != htons(0)
-        || !ipv6_mask_is_any(&wc->ipv6_src_mask)
-        || !ipv6_mask_is_any(&wc->ipv6_dst_mask)
-        || wc->nw_frag_mask != 0) {
-        return false;
-    }
-
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        if (wc->reg_masks[i] != 0) {
+    for (i = 0; i < FLOW_U32S; i++) {
+        if (wc_u32[i]) {
             return false;
         }
     }
-
     return true;
 }
 
-/* Initializes 'dst' as the combination of wildcards in 'src1' and 'src2'.
- * That is, a bit or a field is wildcarded in 'dst' if it is wildcarded in
- * 'src1' or 'src2' or both.  */
+/* Sets 'dst' as the bitwise AND of wildcards in 'src1' and 'src2'.
+ * That is, a bit or a field is wildcarded in 'dst' if it is wildcarded
+ * in 'src1' or 'src2' or both.  */
 void
-flow_wildcards_combine(struct flow_wildcards *dst,
-                       const struct flow_wildcards *src1,
-                       const struct flow_wildcards *src2)
+flow_wildcards_and(struct flow_wildcards *dst,
+                   const struct flow_wildcards *src1,
+                   const struct flow_wildcards *src2)
 {
+    uint32_t *dst_u32 = (uint32_t *) &dst->masks;
+    const uint32_t *src1_u32 = (const uint32_t *) &src1->masks;
+    const uint32_t *src2_u32 = (const uint32_t *) &src2->masks;
+    size_t i;
+
+    for (i = 0; i < FLOW_U32S; i++) {
+        dst_u32[i] = src1_u32[i] & src2_u32[i];
+    }
+}
+
+/* Sets 'dst' as the bitwise OR of wildcards in 'src1' and 'src2'.  That
+ * is, a bit or a field is wildcarded in 'dst' if it is neither
+ * wildcarded in 'src1' nor 'src2'. */
+void
+flow_wildcards_or(struct flow_wildcards *dst,
+                  const struct flow_wildcards *src1,
+                  const struct flow_wildcards *src2)
+{
+    uint32_t *dst_u32 = (uint32_t *) &dst->masks;
+    const uint32_t *src1_u32 = (const uint32_t *) &src1->masks;
+    const uint32_t *src2_u32 = (const uint32_t *) &src2->masks;
+    size_t i;
+
+    for (i = 0; i < FLOW_U32S; i++) {
+        dst_u32[i] = src1_u32[i] | src2_u32[i];
+    }
+}
+
+/* Perform a bitwise OR of miniflow 'src' flow data with the equivalent
+ * fields in 'dst', storing the result in 'dst'. */
+static void
+flow_union_with_miniflow(struct flow *dst, const struct miniflow *src)
+{
+    uint32_t *dst_u32 = (uint32_t *) dst;
+    int ofs;
     int i;
 
-    dst->wildcards = src1->wildcards | src2->wildcards;
-    dst->tun_id_mask = src1->tun_id_mask & src2->tun_id_mask;
-    dst->nw_src_mask = src1->nw_src_mask & src2->nw_src_mask;
-    dst->nw_dst_mask = src1->nw_dst_mask & src2->nw_dst_mask;
-    dst->ipv6_src_mask = ipv6_addr_bitand(&src1->ipv6_src_mask,
-                                        &src2->ipv6_src_mask);
-    dst->ipv6_dst_mask = ipv6_addr_bitand(&src1->ipv6_dst_mask,
-                                        &src2->ipv6_dst_mask);
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        dst->reg_masks[i] = src1->reg_masks[i] & src2->reg_masks[i];
+    ofs = 0;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = src->map[i]; map; map = zero_rightmost_1bit(map)) {
+            dst_u32[raw_ctz(map) + i * 32] |= src->values[ofs++];
+        }
     }
-    dst->vlan_tci_mask = src1->vlan_tci_mask & src2->vlan_tci_mask;
+}
+
+/* Fold minimask 'mask''s wildcard mask into 'wc's wildcard mask. */
+void
+flow_wildcards_fold_minimask(struct flow_wildcards *wc,
+                             const struct minimask *mask)
+{
+    flow_union_with_miniflow(&wc->masks, &mask->masks);
 }
 
 /* Returns a hash of the wildcards in 'wc'. */
 uint32_t
 flow_wildcards_hash(const struct flow_wildcards *wc, uint32_t basis)
 {
-    /* If you change struct flow_wildcards and thereby trigger this
-     * assertion, please check that the new struct flow_wildcards has no holes
-     * in it before you update the assertion. */
-    BUILD_ASSERT_DECL(sizeof *wc == 60 + FLOW_N_REGS * 4);
-    return hash_bytes(wc, sizeof *wc, basis);
+    return flow_hash(&wc->masks, basis);
 }
 
 /* Returns true if 'a' and 'b' represent the same wildcards, false if they are
@@ -730,25 +704,7 @@ bool
 flow_wildcards_equal(const struct flow_wildcards *a,
                      const struct flow_wildcards *b)
 {
-    int i;
-
-    if (a->wildcards != b->wildcards
-        || a->tun_id_mask != b->tun_id_mask
-        || a->nw_src_mask != b->nw_src_mask
-        || a->nw_dst_mask != b->nw_dst_mask
-        || a->vlan_tci_mask != b->vlan_tci_mask
-        || !ipv6_addr_equals(&a->ipv6_src_mask, &b->ipv6_src_mask)
-        || !ipv6_addr_equals(&a->ipv6_dst_mask, &b->ipv6_dst_mask)) {
-        return false;
-    }
-
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        if (a->reg_masks[i] != b->reg_masks[i]) {
-            return false;
-        }
-    }
-
-    return true;
+    return flow_equal(&a->masks, &b->masks);
 }
 
 /* Returns true if at least one bit or field is wildcarded in 'a' but not in
@@ -757,30 +713,35 @@ bool
 flow_wildcards_has_extra(const struct flow_wildcards *a,
                          const struct flow_wildcards *b)
 {
-    int i;
-    struct in6_addr ipv6_masked;
+    const uint32_t *a_u32 = (const uint32_t *) &a->masks;
+    const uint32_t *b_u32 = (const uint32_t *) &b->masks;
+    size_t i;
 
-    for (i = 0; i < FLOW_N_REGS; i++) {
-        if ((a->reg_masks[i] & b->reg_masks[i]) != b->reg_masks[i]) {
+    for (i = 0; i < FLOW_U32S; i++) {
+        if ((a_u32[i] & b_u32[i]) != b_u32[i]) {
             return true;
         }
     }
+    return false;
+}
 
-    ipv6_masked = ipv6_addr_bitand(&a->ipv6_src_mask, &b->ipv6_src_mask);
-    if (!ipv6_addr_equals(&ipv6_masked, &b->ipv6_src_mask)) {
-        return true;
+/* Returns true if 'a' and 'b' are equal, except that 0-bits (wildcarded bits)
+ * in 'wc' do not need to be equal in 'a' and 'b'. */
+bool
+flow_equal_except(const struct flow *a, const struct flow *b,
+                  const struct flow_wildcards *wc)
+{
+    const uint32_t *a_u32 = (const uint32_t *) a;
+    const uint32_t *b_u32 = (const uint32_t *) b;
+    const uint32_t *wc_u32 = (const uint32_t *) &wc->masks;
+    size_t i;
+
+    for (i = 0; i < FLOW_U32S; i++) {
+        if ((a_u32[i] ^ b_u32[i]) & wc_u32[i]) {
+            return false;
+        }
     }
-
-    ipv6_masked = ipv6_addr_bitand(&a->ipv6_dst_mask, &b->ipv6_dst_mask);
-    if (!ipv6_addr_equals(&ipv6_masked, &b->ipv6_dst_mask)) {
-        return true;
-    }
-
-    return (a->wildcards & ~b->wildcards
-            || (a->tun_id_mask & b->tun_id_mask) != b->tun_id_mask
-            || (a->nw_src_mask & b->nw_src_mask) != b->nw_src_mask
-            || (a->nw_dst_mask & b->nw_dst_mask) != b->nw_dst_mask
-            || (a->vlan_tci_mask & b->vlan_tci_mask) != b->vlan_tci_mask);
+    return true;
 }
 
 /* Sets the wildcard mask for register 'idx' in 'wc' to 'mask'.
@@ -788,84 +749,7 @@ flow_wildcards_has_extra(const struct flow_wildcards *a,
 void
 flow_wildcards_set_reg_mask(struct flow_wildcards *wc, int idx, uint32_t mask)
 {
-    wc->reg_masks[idx] = mask;
-}
-
-/* Returns the wildcard bitmask for the Ethernet destination address
- * that 'wc' specifies.  The bitmask has a 0 in each bit that is wildcarded
- * and a 1 in each bit that must match.  */
-const uint8_t *
-flow_wildcards_to_dl_dst_mask(flow_wildcards_t wc)
-{
-    static const uint8_t    no_wild[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-    static const uint8_t  addr_wild[] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
-    static const uint8_t mcast_wild[] = {0xfe, 0xff, 0xff, 0xff, 0xff, 0xff};
-    static const uint8_t   all_wild[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-    switch (wc & (FWW_DL_DST | FWW_ETH_MCAST)) {
-    case 0:                             return no_wild;
-    case FWW_DL_DST:                    return addr_wild;
-    case FWW_ETH_MCAST:                 return mcast_wild;
-    case FWW_DL_DST | FWW_ETH_MCAST:    return all_wild;
-    }
-    NOT_REACHED();
-}
-
-/* Returns true if 'mask' is a valid wildcard bitmask for the Ethernet
- * destination address.  Valid bitmasks are either all-bits-0 or all-bits-1,
- * except that the multicast bit may differ from the rest of the bits.  So,
- * there are four possible valid bitmasks:
- *
- *  - 00:00:00:00:00:00
- *  - 01:00:00:00:00:00
- *  - fe:ff:ff:ff:ff:ff
- *  - ff:ff:ff:ff:ff:ff
- *
- * All other bitmasks are invalid. */
-bool
-flow_wildcards_is_dl_dst_mask_valid(const uint8_t mask[ETH_ADDR_LEN])
-{
-    switch (mask[0]) {
-    case 0x00:
-    case 0x01:
-        return (mask[1] | mask[2] | mask[3] | mask[4] | mask[5]) == 0x00;
-
-    case 0xfe:
-    case 0xff:
-        return (mask[1] & mask[2] & mask[3] & mask[4] & mask[5]) == 0xff;
-
-    default:
-        return false;
-    }
-}
-
-/* Returns 'wc' with the FWW_DL_DST and FWW_ETH_MCAST bits modified
- * appropriately to match 'mask'.
- *
- * This function will assert-fail if 'mask' is invalid.  Only 'mask' values
- * accepted by flow_wildcards_is_dl_dst_mask_valid() are allowed. */
-flow_wildcards_t
-flow_wildcards_set_dl_dst_mask(flow_wildcards_t wc,
-                               const uint8_t mask[ETH_ADDR_LEN])
-{
-    assert(flow_wildcards_is_dl_dst_mask_valid(mask));
-
-    switch (mask[0]) {
-    case 0x00:
-        return wc | FWW_DL_DST | FWW_ETH_MCAST;
-
-    case 0x01:
-        return (wc | FWW_DL_DST) & ~FWW_ETH_MCAST;
-
-    case 0xfe:
-        return (wc & ~FWW_DL_DST) | FWW_ETH_MCAST;
-
-    case 0xff:
-        return wc & ~(FWW_DL_DST | FWW_ETH_MCAST);
-
-    default:
-        NOT_REACHED();
-    }
+    wc->masks.regs[idx] = mask;
 }
 
 /* Hashes 'flow' based on its L2 through L4 protocol information. */
@@ -879,7 +763,7 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
         };
         ovs_be16 eth_type;
         ovs_be16 vlan_tci;
-        ovs_be16 tp_addr;
+        ovs_be16 tp_port;
         uint8_t eth_addr[ETH_ADDR_LEN];
         uint8_t ip_proto;
     } fields;
@@ -898,8 +782,8 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
     if (fields.eth_type == htons(ETH_TYPE_IP)) {
         fields.ipv4_addr = flow->nw_src ^ flow->nw_dst;
         fields.ip_proto = flow->nw_proto;
-        if (fields.ip_proto == IPPROTO_TCP) {
-            fields.tp_addr = flow->tp_src ^ flow->tp_dst;
+        if (fields.ip_proto == IPPROTO_TCP || fields.ip_proto == IPPROTO_SCTP) {
+            fields.tp_port = flow->tp_src ^ flow->tp_dst;
         }
     } else if (fields.eth_type == htons(ETH_TYPE_IPV6)) {
         const uint8_t *a = &flow->ipv6_src.s6_addr[0];
@@ -910,11 +794,44 @@ flow_hash_symmetric_l4(const struct flow *flow, uint32_t basis)
             ipv6_addr[i] = a[i] ^ b[i];
         }
         fields.ip_proto = flow->nw_proto;
-        if (fields.ip_proto == IPPROTO_TCP) {
-            fields.tp_addr = flow->tp_src ^ flow->tp_dst;
+        if (fields.ip_proto == IPPROTO_TCP || fields.ip_proto == IPPROTO_SCTP) {
+            fields.tp_port = flow->tp_src ^ flow->tp_dst;
         }
     }
-    return hash_bytes(&fields, sizeof fields, basis);
+    return jhash_bytes(&fields, sizeof fields, basis);
+}
+
+/* Masks the fields in 'wc' that are used by the flow hash 'fields'. */
+void
+flow_mask_hash_fields(const struct flow *flow, struct flow_wildcards *wc,
+                      enum nx_hash_fields fields)
+{
+    switch (fields) {
+    case NX_HASH_FIELDS_ETH_SRC:
+        memset(&wc->masks.dl_src, 0xff, sizeof wc->masks.dl_src);
+        break;
+
+    case NX_HASH_FIELDS_SYMMETRIC_L4:
+        memset(&wc->masks.dl_src, 0xff, sizeof wc->masks.dl_src);
+        memset(&wc->masks.dl_dst, 0xff, sizeof wc->masks.dl_dst);
+        if (flow->dl_type == htons(ETH_TYPE_IP)) {
+            memset(&wc->masks.nw_src, 0xff, sizeof wc->masks.nw_src);
+            memset(&wc->masks.nw_dst, 0xff, sizeof wc->masks.nw_dst);
+        } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
+            memset(&wc->masks.ipv6_src, 0xff, sizeof wc->masks.ipv6_src);
+            memset(&wc->masks.ipv6_dst, 0xff, sizeof wc->masks.ipv6_dst);
+        }
+        if (is_ip_any(flow)) {
+            memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
+            memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
+            memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
+        }
+        wc->masks.vlan_tci |= htons(VLAN_VID_MASK | VLAN_CFI);
+        break;
+
+    default:
+        NOT_REACHED();
+    }
 }
 
 /* Hashes the portions of 'flow' designated by 'fields'. */
@@ -925,7 +842,7 @@ flow_hash_fields(const struct flow *flow, enum nx_hash_fields fields,
     switch (fields) {
 
     case NX_HASH_FIELDS_ETH_SRC:
-        return hash_bytes(flow->dl_src, sizeof flow->dl_src, basis);
+        return jhash_bytes(flow->dl_src, sizeof flow->dl_src, basis);
 
     case NX_HASH_FIELDS_SYMMETRIC_L4:
         return flow_hash_symmetric_l4(flow, basis);
@@ -953,6 +870,24 @@ flow_hash_fields_valid(enum nx_hash_fields fields)
         || fields == NX_HASH_FIELDS_SYMMETRIC_L4;
 }
 
+/* Returns a hash value for the bits of 'flow' that are active based on
+ * 'wc', given 'basis'. */
+uint32_t
+flow_hash_in_wildcards(const struct flow *flow,
+                       const struct flow_wildcards *wc, uint32_t basis)
+{
+    const uint32_t *wc_u32 = (const uint32_t *) &wc->masks;
+    const uint32_t *flow_u32 = (const uint32_t *) flow;
+    uint32_t hash;
+    size_t i;
+
+    hash = basis;
+    for (i = 0; i < FLOW_U32S; i++) {
+        hash = mhash_add(hash, flow_u32[i] & wc_u32[i]);
+    }
+    return mhash_finish(hash, 4 * FLOW_U32S);
+}
+
 /* Sets the VLAN VID that 'flow' matches to 'vid', which is interpreted as an
  * OpenFlow 1.0 "dl_vlan" value:
  *
@@ -965,15 +900,26 @@ flow_hash_fields_valid(enum nx_hash_fields fields)
  *
  *      - Other values of 'vid' should not be used. */
 void
-flow_set_vlan_vid(struct flow *flow, ovs_be16 vid)
+flow_set_dl_vlan(struct flow *flow, ovs_be16 vid)
 {
-    if (vid == htons(OFP_VLAN_NONE)) {
+    if (vid == htons(OFP10_VLAN_NONE)) {
         flow->vlan_tci = htons(0);
     } else {
         vid &= htons(VLAN_VID_MASK);
         flow->vlan_tci &= ~htons(VLAN_VID_MASK);
         flow->vlan_tci |= htons(VLAN_CFI) | vid;
     }
+}
+
+/* Sets the VLAN VID that 'flow' matches to 'vid', which is interpreted as an
+ * OpenFlow 1.2 "vlan_vid" value, that is, the low 13 bits of 'vlan_tci' (VID
+ * plus CFI). */
+void
+flow_set_vlan_vid(struct flow *flow, ovs_be16 vid)
+{
+    ovs_be16 mask = htons(VLAN_VID_MASK | VLAN_CFI);
+    flow->vlan_tci &= ~mask;
+    flow->vlan_tci |= vid & mask;
 }
 
 /* Sets the VLAN PCP that 'flow' matches to 'pcp', which should be in the
@@ -991,11 +937,42 @@ flow_set_vlan_pcp(struct flow *flow, uint8_t pcp)
     flow->vlan_tci |= htons((pcp << VLAN_PCP_SHIFT) | VLAN_CFI);
 }
 
+/* Sets the MPLS Label that 'flow' matches to 'label', which is interpreted
+ * as an OpenFlow 1.1 "mpls_label" value. */
+void
+flow_set_mpls_label(struct flow *flow, ovs_be32 label)
+{
+    set_mpls_lse_label(&flow->mpls_lse, label);
+}
+
+/* Sets the MPLS TTL that 'flow' matches to 'ttl', which should be in the
+ * range 0...255. */
+void
+flow_set_mpls_ttl(struct flow *flow, uint8_t ttl)
+{
+    set_mpls_lse_ttl(&flow->mpls_lse, ttl);
+}
+
+/* Sets the MPLS TC that 'flow' matches to 'tc', which should be in the
+ * range 0...7. */
+void
+flow_set_mpls_tc(struct flow *flow, uint8_t tc)
+{
+    set_mpls_lse_tc(&flow->mpls_lse, tc);
+}
+
+/* Sets the MPLS BOS bit that 'flow' matches to which should be 0 or 1. */
+void
+flow_set_mpls_bos(struct flow *flow, uint8_t bos)
+{
+    set_mpls_lse_bos(&flow->mpls_lse, bos);
+}
+
 /* Puts into 'b' a packet that flow_extract() would parse as having the given
  * 'flow'.
  *
  * (This is useful only for testing, obviously, and the packet isn't really
- * valid.  It hasn't got any checksums filled in, for one, and lots of fields
+ * valid. It hasn't got some checksums filled in, for one, and lots of fields
  * are just zeroed.) */
 void
 flow_compose(struct ofpbuf *b, const struct flow *flow)
@@ -1017,9 +994,10 @@ flow_compose(struct ofpbuf *b, const struct flow *flow)
         b->l3 = ip = ofpbuf_put_zeros(b, sizeof *ip);
         ip->ip_ihl_ver = IP_IHL_VER(5, 4);
         ip->ip_tos = flow->nw_tos;
+        ip->ip_ttl = flow->nw_ttl;
         ip->ip_proto = flow->nw_proto;
-        ip->ip_src = flow->nw_src;
-        ip->ip_dst = flow->nw_dst;
+        put_16aligned_be32(&ip->ip_src, flow->nw_src);
+        put_16aligned_be32(&ip->ip_dst, flow->nw_dst);
 
         if (flow->nw_frag & FLOW_NW_FRAG_ANY) {
             ip->ip_frag_off |= htons(IP_MORE_FRAGMENTS);
@@ -1042,20 +1020,30 @@ flow_compose(struct ofpbuf *b, const struct flow *flow)
                 b->l4 = udp = ofpbuf_put_zeros(b, sizeof *udp);
                 udp->udp_src = flow->tp_src;
                 udp->udp_dst = flow->tp_dst;
+            } else if (flow->nw_proto == IPPROTO_SCTP) {
+                struct sctp_header *sctp;
+
+                b->l4 = sctp = ofpbuf_put_zeros(b, sizeof *sctp);
+                sctp->sctp_src = flow->tp_src;
+                sctp->sctp_dst = flow->tp_dst;
             } else if (flow->nw_proto == IPPROTO_ICMP) {
                 struct icmp_header *icmp;
 
                 b->l4 = icmp = ofpbuf_put_zeros(b, sizeof *icmp);
                 icmp->icmp_type = ntohs(flow->tp_src);
                 icmp->icmp_code = ntohs(flow->tp_dst);
+                icmp->icmp_csum = csum(icmp, ICMP_HEADER_LEN);
             }
         }
 
+        ip = b->l3;
         ip->ip_tot_len = htons((uint8_t *) b->data + b->size
                                - (uint8_t *) b->l3);
+        ip->ip_csum = csum(ip, sizeof *ip);
     } else if (flow->dl_type == htons(ETH_TYPE_IPV6)) {
         /* XXX */
-    } else if (flow->dl_type == htons(ETH_TYPE_ARP)) {
+    } else if (flow->dl_type == htons(ETH_TYPE_ARP) ||
+               flow->dl_type == htons(ETH_TYPE_RARP)) {
         struct arp_eth_header *arp;
 
         b->l3 = arp = ofpbuf_put_zeros(b, sizeof *arp);
@@ -1067,10 +1055,439 @@ flow_compose(struct ofpbuf *b, const struct flow *flow)
 
         if (flow->nw_proto == ARP_OP_REQUEST ||
             flow->nw_proto == ARP_OP_REPLY) {
-            arp->ar_spa = flow->nw_src;
-            arp->ar_tpa = flow->nw_dst;
+            put_16aligned_be32(&arp->ar_spa, flow->nw_src);
+            put_16aligned_be32(&arp->ar_tpa, flow->nw_dst);
             memcpy(arp->ar_sha, flow->arp_sha, ETH_ADDR_LEN);
             memcpy(arp->ar_tha, flow->arp_tha, ETH_ADDR_LEN);
         }
     }
+
+    if (eth_type_mpls(flow->dl_type)) {
+        b->l2_5 = b->l3;
+        push_mpls(b, flow->dl_type, flow->mpls_lse);
+    }
+}
+
+/* Compressed flow. */
+
+static int
+miniflow_n_values(const struct miniflow *flow)
+{
+    int n, i;
+
+    n = 0;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        n += popcount(flow->map[i]);
+    }
+    return n;
+}
+
+static uint32_t *
+miniflow_alloc_values(struct miniflow *flow, int n)
+{
+    if (n <= MINI_N_INLINE) {
+        return flow->inline_values;
+    } else {
+        COVERAGE_INC(miniflow_malloc);
+        return xmalloc(n * sizeof *flow->values);
+    }
+}
+
+/* Initializes 'dst' as a copy of 'src'.  The caller must eventually free 'dst'
+ * with miniflow_destroy(). */
+void
+miniflow_init(struct miniflow *dst, const struct flow *src)
+{
+    const uint32_t *src_u32 = (const uint32_t *) src;
+    unsigned int ofs;
+    unsigned int i;
+    int n;
+
+    /* Initialize dst->map, counting the number of nonzero elements. */
+    n = 0;
+    memset(dst->map, 0, sizeof dst->map);
+    for (i = 0; i < FLOW_U32S; i++) {
+        if (src_u32[i]) {
+            dst->map[i / 32] |= 1u << (i % 32);
+            n++;
+        }
+    }
+
+    /* Initialize dst->values. */
+    dst->values = miniflow_alloc_values(dst, n);
+    ofs = 0;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = dst->map[i]; map; map = zero_rightmost_1bit(map)) {
+            dst->values[ofs++] = src_u32[raw_ctz(map) + i * 32];
+        }
+    }
+}
+
+/* Initializes 'dst' as a copy of 'src'.  The caller must eventually free 'dst'
+ * with miniflow_destroy(). */
+void
+miniflow_clone(struct miniflow *dst, const struct miniflow *src)
+{
+    int n = miniflow_n_values(src);
+    memcpy(dst->map, src->map, sizeof dst->map);
+    dst->values = miniflow_alloc_values(dst, n);
+    memcpy(dst->values, src->values, n * sizeof *dst->values);
+}
+
+/* Initializes 'dst' with the data in 'src', destroying 'src'.
+ * The caller must eventually free 'dst' with miniflow_destroy(). */
+void
+miniflow_move(struct miniflow *dst, struct miniflow *src)
+{
+    if (src->values == src->inline_values) {
+        dst->values = dst->inline_values;
+        memcpy(dst->values, src->values,
+               miniflow_n_values(src) * sizeof *dst->values);
+    } else {
+        dst->values = src->values;
+    }
+    memcpy(dst->map, src->map, sizeof dst->map);
+}
+
+/* Frees any memory owned by 'flow'.  Does not free the storage in which 'flow'
+ * itself resides; the caller is responsible for that. */
+void
+miniflow_destroy(struct miniflow *flow)
+{
+    if (flow->values != flow->inline_values) {
+        free(flow->values);
+    }
+}
+
+/* Initializes 'dst' as a copy of 'src'. */
+void
+miniflow_expand(const struct miniflow *src, struct flow *dst)
+{
+    memset(dst, 0, sizeof *dst);
+    flow_union_with_miniflow(dst, src);
+}
+
+static const uint32_t *
+miniflow_get__(const struct miniflow *flow, unsigned int u32_ofs)
+{
+    if (!(flow->map[u32_ofs / 32] & (1u << (u32_ofs % 32)))) {
+        static const uint32_t zero = 0;
+        return &zero;
+    } else {
+        const uint32_t *p = flow->values;
+
+        BUILD_ASSERT(MINI_N_MAPS == 2);
+        if (u32_ofs < 32) {
+            p += popcount(flow->map[0] & ((1u << u32_ofs) - 1));
+        } else {
+            p += popcount(flow->map[0]);
+            p += popcount(flow->map[1] & ((1u << (u32_ofs - 32)) - 1));
+        }
+        return p;
+    }
+}
+
+/* Returns the uint32_t that would be at byte offset '4 * u32_ofs' if 'flow'
+ * were expanded into a "struct flow". */
+uint32_t
+miniflow_get(const struct miniflow *flow, unsigned int u32_ofs)
+{
+    return *miniflow_get__(flow, u32_ofs);
+}
+
+/* Returns the ovs_be16 that would be at byte offset 'u8_ofs' if 'flow' were
+ * expanded into a "struct flow". */
+static ovs_be16
+miniflow_get_be16(const struct miniflow *flow, unsigned int u8_ofs)
+{
+    const uint32_t *u32p = miniflow_get__(flow, u8_ofs / 4);
+    const ovs_be16 *be16p = (const ovs_be16 *) u32p;
+    return be16p[u8_ofs % 4 != 0];
+}
+
+/* Returns the VID within the vlan_tci member of the "struct flow" represented
+ * by 'flow'. */
+uint16_t
+miniflow_get_vid(const struct miniflow *flow)
+{
+    ovs_be16 tci = miniflow_get_be16(flow, offsetof(struct flow, vlan_tci));
+    return vlan_tci_to_vid(tci);
+}
+
+/* Returns true if 'a' and 'b' are the same flow, false otherwise.  */
+bool
+miniflow_equal(const struct miniflow *a, const struct miniflow *b)
+{
+    int i;
+
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        if (a->map[i] != b->map[i]) {
+            return false;
+        }
+    }
+
+    return !memcmp(a->values, b->values,
+                   miniflow_n_values(a) * sizeof *a->values);
+}
+
+/* Returns true if 'a' and 'b' are equal at the places where there are 1-bits
+ * in 'mask', false if they differ. */
+bool
+miniflow_equal_in_minimask(const struct miniflow *a, const struct miniflow *b,
+                           const struct minimask *mask)
+{
+    const uint32_t *p;
+    int i;
+
+    p = mask->masks.values;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = mask->masks.map[i]; map; map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+
+            if ((miniflow_get(a, ofs) ^ miniflow_get(b, ofs)) & *p) {
+                return false;
+            }
+            p++;
+        }
+    }
+
+    return true;
+}
+
+/* Returns true if 'a' and 'b' are equal at the places where there are 1-bits
+ * in 'mask', false if they differ. */
+bool
+miniflow_equal_flow_in_minimask(const struct miniflow *a, const struct flow *b,
+                                const struct minimask *mask)
+{
+    const uint32_t *b_u32 = (const uint32_t *) b;
+    const uint32_t *p;
+    int i;
+
+    p = mask->masks.values;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = mask->masks.map[i]; map; map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+
+            if ((miniflow_get(a, ofs) ^ b_u32[ofs]) & *p) {
+                return false;
+            }
+            p++;
+        }
+    }
+
+    return true;
+}
+
+/* Returns a hash value for 'flow', given 'basis'. */
+uint32_t
+miniflow_hash(const struct miniflow *flow, uint32_t basis)
+{
+    BUILD_ASSERT_DECL(MINI_N_MAPS == 2);
+    return hash_3words(flow->map[0], flow->map[1],
+                       hash_words(flow->values, miniflow_n_values(flow),
+                                  basis));
+}
+
+/* Returns a hash value for the bits of 'flow' where there are 1-bits in
+ * 'mask', given 'basis'.
+ *
+ * The hash values returned by this function are the same as those returned by
+ * flow_hash_in_minimask(), only the form of the arguments differ. */
+uint32_t
+miniflow_hash_in_minimask(const struct miniflow *flow,
+                          const struct minimask *mask, uint32_t basis)
+{
+    const uint32_t *p = mask->masks.values;
+    uint32_t hash;
+    int i;
+
+    hash = basis;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = mask->masks.map[i]; map; map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+
+            hash = mhash_add(hash, miniflow_get(flow, ofs) & *p);
+            p++;
+        }
+    }
+
+    return mhash_finish(hash, (p - mask->masks.values) * 4);
+}
+
+/* Returns a hash value for the bits of 'flow' where there are 1-bits in
+ * 'mask', given 'basis'.
+ *
+ * The hash values returned by this function are the same as those returned by
+ * miniflow_hash_in_minimask(), only the form of the arguments differ. */
+uint32_t
+flow_hash_in_minimask(const struct flow *flow, const struct minimask *mask,
+                      uint32_t basis)
+{
+    const uint32_t *flow_u32 = (const uint32_t *) flow;
+    const uint32_t *p = mask->masks.values;
+    uint32_t hash;
+    int i;
+
+    hash = basis;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = mask->masks.map[i]; map; map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+
+            hash = mhash_add(hash, flow_u32[ofs] & *p);
+            p++;
+        }
+    }
+
+    return mhash_finish(hash, (p - mask->masks.values) * 4);
+}
+
+/* Initializes 'dst' as a copy of 'src'.  The caller must eventually free 'dst'
+ * with minimask_destroy(). */
+void
+minimask_init(struct minimask *mask, const struct flow_wildcards *wc)
+{
+    miniflow_init(&mask->masks, &wc->masks);
+}
+
+/* Initializes 'dst' as a copy of 'src'.  The caller must eventually free 'dst'
+ * with minimask_destroy(). */
+void
+minimask_clone(struct minimask *dst, const struct minimask *src)
+{
+    miniflow_clone(&dst->masks, &src->masks);
+}
+
+/* Initializes 'dst' with the data in 'src', destroying 'src'.
+ * The caller must eventually free 'dst' with minimask_destroy(). */
+void
+minimask_move(struct minimask *dst, struct minimask *src)
+{
+    miniflow_move(&dst->masks, &src->masks);
+}
+
+/* Initializes 'dst_' as the bit-wise "and" of 'a_' and 'b_'.
+ *
+ * The caller must provide room for FLOW_U32S "uint32_t"s in 'storage', for use
+ * by 'dst_'.  The caller must *not* free 'dst_' with minimask_destroy(). */
+void
+minimask_combine(struct minimask *dst_,
+                 const struct minimask *a_, const struct minimask *b_,
+                 uint32_t storage[FLOW_U32S])
+{
+    struct miniflow *dst = &dst_->masks;
+    const struct miniflow *a = &a_->masks;
+    const struct miniflow *b = &b_->masks;
+    int i, n;
+
+    n = 0;
+    dst->values = storage;
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        dst->map[i] = 0;
+        for (map = a->map[i] & b->map[i]; map;
+             map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+            uint32_t mask = miniflow_get(a, ofs) & miniflow_get(b, ofs);
+
+            if (mask) {
+                dst->map[i] |= rightmost_1bit(map);
+                dst->values[n++] = mask;
+            }
+        }
+    }
+}
+
+/* Frees any memory owned by 'mask'.  Does not free the storage in which 'mask'
+ * itself resides; the caller is responsible for that. */
+void
+minimask_destroy(struct minimask *mask)
+{
+    miniflow_destroy(&mask->masks);
+}
+
+/* Initializes 'dst' as a copy of 'src'. */
+void
+minimask_expand(const struct minimask *mask, struct flow_wildcards *wc)
+{
+    miniflow_expand(&mask->masks, &wc->masks);
+}
+
+/* Returns the uint32_t that would be at byte offset '4 * u32_ofs' if 'mask'
+ * were expanded into a "struct flow_wildcards". */
+uint32_t
+minimask_get(const struct minimask *mask, unsigned int u32_ofs)
+{
+    return miniflow_get(&mask->masks, u32_ofs);
+}
+
+/* Returns the VID mask within the vlan_tci member of the "struct
+ * flow_wildcards" represented by 'mask'. */
+uint16_t
+minimask_get_vid_mask(const struct minimask *mask)
+{
+    return miniflow_get_vid(&mask->masks);
+}
+
+/* Returns true if 'a' and 'b' are the same flow mask, false otherwise.  */
+bool
+minimask_equal(const struct minimask *a, const struct minimask *b)
+{
+    return miniflow_equal(&a->masks, &b->masks);
+}
+
+/* Returns a hash value for 'mask', given 'basis'. */
+uint32_t
+minimask_hash(const struct minimask *mask, uint32_t basis)
+{
+    return miniflow_hash(&mask->masks, basis);
+}
+
+/* Returns true if at least one bit is wildcarded in 'a_' but not in 'b_',
+ * false otherwise. */
+bool
+minimask_has_extra(const struct minimask *a_, const struct minimask *b_)
+{
+    const struct miniflow *a = &a_->masks;
+    const struct miniflow *b = &b_->masks;
+    int i;
+
+    for (i = 0; i < MINI_N_MAPS; i++) {
+        uint32_t map;
+
+        for (map = a->map[i] | b->map[i]; map;
+             map = zero_rightmost_1bit(map)) {
+            int ofs = raw_ctz(map) + i * 32;
+            uint32_t a_u32 = miniflow_get(a, ofs);
+            uint32_t b_u32 = miniflow_get(b, ofs);
+
+            if ((a_u32 & b_u32) != b_u32) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/* Returns true if 'mask' matches every packet, false if 'mask' fixes any bits
+ * or fields. */
+bool
+minimask_is_catchall(const struct minimask *mask_)
+{
+    const struct miniflow *mask = &mask_->masks;
+
+    BUILD_ASSERT(MINI_N_MAPS == 2);
+    return !(mask->map[0] | mask->map[1]);
 }

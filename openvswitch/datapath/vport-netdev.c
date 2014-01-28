@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2012 Nicira Networks.
+ * Copyright (c) 2007-2012 Nicira, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -25,10 +25,10 @@
 #include <linux/llc.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/openvswitch.h>
 
 #include <net/llc.h>
 
-#include "checksum.h"
 #include "datapath.h"
 #include "vlan.h"
 #include "vport-internal_dev.h"
@@ -63,7 +63,8 @@ static rx_handler_result_t netdev_frame_hook(struct sk_buff **pskb)
 
 	return RX_HANDLER_CONSUMED;
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36) || \
+      defined HAVE_RHEL_OVS_HOOK
 /* Called with rcu_read_lock and bottom-halves disabled. */
 static struct sk_buff *netdev_frame_hook(struct sk_buff *skb)
 {
@@ -78,7 +79,7 @@ static struct sk_buff *netdev_frame_hook(struct sk_buff *skb)
 
 	return NULL;
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
 /*
  * Used as br_handle_frame_hook.  (Cannot run bridge at the same time, even on
  * different set of devices!)
@@ -90,39 +91,48 @@ static struct sk_buff *netdev_frame_hook(struct net_bridge_port *p,
 	netdev_port_receive((struct vport *)p, skb);
 	return NULL;
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
-/*
- * Used as br_handle_frame_hook.  (Cannot run bridge at the same time, even on
- * different set of devices!)
- */
-/* Called with rcu_read_lock and bottom-halves disabled. */
-static int netdev_frame_hook(struct net_bridge_port *p, struct sk_buff **pskb)
-{
-	netdev_port_receive((struct vport *)p, *pskb);
-	return 1;
-}
 #else
 #error
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36) || \
+    defined HAVE_RHEL_OVS_HOOK
 static int netdev_init(void) { return 0; }
 static void netdev_exit(void) { }
 #else
-static int netdev_init(void)
+static int port_count;
+
+static void netdev_init(void)
 {
+	port_count++;
+	if (port_count > 1)
+		return;
+
 	/* Hook into callback used by the bridge to intercept packets.
 	 * Parasites we are. */
 	br_handle_frame_hook = netdev_frame_hook;
 
-	return 0;
+	return;
 }
 
 static void netdev_exit(void)
 {
+	port_count--;
+	if (port_count > 0)
+		return;
+
 	br_handle_frame_hook = NULL;
 }
 #endif
+
+static struct net_device *get_dpdev(struct datapath *dp)
+{
+	struct vport *local;
+
+	local = ovs_vport_ovsl(dp, OVSP_LOCAL);
+	BUG_ON(!local);
+	return netdev_vport_priv(local)->dev;
+}
 
 static struct vport *netdev_create(const struct vport_parms *parms)
 {
@@ -139,7 +149,7 @@ static struct vport *netdev_create(const struct vport_parms *parms)
 
 	netdev_vport = netdev_vport_priv(vport);
 
-	netdev_vport->dev = dev_get_by_name(&init_net, parms->name);
+	netdev_vport->dev = dev_get_by_name(ovs_dp_get_net(vport->dp), parms->name);
 	if (!netdev_vport->dev) {
 		err = -ENODEV;
 		goto error_free_vport;
@@ -152,19 +162,28 @@ static struct vport *netdev_create(const struct vport_parms *parms)
 		goto error_put;
 	}
 
+	rtnl_lock();
+	err = netdev_master_upper_dev_link(netdev_vport->dev,
+					   get_dpdev(vport->dp));
+	if (err)
+		goto error_unlock;
+
 	err = netdev_rx_handler_register(netdev_vport->dev, netdev_frame_hook,
 					 vport);
 	if (err)
-		goto error_put;
+		goto error_master_upper_dev_unlink;
 
 	dev_set_promiscuity(netdev_vport->dev, 1);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-	dev_disable_lro(netdev_vport->dev);
-#endif
 	netdev_vport->dev->priv_flags |= IFF_OVS_DATAPATH;
+	rtnl_unlock();
 
+	netdev_init();
 	return vport;
 
+error_master_upper_dev_unlink:
+	netdev_upper_dev_unlink(netdev_vport->dev, get_dpdev(vport->dp));
+error_unlock:
+	rtnl_unlock();
 error_put:
 	dev_put(netdev_vport->dev);
 error_free_vport:
@@ -173,29 +192,28 @@ error:
 	return ERR_PTR(err);
 }
 
+static void free_port_rcu(struct rcu_head *rcu)
+{
+	struct netdev_vport *netdev_vport = container_of(rcu,
+					struct netdev_vport, rcu);
+
+	dev_put(netdev_vport->dev);
+	ovs_vport_free(vport_from_priv(netdev_vport));
+}
+
 static void netdev_destroy(struct vport *vport)
 {
 	struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
 
+	netdev_exit();
+	rtnl_lock();
 	netdev_vport->dev->priv_flags &= ~IFF_OVS_DATAPATH;
 	netdev_rx_handler_unregister(netdev_vport->dev);
+	netdev_upper_dev_unlink(netdev_vport->dev, get_dpdev(vport->dp));
 	dev_set_promiscuity(netdev_vport->dev, -1);
+	rtnl_unlock();
 
-	synchronize_rcu();
-
-	dev_put(netdev_vport->dev);
-	ovs_vport_free(vport);
-}
-
-int ovs_netdev_set_addr(struct vport *vport, const unsigned char *addr)
-{
-	struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	struct sockaddr sa;
-
-	sa.sa_family = ARPHRD_ETHER;
-	memcpy(sa.sa_data, addr, ETH_ALEN);
-
-	return dev_set_mac_address(netdev_vport->dev, &sa);
+	call_rcu(&netdev_vport->rcu, free_port_rcu);
 }
 
 const char *ovs_netdev_get_name(const struct vport *vport)
@@ -204,55 +222,14 @@ const char *ovs_netdev_get_name(const struct vport *vport)
 	return netdev_vport->dev->name;
 }
 
-const unsigned char *ovs_netdev_get_addr(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return netdev_vport->dev->dev_addr;
-}
-
-struct kobject *ovs_netdev_get_kobj(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return &netdev_vport->dev->NETDEV_DEV_MEMBER.kobj;
-}
-
-unsigned ovs_netdev_get_dev_flags(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return dev_get_flags(netdev_vport->dev);
-}
-
-int ovs_netdev_is_running(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return netif_running(netdev_vport->dev);
-}
-
-unsigned char ovs_netdev_get_operstate(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return netdev_vport->dev->operstate;
-}
-
-int ovs_netdev_get_ifindex(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return netdev_vport->dev->ifindex;
-}
-
-int ovs_netdev_get_mtu(const struct vport *vport)
-{
-	const struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
-	return netdev_vport->dev->mtu;
-}
-
 /* Must be called with rcu_read_lock. */
 static void netdev_port_receive(struct vport *vport, struct sk_buff *skb)
 {
-	if (unlikely(!vport)) {
-		kfree_skb(skb);
-		return;
-	}
+	if (unlikely(!vport))
+		goto error;
+
+	if (unlikely(skb_warn_if_lro(skb)))
+		goto error;
 
 	/* Make our own copy of the packet.  Otherwise we will mangle the
 	 * packet for anyone who came before us (e.g. tcpdump via AF_PACKET).
@@ -263,19 +240,18 @@ static void netdev_port_receive(struct vport *vport, struct sk_buff *skb)
 		return;
 
 	skb_push(skb, ETH_HLEN);
+	ovs_skb_postpush_rcsum(skb, skb->data, ETH_HLEN);
 
-	if (unlikely(compute_ip_summed(skb, false))) {
-		kfree_skb(skb);
-		return;
-	}
-	vlan_copy_skb_tci(skb);
+	ovs_vport_receive(vport, skb, NULL);
+	return;
 
-	ovs_vport_receive(vport, skb);
+error:
+	kfree_skb(skb);
 }
 
-static unsigned packet_length(const struct sk_buff *skb)
+static unsigned int packet_length(const struct sk_buff *skb)
 {
-	unsigned length = skb->len - ETH_HLEN;
+	unsigned int length = skb->len - ETH_HLEN;
 
 	if (skb->protocol == htons(ETH_P_8021Q))
 		length -= VLAN_HLEN;
@@ -303,17 +279,13 @@ static int netdev_send(struct vport *vport, struct sk_buff *skb)
 	int len;
 
 	if (unlikely(packet_length(skb) > mtu && !skb_is_gso(skb))) {
-		if (net_ratelimit())
-			pr_warn("%s: dropped over-mtu packet: %d > %d\n",
-				ovs_dp_name(vport->dp), packet_length(skb), mtu);
-		goto error;
+		net_warn_ratelimited("%s: dropped over-mtu packet: %d > %d\n",
+				     netdev_vport->dev->name,
+				     packet_length(skb), mtu);
+		goto drop;
 	}
 
-	if (unlikely(skb_warn_if_lro(skb)))
-		goto error;
-
 	skb->dev = netdev_vport->dev;
-	forward_ip_summed(skb, true);
 
 	if (vlan_tx_tag_present(skb) && !dev_supports_vlan_tx(skb->dev)) {
 		int features;
@@ -330,19 +302,15 @@ static int netdev_send(struct vport *vport, struct sk_buff *skb)
 			nskb = skb_gso_segment(skb, features);
 			if (!nskb) {
 				if (unlikely(skb_cloned(skb) &&
-				    pskb_expand_head(skb, 0, 0, GFP_ATOMIC))) {
-					kfree_skb(skb);
-					return 0;
-				}
+				    pskb_expand_head(skb, 0, 0, GFP_ATOMIC)))
+					goto drop;
 
 				skb_shinfo(skb)->gso_type &= ~SKB_GSO_DODGY;
 				goto tag;
 			}
 
-			if (IS_ERR(nskb)) {
-				kfree_skb(skb);
-				return 0;
-			}
+			if (IS_ERR(nskb))
+				goto drop;
 			consume_skb(skb);
 			skb = nskb;
 
@@ -351,7 +319,7 @@ static int netdev_send(struct vport *vport, struct sk_buff *skb)
 				nskb = skb->next;
 				skb->next = NULL;
 
-				skb = __vlan_put_tag(skb, vlan_tx_tag_get(skb));
+				skb = __vlan_put_tag(skb, skb->vlan_proto, vlan_tx_tag_get(skb));
 				if (likely(skb)) {
 					len += skb->len;
 					vlan_set_tci(skb, 0);
@@ -365,7 +333,7 @@ static int netdev_send(struct vport *vport, struct sk_buff *skb)
 		}
 
 tag:
-		skb = __vlan_put_tag(skb, vlan_tx_tag_get(skb));
+		skb = __vlan_put_tag(skb, skb->vlan_proto, vlan_tx_tag_get(skb));
 		if (unlikely(!skb))
 			return 0;
 		vlan_set_tci(skb, 0);
@@ -376,22 +344,26 @@ tag:
 
 	return len;
 
-error:
+drop:
 	kfree_skb(skb);
-	ovs_vport_record_error(vport, VPORT_E_TX_DROPPED);
 	return 0;
 }
 
 /* Returns null if this device is not attached to a datapath. */
 struct vport *ovs_netdev_get_vport(struct net_device *dev)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36) || \
+    defined HAVE_RHEL_OVS_HOOK
 #if IFF_OVS_DATAPATH != 0
 	if (likely(dev->priv_flags & IFF_OVS_DATAPATH))
 #else
 	if (likely(rcu_access_pointer(dev->rx_handler) == netdev_frame_hook))
 #endif
+#ifdef HAVE_RHEL_OVS_HOOK
+		return (struct vport *)rcu_dereference_rtnl(dev->ax25_ptr);
+#else
 		return (struct vport *)rcu_dereference_rtnl(dev->rx_handler_data);
+#endif
 	else
 		return NULL;
 #else
@@ -401,29 +373,28 @@ struct vport *ovs_netdev_get_vport(struct net_device *dev)
 
 const struct vport_ops ovs_netdev_vport_ops = {
 	.type		= OVS_VPORT_TYPE_NETDEV,
-	.flags          = VPORT_F_REQUIRED,
-	.init		= netdev_init,
-	.exit		= netdev_exit,
 	.create		= netdev_create,
 	.destroy	= netdev_destroy,
-	.set_addr	= ovs_netdev_set_addr,
 	.get_name	= ovs_netdev_get_name,
-	.get_addr	= ovs_netdev_get_addr,
-	.get_kobj	= ovs_netdev_get_kobj,
-	.get_dev_flags	= ovs_netdev_get_dev_flags,
-	.is_running	= ovs_netdev_is_running,
-	.get_operstate	= ovs_netdev_get_operstate,
-	.get_ifindex	= ovs_netdev_get_ifindex,
-	.get_mtu	= ovs_netdev_get_mtu,
 	.send		= netdev_send,
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36) && \
+    !defined HAVE_RHEL_OVS_HOOK
 /*
- * In kernels earlier than 2.6.36, Open vSwitch cannot safely coexist with the
- * Linux bridge module, because there is only a single bridge hook function and
- * only a single br_port member in struct net_device, so this prevents loading
- * both bridge and openvswitch_mod at the same time.
+ * Enforces, mutual exclusion with the Linux bridge module, by declaring and
+ * exporting br_should_route_hook.  Because the bridge module also exports the
+ * same symbol, the module loader will refuse to load both modules at the same
+ * time (e.g. "bridge: exports duplicate symbol br_should_route_hook (owned by
+ * openvswitch)").
+ *
+ * Before Linux 2.6.36, Open vSwitch cannot safely coexist with the Linux
+ * bridge module, so openvswitch uses this macro in those versions.  In
+ * Linux 2.6.36 and later, Open vSwitch can coexist with the bridge module.
+ *
+ * The use of "typeof" here avoids the need to track changes in the type of
+ * br_should_route_hook over various kernel versions.
  */
-BRIDGE_MUTUAL_EXCLUSION;
+typeof(br_should_route_hook) br_should_route_hook;
+EXPORT_SYMBOL(br_should_route_hook);
 #endif

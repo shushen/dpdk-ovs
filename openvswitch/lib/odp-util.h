@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011 Nicira Networks.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,41 +28,18 @@
 
 struct ds;
 struct flow;
+struct flow_tnl;
+struct flow_wildcards;
 struct nlattr;
 struct ofpbuf;
-struct shash;
+struct simap;
 
-#define OVSP_NONE ((uint16_t) -1)
-
-static inline uint16_t
-ofp_port_to_odp_port(uint16_t ofp_port)
-{
-    switch (ofp_port) {
-    case OFPP_LOCAL:
-        return OVSP_LOCAL;
-    case OFPP_NONE:
-        return OVSP_NONE;
-    default:
-        return ofp_port;
-    }
-}
-
-static inline uint16_t
-odp_port_to_ofp_port(uint16_t odp_port)
-{
-    switch (odp_port) {
-    case OVSP_LOCAL:
-        return OFPP_LOCAL;
-    case OVSP_NONE:
-        return OFPP_NONE;
-    default:
-        return odp_port;
-    }
-}
+#define ODPP_LOCAL ODP_PORT_C(OVSP_LOCAL)
+#define ODPP_NONE  ODP_PORT_C(UINT32_MAX)
 
 void format_odp_actions(struct ds *, const struct nlattr *odp_actions,
                         size_t actions_len);
-int odp_actions_from_string(const char *, const struct shash *port_names,
+int odp_actions_from_string(const char *, const struct simap *port_names,
                             struct ofpbuf *odp_actions);
 
 /* The maximum number of bytes that odp_flow_key_from_flow() appends to a
@@ -76,26 +53,34 @@ int odp_actions_from_string(const char *, const struct shash *port_names,
  * The longest nlattr-formatted flow key appended by odp_flow_key_from_flow()
  * would be:
  *
- *                         struct  pad  nl hdr  total
- *                         ------  ---  ------  -----
- *  OVS_KEY_ATTR_PRIORITY      4    --     4      8
- *  OVS_KEY_ATTR_TUN_ID        8    --     4     12
- *  OVS_KEY_ATTR_IN_PORT       4    --     4      8
- *  OVS_KEY_ATTR_ETHERNET     12    --     4     16
- *  OVS_KEY_ATTR_ETHERTYPE     2     2     4      8  (outer VLAN ethertype)
- *  OVS_KEY_ATTR_8021Q         4    --     4      8
- *  OVS_KEY_ATTR_ENCAP         0    --     4      4  (VLAN encapsulation)
- *  OVS_KEY_ATTR_ETHERTYPE     2     2     4      8  (inner VLAN ethertype)
- *  OVS_KEY_ATTR_IPV6         40    --     4     44
- *  OVS_KEY_ATTR_ICMPV6        2     2     4      8
- *  OVS_KEY_ATTR_ND           28    --     4     32
- *  -------------------------------------------------
- *  total                                       156
+ *                                     struct  pad  nl hdr  total
+ *                                     ------  ---  ------  -----
+ *  OVS_KEY_ATTR_PRIORITY                4    --     4      8
+ *  OVS_KEY_ATTR_TUNNEL                  0    --     4      4
+ *  - OVS_TUNNEL_KEY_ATTR_ID             8    --     4     12
+ *  - OVS_TUNNEL_KEY_ATTR_IPV4_SRC       4    --     4      8
+ *  - OVS_TUNNEL_KEY_ATTR_IPV4_DST       4    --     4      8
+ *  - OVS_TUNNEL_KEY_ATTR_TOS            1    3      4      8
+ *  - OVS_TUNNEL_KEY_ATTR_TTL            1    3      4      8
+ *  - OVS_TUNNEL_KEY_ATTR_DONT_FRAGMENT  0    --     4      4
+ *  - OVS_TUNNEL_KEY_ATTR_CSUM           0    --     4      4
+ *  OVS_KEY_ATTR_IN_PORT                 4    --     4      8
+ *  OVS_KEY_ATTR_SKB_MARK                4    --     4      8
+ *  OVS_KEY_ATTR_ETHERNET               12    --     4     16
+ *  OVS_KEY_ATTR_ETHERTYPE               2     2     4      8  (outer VLAN ethertype)
+ *  OVS_KEY_ATTR_8021Q                   4    --     4      8
+ *  OVS_KEY_ATTR_ENCAP                   0    --     4      4  (VLAN encapsulation)
+ *  OVS_KEY_ATTR_ETHERTYPE               2     2     4      8  (inner VLAN ethertype)
+ *  OVS_KEY_ATTR_IPV6                   40    --     4     44
+ *  OVS_KEY_ATTR_ICMPV6                  2     2     4      8
+ *  OVS_KEY_ATTR_ND                     28    --     4     32
+ *  ----------------------------------------------------------
+ *  total                                                 208
  *
  * We include some slack space in case the calculation isn't quite right or we
  * add another field and forget to adjust this value.
  */
-#define ODPUTIL_FLOW_KEY_BYTES 200
+#define ODPUTIL_FLOW_KEY_BYTES 256
 
 /* A buffer with sufficient size and alignment to hold an nlattr-formatted flow
  * key.  An array of "struct nlattr" might not, in theory, be sufficiently
@@ -104,11 +89,21 @@ struct odputil_keybuf {
     uint32_t keybuf[DIV_ROUND_UP(ODPUTIL_FLOW_KEY_BYTES, 4)];
 };
 
-void odp_flow_key_format(const struct nlattr *, size_t, struct ds *);
-int odp_flow_key_from_string(const char *s, const struct shash *port_names,
-                             struct ofpbuf *);
+enum odp_key_fitness odp_tun_key_from_attr(const struct nlattr *,
+                                           struct flow_tnl *);
 
-void odp_flow_key_from_flow(struct ofpbuf *, const struct flow *);
+void odp_flow_format(const struct nlattr *key, size_t key_len,
+                     const struct nlattr *mask, size_t mask_len,
+                     struct ds *, bool verbose);
+void odp_flow_key_format(const struct nlattr *, size_t, struct ds *);
+int odp_flow_from_string(const char *s,
+                         const struct simap *port_names,
+                         struct ofpbuf *, struct ofpbuf *);
+
+void odp_flow_key_from_flow(struct ofpbuf *, const struct flow *,
+                            odp_port_t odp_in_port);
+void odp_flow_key_from_mask(struct ofpbuf *, const struct flow *mask,
+                            const struct flow *flow, uint32_t odp_in_port);
 
 uint32_t odp_flow_key_hash(const struct nlattr *, size_t);
 
@@ -127,28 +122,79 @@ enum odp_key_fitness {
 };
 enum odp_key_fitness odp_flow_key_to_flow(const struct nlattr *, size_t,
                                           struct flow *);
+enum odp_key_fitness odp_flow_key_to_mask(const struct nlattr *key, size_t len,
+                                          struct flow *mask,
+                                          const struct flow *flow);
+const char *odp_key_fitness_to_string(enum odp_key_fitness);
+
+void commit_odp_tunnel_action(const struct flow *, struct flow *base,
+                              struct ofpbuf *odp_actions);
+void commit_odp_actions(const struct flow *, struct flow *base,
+                        struct ofpbuf *odp_actions,
+                        struct flow_wildcards *wc);
+
+/* ofproto-dpif interface.
+ *
+ * The following types and functions are logically part of ofproto-dpif.
+ * ofproto-dpif puts values of these types into the flows that it installs in
+ * the kernel datapath, though, so ovs-dpctl needs to interpret them so that
+ * it can print flows in a more human-readable manner. */
 
 enum user_action_cookie_type {
     USER_ACTION_COOKIE_UNSPEC,
-    USER_ACTION_COOKIE_SFLOW,        /* Packet for sFlow sampling. */
+    USER_ACTION_COOKIE_SFLOW,        /* Packet for per-bridge sFlow sampling. */
+    USER_ACTION_COOKIE_SLOW_PATH,    /* Userspace must process this flow. */
+    USER_ACTION_COOKIE_FLOW_SAMPLE,  /* Packet for per-flow sampling. */
+    USER_ACTION_COOKIE_IPFIX,        /* Packet for per-bridge IPFIX sampling. */
 };
 
 /* user_action_cookie is passed as argument to OVS_ACTION_ATTR_USERSPACE.
- * Since is it passed to kernel as u64, its size has to be 8 bytes. */
-struct user_action_cookie {
-    uint8_t   type;                 /* enum user_action_cookie_type. */
-    uint8_t   n_output;             /* No of output ports. used by sflow. */
-    ovs_be16  vlan_tci;             /* Used by sFlow */
-    uint32_t  data;                 /* Data is len for OFPP_CONTROLLER action.
-                                       For sFlow it is port_ifindex. */
-};
+ * Since it is passed to kernel as u64, its size has to be 8 bytes. */
+union user_action_cookie {
+    uint16_t type;              /* enum user_action_cookie_type. */
 
-BUILD_ASSERT_DECL(sizeof(struct user_action_cookie) == 8);
+    struct {
+        uint16_t type;          /* USER_ACTION_COOKIE_SFLOW. */
+        ovs_be16 vlan_tci;      /* Destination VLAN TCI. */
+        uint32_t output;        /* SFL_FLOW_SAMPLE_TYPE 'output' value. */
+    } sflow;
+
+    struct {
+        uint16_t type;          /* USER_ACTION_COOKIE_SLOW_PATH. */
+        uint16_t unused;
+        uint32_t reason;        /* enum slow_path_reason. */
+    } slow_path;
+
+    struct {
+        uint16_t type;          /* USER_ACTION_COOKIE_FLOW_SAMPLE. */
+        uint16_t probability;   /* Sampling probability. */
+        uint32_t collector_set_id; /* ID of IPFIX collector set. */
+        uint32_t obs_domain_id; /* Observation Domain ID. */
+        uint32_t obs_point_id;  /* Observation Point ID. */
+    } flow_sample;
+
+    struct {
+        uint16_t type;          /* USER_ACTION_COOKIE_IPFIX. */
+    } ipfix;
+};
+BUILD_ASSERT_DECL(sizeof(union user_action_cookie) == 16);
 
 size_t odp_put_userspace_action(uint32_t pid,
-                                const struct user_action_cookie *,
+                                const void *userdata, size_t userdata_size,
                                 struct ofpbuf *odp_actions);
+void odp_put_tunnel_action(const struct flow_tnl *tunnel,
+                           struct ofpbuf *odp_actions);
+void odp_put_pkt_mark_action(const uint32_t pkt_mark,
+                             struct ofpbuf *odp_actions);
 
-void commit_odp_actions(const struct flow *, struct flow *base,
-                        struct ofpbuf *odp_actions);
+/* Reasons why a subfacet might not be fast-pathable. */
+enum slow_path_reason {
+    SLOW_CFM = 1,               /* CFM packets need per-packet processing. */
+    SLOW_LACP,                  /* LACP packets need per-packet processing. */
+    SLOW_STP,                   /* STP packets need per-packet processing. */
+    SLOW_BFD,                   /* BFD packets need per-packet processing. */
+    SLOW_CONTROLLER,            /* Packets must go to OpenFlow controller. */
+    __SLOW_MAX
+};
+
 #endif /* odp-util.h */
