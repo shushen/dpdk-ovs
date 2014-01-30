@@ -450,8 +450,6 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 	uint16_t vlan_tci = 0;
 	uint16_t be_offset = 0;
 
-	memset(key, 0, sizeof(struct flow_key));
-
 	key->in_port = in_port;
 
 	/* Assume ethernet packet and get packet data */

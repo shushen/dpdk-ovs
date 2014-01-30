@@ -41,6 +41,7 @@
 #include <sys/un.h>
 #include <sys/ioctl.h>
 
+#include "vport.h"
 #include "datapath.h"
 #include "action.h"
 #include "stats.h"
@@ -65,10 +66,19 @@
 #define FLAG_CREATE            0x400
 #define FLAG_APPEND            0x800
 
+#define VPORT_CMD_FAMILY       0xE
 #define FLOW_CMD_FAMILY        0xF
 #define PACKET_CMD_FAMILY      0x1F
 
 #define DPIF_SOCKNAME "\0dpif-dpdk"
+
+/* A 'vport managment' message between vswitchd <-> datapath.  */
+struct dpdk_vport_message {
+	uint8_t cmd;                 /* Command to execute on vport. */
+	uint32_t flags;              /* Additional flags, if any, or null. */
+	uint32_t port_no;            /* Number of the vport. */
+	struct port_stats stats;     /* Current statistics for the given vport. */
+};
 
 struct dpdk_flow_message {
 	uint32_t id;
@@ -84,13 +94,16 @@ struct dpdk_packet_message {
 	struct action actions[MAX_ACTIONS];
 };
 
+/* A message between vswitchd <-> datapath. */
 struct dpdk_message {
-	int16_t type;
-	union {
+	int16_t type;              /* Message type, if a request, or return code */
+	union {                    /* Actual message */
+		struct dpdk_vport_message vport_msg;
 		struct dpdk_flow_message flow_msg;
 		struct dpdk_packet_message packet_msg;
 	};
 };
+
 /* ring to send packets to vswitchd */
 static struct rte_ring *vswitchd_packet_ring = NULL;
 /* ring to receive messages from vswitchd */
@@ -101,6 +114,7 @@ static struct rte_ring *vswitchd_reply_ring = NULL;
 static void send_reply_to_vswitchd(struct dpdk_message *reply);
 
 static void handle_vswitchd_cmd(struct rte_mbuf *mbuf);
+static void handle_vport_cmd(struct dpdk_vport_message *request);
 static void handle_flow_cmd(struct dpdk_flow_message *request);
 static void handle_packet_cmd(struct dpdk_packet_message *request,
                               struct rte_mbuf *pkt);
@@ -145,7 +159,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	mbuf_ptr = rte_pktmbuf_prepend(mbuf, sizeof(*info));
 
 	if (unlikely(mbuf_ptr == NULL)) {
-		printf("Cannot prepend upcall info\n");
+		RTE_LOG(ERR, APP, "Error : Cannot prepend upcall info "
+		        ": %s : %d", __FUNCTION__, __LINE__);
 		rte_pktmbuf_free(mbuf);
 		stats_vswitch_tx_drop_increment(INC_BY_1);
 		stats_vport_tx_drop_increment(VSWITCHD, INC_BY_1);
@@ -205,7 +220,7 @@ handle_request_from_vswitchd(void)
 }
 
 /*
- * Send a reply message to the vswitchd
+ * Send a reply message to vswitchd.
  */
 static void
 send_reply_to_vswitchd(struct dpdk_message *reply)
@@ -246,7 +261,7 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 }
 
 /*
- * Send message to vswitchd indicating message type is not known
+ * Send message to vswitchd indicating message type is not known.
  */
 static void
 handle_unknown_cmd(void)
@@ -259,9 +274,124 @@ handle_unknown_cmd(void)
 }
 
 /*
+ * Attempt to add a new vport, and send result to vswitchd.
+ */
+static void
+vport_cmd_new(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+	uint16_t port_no = request->port_no;
+
+	reply.type = vport_in_use(port_no);
+	if (reply.type == VPORT_NOT_IN_USE)
+		vport_set_in_use(port_no);
+
+	reply.vport_msg = *request;
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Attempt to delete single vport, and send result to vswitchd.
+ */
+static void
+vport_cmd_del(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+	uint16_t port_no = request->port_no;
+
+	reply.type = vport_in_use(request->port_no);
+	if (reply.type == VPORT_IN_USE)
+		vport_set_not_in_use(port_no);
+
+	reply.vport_msg = *request;
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Get current stats for a single vport, and send result to vswitchd.
+ */
+static void
+vport_cmd_get(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+
+	reply.type = vport_in_use(request->port_no);
+	if (reply.type == VPORT_IN_USE)
+		request->stats = stats_vport_get(request->port_no);
+
+	reply.vport_msg = *request;
+
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Dump the next in-use vport.
+ *
+ * This handles the "dump ports" command, which is a request for information
+ * on all existing ports in the datapath. This function is used within a
+ * state machine at a higher level (i.e. vswitchd)
+ */
+static void
+vport_cmd_dump(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+
+	if (request->port_no == UINT32_MAX)  /* "Entry case" for state machine */
+		request->port_no = 1;
+	else
+		request->port_no += 1;
+
+	/* Skip all ports without the in-use flag. This particular approach is
+	 * necessary due to the current design of the datapath. Ports are currently
+	 * declared and initialised at startup, rather than being allocated and
+	 * initialised "on the fly". We need to check for 'vport_in_use' rather than
+	 * 'vport_exists', to prevent vswitchd seeing ports that have not been
+	 * explicitly added via 'ovs-vsctl'. If this were not done the vswitchd
+	 * would spot the "alien" ports and try to remove them, causing issues. */
+	for (;request->port_no < MAX_VPORTS && \
+	     (vport_in_use(request->port_no) != VPORT_IN_USE); request->port_no++)
+		;
+
+	if (request->port_no < MAX_VPORTS) {
+		request->stats = stats_vport_get(request->port_no);
+		reply.type = 0;
+	} else {
+		reply.type = EOF;  /* "Exit case" for state machine */
+	}
+
+	reply.vport_msg = *request;
+
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Parse 'vport message' from vswitchd and send to appropriate handler.
+ */
+static void
+handle_vport_cmd(struct dpdk_vport_message *request)
+{
+	switch (request->cmd) {
+		case VPORT_CMD_NEW:
+			vport_cmd_new(request);
+			break;
+		case VPORT_CMD_DEL:
+			vport_cmd_del(request);
+			break;
+		case VPORT_CMD_GET:
+			if (request->flags & FLAG_DUMP)
+				vport_cmd_dump(request);
+			else
+				vport_cmd_get(request);
+			break;
+		default:
+			handle_unknown_cmd();
+	}
+}
+
+/*
  * Add or modify flow table entry.
  *
- * When modifying, the stats can be optionally cleared
+ * When modifying, the stats can be optionally cleared.
  */
 static void
 flow_cmd_new(struct dpdk_flow_message *request)
@@ -301,7 +431,7 @@ flow_cmd_new(struct dpdk_flow_message *request)
 /*
  * Delete single flow or all flows.
  *
- * When request->key is empty delete all flows
+ * When request->key is empty delete all flows.
  */
 static void
 flow_cmd_del(struct dpdk_flow_message *request)
@@ -331,7 +461,7 @@ flow_cmd_del(struct dpdk_flow_message *request)
 }
 
 /*
- * Return flow entry to vswitchd if it exists
+ * Return flow entry to vswitchd if it exists.
  */
 static void
 flow_cmd_get(struct dpdk_flow_message *request)
@@ -393,7 +523,7 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 }
 
 /*
- * Handle flow commands
+ * Parse 'flow message' from vswitchd and send to appropriate handler.
  */
 static void
 handle_flow_cmd(struct dpdk_flow_message *request)
@@ -417,7 +547,7 @@ handle_flow_cmd(struct dpdk_flow_message *request)
 }
 
 /*
- * Handle packet commands
+ * Parse 'packet message' from vswitchd and send to appropriate handler.
  */
 static void
 handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
@@ -426,7 +556,7 @@ handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
 }
 
 /*
- * Parse message from vswitchd and send to appropriate handler
+ * Parse message from vswitchd and send to appropriate handler.
  */
 static void
 handle_vswitchd_cmd(struct rte_mbuf *mbuf)
@@ -436,6 +566,10 @@ handle_vswitchd_cmd(struct rte_mbuf *mbuf)
 	request = rte_pktmbuf_mtod(mbuf, struct dpdk_message *);
 
 	switch (request->type) {
+	case VPORT_CMD_FAMILY:
+		handle_vport_cmd(&request->vport_msg);
+		rte_pktmbuf_free(mbuf);
+		break;
 	case FLOW_CMD_FAMILY:
 		handle_flow_cmd(&request->flow_msg);
 		rte_pktmbuf_free(mbuf);

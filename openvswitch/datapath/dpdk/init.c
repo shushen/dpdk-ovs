@@ -62,7 +62,7 @@
 
 #define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
 
-#define MBUF_CACHE_SIZE 32
+#define MBUF_CACHE_SIZE 128
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define RX_MBUF_DATA_SIZE 2048
 #define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
@@ -76,7 +76,7 @@ static int
 init_mbuf_pools(void)
 {
 	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT)
-			+ (port_cfg.num_ports * MBUFS_PER_PORT)
+			+ (port_cfg.num_phy_ports * MBUFS_PER_PORT)
 			+ (num_kni * MBUFS_PER_KNI)
 			+ (num_veth * MBUFS_PER_VETH)
 			+ MBUFS_PER_DAEMON;

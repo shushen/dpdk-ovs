@@ -9,6 +9,11 @@
       - Added support for Guest applications running as DPDK primary processes
       - NOTE: this update removes compatibility with DPDK 1.5.2
     - Performance Improvements
+    - Support for set actions:
+        - Added set ethernet support
+        - Added set IPv4 support
+        - Added set UDP support
+        - Added set TCP support
     - Bug fixes
 
 # v0.8 - December 2013

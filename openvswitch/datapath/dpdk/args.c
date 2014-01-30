@@ -113,9 +113,9 @@ parse_portmask(uint8_t max_ports, const char *portmask)
 		if (pm & 0x01) { /* bit is set in mask, use port */
 			if (count >= max_ports)
 				printf("WARNING: requested port %u not present"
-				" - ignoring\n", (unsigned)count);
+				    " - ignoring\n", (unsigned)count);
 			else
-			    port_cfg.id[port_cfg.num_ports++] = count;
+				port_cfg.id[port_cfg.num_phy_ports++] = count;
 		}
 		pm = (pm >> 1);
 		count++;

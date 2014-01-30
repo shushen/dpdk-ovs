@@ -25,6 +25,7 @@
 #include "netdev-provider.h"
 #include "packets.h"
 #include "vlog.h"
+#include "dpif-dpdk.h"
 
 #ifdef PG_DEBUG
 #define DPDK_DEBUG() printf("NETDEV-DPDK.c %s Line %d\n", __FUNCTION__, __LINE__);
@@ -113,15 +114,48 @@ netdev_dpdk_get_etheraddr(const struct netdev *netdev_,
     return 0;
 }
 
+static void
+netdev_stats_from_dpdk_vport_stats(struct netdev_stats *dst,
+                                   struct dpif_dpdk_vport_stats *src)
+{
+    dst->rx_packets = src->rx;
+    dst->tx_packets = src->tx;
+    dst->rx_bytes = src->rx_bytes;
+    dst->tx_bytes = src->tx_bytes;
+    dst->rx_errors = src->rx_error;
+    dst->tx_errors = src->tx_error;
+    dst->rx_dropped = src->rx_drop;
+    dst->tx_dropped = src->tx_drop;
+    dst->multicast = UINT64_MAX;
+    dst->collisions = UINT64_MAX;
+    dst->rx_length_errors = UINT64_MAX;
+    dst->rx_over_errors = UINT64_MAX;
+    dst->rx_crc_errors = UINT64_MAX;
+    dst->rx_frame_errors = UINT64_MAX;
+    dst->rx_fifo_errors = UINT64_MAX;
+    dst->rx_missed_errors = UINT64_MAX;
+    dst->tx_aborted_errors = UINT64_MAX;
+    dst->tx_carrier_errors = UINT64_MAX;
+    dst->tx_fifo_errors = UINT64_MAX;
+    dst->tx_heartbeat_errors = UINT64_MAX;
+    dst->tx_window_errors = UINT64_MAX;
+}
+
 static int
-netdev_dpdk_get_stats(const struct netdev *netdev_ OVS_UNUSED,
+netdev_dpdk_get_stats(const struct netdev *netdev_,
                        struct netdev_stats *stats)
 {
+    struct dpif_dpdk_vport_stats reply;
+    int error = 0;
+
     DPDK_DEBUG()
 
-    memset(stats, 0, sizeof(*stats));
+    error = dpif_dpdk_port_get_stats(netdev_get_name(netdev_), &reply);
+    if (!error) {
+        netdev_stats_from_dpdk_vport_stats(stats, &reply);
+    }
 
-    return 0;
+    return error;
 }
 
 static int

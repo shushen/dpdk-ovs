@@ -70,7 +70,6 @@
 #define QEMU_CMD_FILE_FMT "/tmp/.ivshmem_qemu_cmdline_client_%u"
 
 #define PORT_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
-#define CACHE_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
 #define LOCAL_MBUF_CACHE_SIZE 32
 #define CACHE_NAME_LEN 32
 #define MAX_QUEUE_NAME_SIZE 32
@@ -91,6 +90,14 @@
 #define MP_DEFAULT_RX_HTHRESH 8
 #define MP_DEFAULT_TX_HTHRESH 0
 #define MP_DEFAULT_WTHRESH 0
+#define RX_FREE_THRESH 64
+#define TX_FREE_THRESH 32
+#define TX_RS_THRESH 32
+
+/*
+ * Core mapping to access per-core caches using rte_lcore_id() function.
+ */
+static unsigned lcore_map[RTE_MAX_LCORE] = {0};
 
 static const struct rte_eth_rxconf rx_conf_default = {
 		.rx_thresh = {
@@ -98,6 +105,7 @@ static const struct rte_eth_rxconf rx_conf_default = {
 				.hthresh = MP_DEFAULT_RX_HTHRESH,
 				.wthresh = MP_DEFAULT_WTHRESH,
 		},
+		.rx_free_thresh = RX_FREE_THRESH,
 };
 
 static const struct rte_eth_txconf tx_conf_default = {
@@ -106,8 +114,8 @@ static const struct rte_eth_txconf tx_conf_default = {
 				.hthresh = MP_DEFAULT_TX_HTHRESH,
 				.wthresh = MP_DEFAULT_WTHRESH,
 		},
-		.tx_free_thresh = 0, /* Use PMD default values */
-		.tx_rs_thresh = 0, /* Use PMD default values */
+		.tx_free_thresh = TX_FREE_THRESH,
+		.tx_rs_thresh = TX_RS_THRESH,
 };
 
 enum vport_type {
@@ -138,7 +146,6 @@ struct local_mbuf_cache {
 	struct rte_mbuf *cache[LOCAL_MBUF_CACHE_SIZE];
 	                   /* per-port and per-core local mbuf cache */
 	unsigned count;    /* number of mbufs in the local cache */
-	uint64_t next_tsc; /* tsc at which next flush is required */
 };
 
 struct vport_kni {
@@ -163,6 +170,7 @@ static struct local_mbuf_cache **port_mbuf_cache = NULL;
 struct vport_info {
 	enum vport_type __rte_cache_aligned type;
 	char __rte_cache_aligned name[VPORT_INFO_NAMESZ];
+	uint8_t __rte_cache_aligned in_use;
 	union {
 		struct vport_phy phy;
 		struct vport_client client;
@@ -187,9 +195,8 @@ static struct vport_info *vports;
 
 /* Drain period to flush packets out of the physical ports and caches */
 static uint64_t port_flush_period;
-static uint64_t cache_flush_period;
 
-static void set_vport_name(unsigned i, const char *fmt, ...)
+static void vport_set_name(unsigned i, const char *fmt, ...)
 {
 	va_list ap;
 
@@ -374,7 +381,7 @@ init_shm_rings(void)
 	for (i = 0; i < rte_lcore_count(); i++) {
 		rte_snprintf(cache_name, sizeof(cache_name), "core%u port cache", i);
 		port_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
-				sizeof(**port_mbuf_cache) * ports->num_ports, 0);
+				sizeof(**port_mbuf_cache) * ports->num_phy_ports, 0);
 	}
 
 	for (i = 0; i < num_clients; i++) {
@@ -406,7 +413,7 @@ init_shm_rings(void)
 		save_ivshmem_cmdline_to_file(cmdline, clientid);
 	}
 
-	for (i = 0; i < ports->num_ports; i++) {
+	for (i = 0; i < ports->num_phy_ports; i++) {
 		struct vport_phy *phy = &vports[PHYPORT0 + i].phy;
 		RTE_LOG(INFO, APP, "Initialising Port %d\n", i);
 		/* Create an RX queue for each ports */
@@ -422,6 +429,7 @@ void vport_init(void)
 	const struct rte_memzone *mz = NULL;
 	uint8_t i = 0;
 	int retval = 0;
+	unsigned core_count = 0;
 
 	/* set up array for port data */
 	mz = rte_memzone_reserve(MZ_PORT_INFO, sizeof(*ports),
@@ -443,44 +451,55 @@ void vport_init(void)
 	vports = mz->addr;
 	RTE_LOG(INFO, APP, "memzone for vport info address is %lx\n", mz->phys_addr);
 
-	ports->num_ports = port_cfg.num_ports;
+	ports->num_phy_ports = port_cfg.num_phy_ports;
 
 	/* vports setup */
 
 	/* vport 0 is for vswitchd */
 	vports[0].type = VPORT_TYPE_VSWITCHD;
-	set_vport_name(0, "vswitchd");
+	vport_set_not_in_use(0);
+	vport_set_name(0, "vswitchd");
 
 	/* vport for client */
 	for (i = CLIENT1; i < num_clients; i++) {
 		vports[i].type = VPORT_TYPE_CLIENT;
-		set_vport_name(i, "Client    %2u", i);
+		vport_set_not_in_use(i);
+		vport_set_name(i, "Client    %2u", i);
 	}
 	/* vport for kni */
 	for (i = 0; i < num_kni; i++) {
 		vports[KNI0 + i].type = VPORT_TYPE_KNI;
 		vports[KNI0 + i].kni.index = i;
-		set_vport_name(KNI0 + i, "KNI Port  %2u", i);
+		vport_set_not_in_use(KNI0 + i);
+		vport_set_name(KNI0 + i, "KNI Port  %2u", i);
 	}
 	/* vport for veth */
 	for (i = 0; i < num_veth; i++) {
 		vports[VETH0 + i].type = VPORT_TYPE_VETH;
 		vports[VETH0 + i].veth.index = i;
-		set_vport_name(VETH0 + i, "vEth Port %2u", i);
+		vport_set_not_in_use(VETH0 + i);
+		vport_set_name(VETH0 + i, "vEth Port %2u", i);
 	}
 
-	/* now initialise the ports we will use */
-	for (i = 0; i < ports->num_ports; i++) {
-		unsigned vportid = cfg_params[i].port_id;
+	/* now initialise the physical ports we will use */
+	for (i = 0; i < ports->num_phy_ports; i++) {
+		unsigned int vportid = cfg_params[i].port_id;
 
 		vports[vportid].type = VPORT_TYPE_PHY;
 		vports[vportid].phy.index = port_cfg.id[i];
-		set_vport_name(vportid, "Port      %2u", port_cfg.id[i]);
+		vport_set_not_in_use(vportid);
+		vport_set_name(vportid, "Port      %2u", port_cfg.id[i]);
 
 		retval = init_port(port_cfg.id[i]);
 		if (retval != 0)
 			rte_exit(EXIT_FAILURE, "Cannot initialise port %u\n", i);
 	}
+
+	/* initialise lcore mapping by querying DPDK is a core was enabled from the
+	 * command line */
+	for (i = 0; i < RTE_MAX_LCORE; i++)
+		if (rte_lcore_is_enabled(i))
+			lcore_map[i] = core_count++;
 
 	/* initialise the client queues/rings for inter process comms */
 	init_shm_rings();
@@ -494,8 +513,6 @@ void vport_init(void)
 	/* initialize flush periods using CPU frequency */
 	port_flush_period = (rte_get_tsc_hz() + US_PER_S - 1) /
 	        US_PER_S * PORT_FLUSH_PERIOD_US;
-	cache_flush_period = (rte_get_tsc_hz() + US_PER_S - 1) /
-	        US_PER_S * CACHE_FLUSH_PERIOD_US;
 }
 
 /*
@@ -508,8 +525,9 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 	struct rte_mbuf *freebufs[PKT_BURST_SIZE];
 	struct vport_client *cl = NULL;
 	struct local_mbuf_cache *per_cl_cache = NULL;
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 
-	per_cl_cache = &client_mbuf_cache[rte_lcore_id()][client - CLIENT1];
+	per_cl_cache = &client_mbuf_cache[lcore_id][client - CLIENT1];
 
 	per_cl_cache->cache[per_cl_cache->count++] = buf;
 
@@ -530,8 +548,9 @@ send_to_client(uint8_t client, struct rte_mbuf *buf)
 static inline int
 send_to_port(uint8_t vportid, struct rte_mbuf *buf)
 {
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_port_cache =
-			&port_mbuf_cache[rte_lcore_id()][vportid - PHYPORT0];
+			&port_mbuf_cache[lcore_id][vportid - PHYPORT0];
 
 	per_port_cache->cache[per_port_cache->count++] = buf;
 
@@ -734,42 +753,40 @@ receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs)
 inline void
 flush_nic_tx_ring(unsigned vportid)
 {
-	unsigned i = 0;
 	struct rte_mbuf *pkts[PKT_BURST_SIZE];
 	struct vport_phy *phy = &vports[vportid].phy;
+	static uint64_t prev_tsc[MAX_PHYPORTS] = { 0 };
 	uint8_t portid = phy->index;
-	uint64_t diff_tsc = 0;
-	static uint64_t prev_tsc[MAX_PHYPORTS] = {0};
-	uint64_t cur_tsc = rte_rdtsc();
-	unsigned num_pkts;
+	uint64_t diff_tsc, cur_tsc = rte_rdtsc();
+	unsigned tx_count, pkts_sent, i;
 
-	diff_tsc = cur_tsc - prev_tsc[portid];
-
-	num_pkts = rte_ring_count(phy->tx_q);
+	tx_count = rte_ring_count(phy->tx_q);
 
 	/* If queue idles with less than PKT_BURST packets, drain it*/
-	if (num_pkts < PKT_BURST_SIZE)
-		if(unlikely(diff_tsc < port_flush_period))
+	if (tx_count < PKT_BURST_SIZE) {
+		diff_tsc = cur_tsc - prev_tsc[portid];
+		if (unlikely(diff_tsc < port_flush_period))
 			return;
+	}
 
 	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
-	if (unlikely(num_pkts > PKT_BURST_SIZE))
-		num_pkts = PKT_BURST_SIZE;
+	if (tx_count > PKT_BURST_SIZE)
+		tx_count = PKT_BURST_SIZE;
 
-	if (unlikely(rte_ring_dequeue_bulk(phy->tx_q, (void **)pkts, num_pkts) != 0))
+	if (unlikely(rte_ring_dequeue_bulk(phy->tx_q, (void **)pkts, tx_count) != 0))
 		return;
 
-	const uint16_t sent = rte_eth_tx_burst(portid, 0, pkts, num_pkts);
+	pkts_sent = rte_eth_tx_burst(portid, 0, pkts, tx_count);
 
-	prev_tsc[vportid & PORT_MASK] = cur_tsc;
+	prev_tsc[portid] = cur_tsc;
 
-	if (unlikely(sent < num_pkts)) {
-		for (i = sent; i < num_pkts; i++)
+	if (unlikely(pkts_sent < tx_count)) {
+		for (i = pkts_sent; i < tx_count; i++)
 			rte_pktmbuf_free(pkts[i]);
 
-		stats_vport_tx_drop_increment(vportid, num_pkts - sent);
+		stats_vport_tx_drop_increment(vportid, tx_count - pkts_sent);
 	}
-	stats_vport_tx_increment(vportid, sent);
+	stats_vport_tx_increment(vportid, pkts_sent);
 }
 
 /* 
@@ -779,19 +796,18 @@ flush_nic_tx_ring(unsigned vportid)
  * This must be called by each core that calls send_to_port()
  *
  */
-void flush_ports(void) 
+inline void
+flush_ports(void)
 {
 	uint8_t portid = 0;
-	uint8_t lcore_id = rte_lcore_id();
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_port_cache = NULL;
 
 	/* iterate over all port caches for this core */
-	for (portid = 0; portid < ports->num_ports; portid++) {
+	for (portid = 0; portid < ports->num_phy_ports; portid++) {
 		per_port_cache = &port_mbuf_cache[lcore_id][portid];
-		/* only flush when we have exceeded our deadline */
-		if (curr_tsc > per_port_cache->next_tsc) {
-				flush_phy_port_cache(portid + PHYPORT0);
-		}
+		if (per_port_cache->count)
+			flush_phy_port_cache(portid + PHYPORT0);
 	}
 	
 	return;
@@ -807,14 +823,15 @@ flush_phy_port_cache(uint8_t vportid)
 {
 	unsigned i = 0, tx_count = 0;
 	struct local_mbuf_cache *per_port_cache = NULL;
+	struct vport_phy *phy;
 	uint8_t portid = vportid - PHYPORT0;
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	
-	per_port_cache = &port_mbuf_cache[rte_lcore_id()][portid];
+	per_port_cache = &port_mbuf_cache[lcore_id][portid];
 
-	if (unlikely(per_port_cache->count == 0))
-		return;
+	phy = &vports[vportid].phy;
 
-	tx_count = rte_ring_mp_enqueue_burst(vports[vportid].phy.tx_q,
+	tx_count = rte_ring_mp_enqueue_burst(phy->tx_q,
 			(void **) per_port_cache->cache, per_port_cache->count);
 
 	if (unlikely(tx_count < per_port_cache->count)) {
@@ -828,7 +845,6 @@ flush_phy_port_cache(uint8_t vportid)
 	} 
 
 	per_port_cache->count = 0;
-	per_port_cache->next_tsc = curr_tsc + cache_flush_period;
 }
 
 /* 
@@ -838,22 +854,19 @@ flush_phy_port_cache(uint8_t vportid)
  * This must be called by each core that calls send_to_client()
  *
  */
-void flush_clients(void) 
+inline void
+flush_clients(void)
 {
 	uint8_t clientid = 0;
-	uint8_t lcore_id = rte_lcore_id();
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_client_cache = NULL;
 
 	/* iterate over all client caches for this core */
 	for (clientid = 0; clientid < num_clients; clientid++) {
 		per_client_cache = &client_mbuf_cache[lcore_id][clientid];
-		/* only flush when we have exceeded our deadline */
-		if (curr_tsc > per_client_cache->next_tsc) {
+		if (per_client_cache->count)
 			flush_client_port_cache(clientid + CLIENT1);
-		}
 	}
-	
-	return;
 }
 
 /* 
@@ -867,11 +880,9 @@ flush_client_port_cache(uint8_t clientid)
 	struct vport_client *cl = NULL;
 	struct local_mbuf_cache *per_cl_cache = NULL;
 	unsigned tx_count = 0, i = 0;
+	unsigned lcore_id = lcore_map[rte_lcore_id()];
 
-	per_cl_cache = &client_mbuf_cache[rte_lcore_id()][clientid - CLIENT1];
-		
-	if (unlikely(per_cl_cache->count == 0))
-		return;
+	per_cl_cache = &client_mbuf_cache[lcore_id][clientid - CLIENT1];
 		
 	cl = &vports[clientid].client;
 
@@ -891,11 +902,42 @@ flush_client_port_cache(uint8_t clientid)
 	stats_vport_rx_increment(clientid, tx_count);
 
 	per_cl_cache->count = 0;
-	per_cl_cache->next_tsc = curr_tsc + cache_flush_period;
-
 }
 
 const char *vport_name(unsigned vportid)
 {
+	if (vport_exists(vportid))
+		return NULL;
+
 	return vports[vportid].name;
 }
+
+/* Return 0 if vportid is valid, otherwise negative value */
+int vport_exists(unsigned vportid)
+{
+	return (vportid < MAX_VPORTS && &vports[vportid] != NULL) ? VPORT_EXISTS :
+	                                                            ENODEV;
+}
+
+/* Return 0 if vportid is in use, non-zero value otherwise */
+int16_t vport_in_use(unsigned vportid)
+{
+	int ret = vport_exists(vportid);
+
+	if (ret != VPORT_EXISTS)
+		return ret;
+	else
+		return vports[vportid].in_use ? VPORT_IN_USE :
+		                                VPORT_NOT_IN_USE;
+}
+
+void vport_set_in_use(unsigned vportid)
+{
+	vports[vportid].in_use = VPORT_IN_USE;
+}
+
+void vport_set_not_in_use(unsigned vportid)
+{
+	vports[vportid].in_use = VPORT_NOT_IN_USE;
+}
+

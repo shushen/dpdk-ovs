@@ -35,6 +35,8 @@
 #ifndef __STATS_H_
 #define __STATS_H_
 
+#include "vport.h"
+
 #define INC_BY_1  1
 #define VSWITCHD 0
 
@@ -54,6 +56,7 @@ uint64_t stats_vport_rx_drop_get(unsigned vportid);
 uint64_t stats_vport_tx_get(unsigned vportid);
 uint64_t stats_vport_tx_drop_get(unsigned vportid);
 uint64_t stats_vport_overrun_get(unsigned vportid);
+struct port_stats stats_vport_get(unsigned vportid);
 
 
 void stats_vswitch_clear(void);

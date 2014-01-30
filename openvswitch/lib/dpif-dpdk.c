@@ -47,8 +47,6 @@
 #define VLAN_CFI 0x1000
 
 #define DPDK_DEBUG() VLOG_DBG_RL(&dpmsg_rl, "%s: %s Line %d\n", __FILE__, __FUNCTION__, __LINE__);
-#define BR_PREFIX_LEN   2
-#define BR_PREFIX       "br"
 #define DPIF_SOCKNAME "\0dpif-dpdk"
 
 #define SIGNAL_HANDLED(sock_fd, sock_msg) \
@@ -62,6 +60,10 @@ static int dpdk_sock = -1;
 
 static struct vlog_rate_limit dpmsg_rl = VLOG_RATE_LIMIT_INIT(600, 600);
 
+static void dpif_dpdk_vport_init(struct dpif_dpdk_vport_message *);
+static int dpif_dpdk_vport_transact(struct dpif_dpdk_vport_message *request,
+                                   struct dpif_dpdk_vport_message *reply);
+
 static void dpif_dpdk_flow_init(struct dpif_dpdk_flow_message *);
 static int dpif_dpdk_flow_transact(struct dpif_dpdk_flow_message *request,
                                    struct dpif_dpdk_flow_message *reply);
@@ -73,7 +75,9 @@ static void dpif_dpdk_flow_key_to_flow(const struct dpif_dpdk_flow_key *,
                                        struct flow *);
 static void dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *,
                                               struct ofpbuf *);
+
 static int dpif_dpdk_init(void);
+
 static void flow_message_get_create(const struct dpif *dpif_ OVS_UNUSED,
                                     const struct nlattr *key, size_t key_len,
                                     struct dpif_dpdk_flow_message *request);
@@ -174,6 +178,10 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
                    odp_port_t *port_no)
 {
     const char *name = NULL;
+    const char *type = NULL;
+    struct dpif_dpdk_vport_message request;
+    struct dpif_dpdk_vport_message reply;
+    int error = 0;
     dpif_assert_class(dpif_, &dpif_dpdk_class);
 
     if((netdev == NULL) || (port_no == NULL)) {
@@ -181,92 +189,128 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     }
 
     name = netdev_get_name(netdev);
+    type = netdev_get_type(netdev);
 
     DPDK_DEBUG()
 
-    /* If port name has DPDK_PORT_PREFIX as prefix, then use the
-     * following uint16_t as the port number.
+    dpif_dpdk_vport_init(&request);
+    request.cmd = OVS_VPORT_CMD_NEW;
+
+    /*
+     * If port is of type "dpdk" and port name has DPDK_PORT_PREFIX as prefix,
+     * then use the uint32_t suffix as the port number.
      *
-     * If not, then return ENODEV.
-     *
-     * dpif_base_name is a special case for the bridge interface. */
-    if (!strncmp(name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
-        *port_no = strtoumax(name + DPDK_PORT_PREFIX_LEN,
-                             NULL, BASE10);
+     * Otherwise, if port name matches datapath name, then use 0 as the port
+     * number. This is a special case for the bridge interface.
+     */
+    if (!strcmp(type, "dpdk") &&
+        !strncmp(name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
+        request.port_no = strtoumax(name + DPDK_PORT_PREFIX_LEN, NULL, BASE10);
     /*
      * TODO: It should be possible to use an arbitrary name for bridges
      * currently this is not possible
      */
-    } else if (!strncmp(name, BR_PREFIX, BR_PREFIX_LEN)) {
-        /*
-         * TODO: This will need to be changed in future to accommodate
-         * multi-bridge support.
-         */
-        *port_no = 0;
+    } else if (!strncmp(name, DPDK_BRIDGE_PREFIX, DPDK_BRIDGE_PREFIX_LEN)) {
+        request.port_no = 0;
     } else {
         return ENODEV;
     }
 
-    return 0;
+    error = dpif_dpdk_vport_transact(&request, &reply);
+    if (!error)
+        *port_no = reply.port_no;
+
+    return error;
 }
 
 static int
-dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, odp_port_t port_no OVS_UNUSED)
+dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, odp_port_t port_no)
 {
-    DPDK_DEBUG()
+    struct dpif_dpdk_vport_message request;
+    int error = 0;
 
-    return 0;
+    dpif_dpdk_vport_init(&request);
+    request.cmd = OVS_VPORT_CMD_DEL;
+    request.port_no = port_no;
+
+    error = dpif_dpdk_vport_transact(&request, NULL);
+
+    return error;
 }
 
 static int
-dpif_dpdk_port_query_by_number(const struct dpif *dpif OVS_UNUSED,
-                               odp_port_t port_no OVS_UNUSED,
-                               struct dpif_port *dpif_port OVS_UNUSED)
+dpif_dpdk_port_query__(const struct dpif *dpif_ OVS_UNUSED, uint32_t port_no,
+                       const char *port_name, struct dpif_port *dpif_port)
+{
+    struct dpif_dpdk_vport_message request, reply;
+    char name[DPDK_PORT_MAX_STRING_LEN] = {0};
+    char *type = NULL;
+    int error  = 0;
+
+    dpif_dpdk_vport_init(&request);
+    request.cmd = OVS_VPORT_CMD_GET;
+    request.port_no = port_no;
+
+    if (port_name) {
+        /* If port name has DPDK_PORT_PREFIX as prefix, then use the
+         * following uint32_t as the port number.
+         *
+         * Alternatively, if port name matches datapath name, then use 0 as
+         * the port number. This is a special case for the bridge interface.
+         *
+         * Otherwise, return ENODEV. */
+        if (!strncmp(port_name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
+            request.port_no = (uint32_t)strtoumax(port_name + DPDK_PORT_PREFIX_LEN, NULL, BASE10);
+            type = "dpdk";
+        } else if (!strncmp(port_name, DPDK_BRIDGE_PREFIX, DPDK_BRIDGE_PREFIX_LEN)) {
+            request.port_no = 0;
+            type = "internal";
+        } else {
+            return ENODEV;
+        }
+    }
+
+    error = dpif_dpdk_vport_transact(&request, &reply);
+    if (error) {
+        return error;
+    }
+
+    /* We do not currently support more than one bridge, hence assume port
+     * number of 0 is a bridge. */
+    if (reply.port_no == 0) {
+        sprintf(name, "%s%"PRIu32, DPDK_BRIDGE_PREFIX, reply.port_no);
+    } else {
+        sprintf(name, "%s%"PRIu32, DPDK_PORT_PREFIX, reply.port_no);
+    }
+
+    /* dpif_port may be NULL - only poplulate the structure
+     * if non-NULL parameter specified
+     */
+    if (dpif_port) {
+        dpif_port->name = xstrdup(name);
+        dpif_port->type = xstrdup(type);
+        dpif_port->port_no = reply.port_no;
+    }
+
+    return error;
+}
+
+static int
+dpif_dpdk_port_query_by_number(const struct dpif *dpif, odp_port_t port_no,
+                               struct dpif_port *dpif_port)
 {
     DPDK_DEBUG()
 
-    return 0;
+    return dpif_dpdk_port_query__(dpif, port_no, NULL, dpif_port);
 }
 
 static int
 dpif_dpdk_port_query_by_name(const struct dpif *dpif, const char *devname,
                              struct dpif_port *dpif_port)
 {
-    uint16_t port_no = 0;
-    char *type = NULL;
-    dpif_assert_class(dpif, &dpif_dpdk_class);
-
     DPDK_DEBUG()
-    if(devname == NULL) {
-        return EINVAL;
-    }
-    if (!strncmp(devname, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
-        port_no = strtoumax(devname + DPDK_PORT_PREFIX_LEN,
-                            NULL, BASE10);
-        type = "dpdk";
-    /*
-     * TODO: It should be possible to use an arbitrary name for bridges
-     * currently this is not possible
-     */
-    } else if (!strncmp(devname, BR_PREFIX, BR_PREFIX_LEN)) {
-        /*
-         * TODO: This will need to be changed in future to accommodate
-         * multi-bridge support.
-         */
-            type = "internal";
-    } else {
-        return ENODEV;
-    }
 
-    if(dpif_port != NULL){
-        dpif_port->type = xstrdup(type);
-        dpif_port->name = xstrdup(devname);
-        dpif_port->port_no = port_no;
-    } else {
-        VLOG_DBG_RL(&dpmsg_rl,"port_query_by_name() did not populate a dpif_port");
-    }
-
-    return 0;
+    return dpif_dpdk_port_query__(dpif, UINT32_MAX, devname, dpif_port);
 }
 
 static uint32_t
@@ -279,28 +323,57 @@ dpif_dpdk_get_max_ports(const struct dpif *dpif OVS_UNUSED)
 
 static int
 dpif_dpdk_port_dump_start(const struct dpif *dpif_ OVS_UNUSED,
-                          void **statep OVS_UNUSED)
+                          void **statep)
 {
+    struct dpif_dpdk_port_state *state;
+    int error = 0;
+
     DPDK_DEBUG()
 
-    return 0;
+    *statep = state = xmalloc(sizeof(*state));
+
+    dpif_dpdk_vport_init(&state->vport);
+    state->vport.cmd = OVS_VPORT_CMD_GET;
+    state->vport.port_no = UINT32_MAX;
+    state->vport.flags = NLM_F_DUMP;
+
+    return error;
 }
 
 static int
 dpif_dpdk_port_dump_next(const struct dpif *dpif OVS_UNUSED,
-                         void *state_ OVS_UNUSED,
-                         struct dpif_port *dpif_port OVS_UNUSED)
+                         void *state_,
+                         struct dpif_port *dpif_port)
 {
+    struct dpif_dpdk_port_state *state = state_;
+    struct dpif_dpdk_vport_message reply;
+    char name[DPDK_PORT_MAX_STRING_LEN];
+    int error = 0;
+
     DPDK_DEBUG()
 
-    return EOF;
+    error = dpif_dpdk_vport_transact(&state->vport, &reply);
+    if (error)
+        return error;
+    state->vport = reply;
+
+    dpif_port->type = xstrdup("dpdk");
+    sprintf(name, "%s%"PRIu32, DPDK_PORT_PREFIX, reply.port_no);
+    dpif_port->name = xstrdup(name);
+    dpif_port->port_no = reply.port_no;
+
+    return error;
 }
 
 static int
 dpif_dpdk_port_dump_done(const struct dpif *dpif_ OVS_UNUSED,
                          void *state_ OVS_UNUSED)
 {
+    struct dpif_dpdk_vport_state *state = state_;
+
     DPDK_DEBUG()
+
+    free(state);
 
     return 0;
 }
@@ -318,6 +391,43 @@ static void
 dpif_dpdk_port_poll_wait(const struct dpif *dpif_ OVS_UNUSED)
 {
     DPDK_DEBUG()
+}
+
+/* Return statistics for vport associated with 'name'.
+ * Invoked by netdev_dpdk_get_stats()
+ */
+int
+dpif_dpdk_port_get_stats(const char *name, struct dpif_dpdk_vport_stats *stats)
+{
+    struct dpif_dpdk_vport_message request, reply;
+    int error;
+
+    DPDK_DEBUG()
+
+    /* If port name has DPDK_PORT_PREFIX as prefix, then use the uint32_t suffix
+     * as the port number.
+     *
+     * Alternatively, if port name matches datapath name, then use 0 as the port
+     * number. This is a special case for the bridge interface.
+     *
+     * Otherwise, return ENODEV. */
+    if (!strncmp(name, DPDK_PORT_PREFIX, DPDK_PORT_PREFIX_LEN)) {
+        dpif_dpdk_vport_init(&request);
+        request.port_no = (uint32_t)strtoumax(name + DPDK_PORT_PREFIX_LEN, NULL, BASE10);
+    } else if (!strncmp(name, DPDK_BRIDGE_PREFIX, DPDK_BRIDGE_PREFIX_LEN)) {
+        dpif_dpdk_vport_init(&request);
+        request.port_no = 0;
+    } else {
+        return ENODEV;
+    }
+
+    request.cmd = OVS_VPORT_CMD_GET;
+    error = dpif_dpdk_vport_transact(&request, &reply);
+
+    if (!error)
+        *stats = reply.stats;
+
+    return error;
 }
 
 /*
@@ -912,7 +1022,7 @@ const struct dpif_class dpif_dpdk_class =
     dpif_dpdk_queue_to_priority,
     dpif_dpdk_recv,
     dpif_dpdk_recv_wait,
-    dpif_dpdk_recv_purge 
+    dpif_dpdk_recv_purge
 };
 
 static int
@@ -934,6 +1044,54 @@ dpif_dpdk_init(void)
     }
 
     return error;
+}
+
+/* Clear 'vport_msg' to empty values. */
+static void
+dpif_dpdk_vport_init(struct dpif_dpdk_vport_message *vport_msg)
+{
+    DPDK_DEBUG()
+
+    memset(vport_msg, 0, sizeof(*vport_msg));
+    vport_msg->port_no = UINT32_MAX;
+}
+
+/*
+ * Carry out a transaction with the datapath specified in 'request'.
+ * If there is an error this function returns a positive errno value.
+ * If the reply to this request is null, this function returns 0.
+ * If the reply is not null, this functions stores the reply in '*reply'.
+ * The type of this reply is expected to be a vport.
+ */
+static int
+dpif_dpdk_vport_transact(struct dpif_dpdk_vport_message *request,
+                         struct dpif_dpdk_vport_message *reply)
+{
+    struct dpif_dpdk_message request_buf;
+    int error = 0;
+
+    DPDK_DEBUG()
+
+    request_buf.type = DPIF_DPDK_VPORT_FAMILY;
+
+    request_buf.vport_msg = *request;
+
+    error = dpdk_link_send(&request_buf, NULL);
+    if (error) {
+        return error;
+    }
+
+    error = dpdk_link_recv_reply(&request_buf);
+
+    if (error) {
+        return error;
+    }
+
+    if (reply) {
+        *reply = request_buf.vport_msg;
+    }
+
+    return request_buf.type;
 }
 
 /* Clears 'flow' to "empty" values. */
@@ -1106,7 +1264,7 @@ dpif_dpdk_flow_actions_to_actions(const struct dpif_dpdk_action *actions,
                 offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_SET);
                 nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_UDP,
                                   &actions[i].data.udp,
-                                  sizeof(struct ovs_key_udp)); 
+                                  sizeof(struct ovs_key_udp));
                 nl_msg_end_nested(actionsp, offset);
                 break;
             case ACTION_NULL:

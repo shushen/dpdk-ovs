@@ -38,11 +38,18 @@
 #include <rte_mbuf.h>
 #include "flow.h"
 
+enum vport_cmd {
+	VPORT_CMD_UNSPEC,
+	VPORT_CMD_NEW,         /* Add new vport. */
+	VPORT_CMD_DEL,         /* Delete existing vport. */
+	VPORT_CMD_GET          /* Get stats for existing vport. */
+};
+
 enum flow_cmd {
 	FLOW_CMD_UNSPEC,
-	FLOW_CMD_NEW,
-	FLOW_CMD_DEL,
-	FLOW_CMD_GET
+	FLOW_CMD_NEW,          /* Add new flow. */
+	FLOW_CMD_DEL,          /* Delete existing flow. */
+	FLOW_CMD_GET           /* Get stats for existing flow. */
 };
 
 enum packet_cmd {

@@ -54,14 +54,24 @@
 #define PORT_MASK           0x0F
 #define KNI_MASK            0x1F
 #define VETH_MASK           0x3F
-#define IS_CLIENT_PORT(action) ((action) > CLIENT_MASK && (action) <= PORT_MASK)
-#define IS_PHY_PORT(action) ((action) > PORT_MASK && (action) <= KNI_MASK)
-#define IS_KNI_PORT(action) ((action) > KNI_MASK  && (action) <= (KNI_MASK + MAX_KNI_PORTS))
-#define IS_VETH_PORT(action) ((action) > VETH_MASK  && (action) <= (VETH_MASK + MAX_VETH_PORTS))
+#define VPORT_IN_USE      0
+#define VPORT_NOT_IN_USE  1
+#define VPORT_EXISTS      0
 
 struct port_info {
-	uint8_t num_ports;
+	uint8_t num_phy_ports;
 	uint8_t id[RTE_MAX_ETHPORTS];
+};
+
+struct port_stats {
+	volatile uint64_t rx;        /* Rx packet count */
+	volatile uint64_t tx;        /* Tx packet count */
+	volatile uint64_t rx_bytes;  /* Tx bytes count */
+	volatile uint64_t tx_bytes;  /* Tx bytes count */
+	volatile uint64_t rx_drop;   /* Rx dropped packet count */
+	volatile uint64_t tx_drop;   /* Tx dropped packet count */
+	volatile uint64_t rx_error;  /* Rx error packet count */
+	volatile uint64_t tx_error;  /* Tx error packet count */
 };
 
 struct port_info *ports;
@@ -73,6 +83,10 @@ int send_to_vport(uint8_t vportid, struct rte_mbuf *buf);
 uint16_t receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs);
 void flush_nic_tx_ring(unsigned vportid);
 const char *vport_name(unsigned vportid);
+int16_t vport_in_use(unsigned vportid);
+int vport_exists(unsigned vportid);
+void vport_set_in_use(unsigned vportid);
+void vport_set_not_in_use(unsigned vportid);
 
 void flush_clients(void);
 void flush_ports(void);

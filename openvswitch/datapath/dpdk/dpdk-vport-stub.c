@@ -98,3 +98,21 @@ void vport_fini(void)
 
 	return;
 }
+
+int16_t vport_in_use(unsigned vportid)
+{
+	return 0;
+}
+
+int vport_exists(unsigned vportid)
+{
+	return  0;
+}
+void vport_set_in_use(unsigned vportid)
+{
+}
+
+void vport_set_not_in_use(unsigned vportid)
+{
+}
+
