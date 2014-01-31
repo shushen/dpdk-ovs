@@ -127,7 +127,7 @@ clean-kni:
 check: check-ovs
 
 check-ovs:
-	cd $(OVS_DIR) && $(MAKE) check TESTSUITEFLAGS='1329-' && cd $(ROOT_DIR)
+	cd $(OVS_DIR) && $(MAKE) check TESTSUITEFLAGS='1344-' && cd $(ROOT_DIR)
 
 #End Targets for Check##############
 
@@ -152,7 +152,7 @@ kni:
 
 #KNI patching#######################
 patch-dpdk-kni:
-	if patch -N -p1 -d $(DPDK_DIR) --dry-run --silent <$(KNI_PATCH) 2>&1 >/dev/null; then \
+	@if patch -N -p1 -d $(DPDK_DIR) --dry-run --silent <$(KNI_PATCH) 2>&1 >/dev/null; then \
 		echo "Applying KNI patch"; \
 		patch -N -p1 -d $(DPDK_DIR) <$(KNI_PATCH); \
 	else \

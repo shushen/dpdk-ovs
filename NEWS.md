@@ -1,4 +1,8 @@
-# v0.9 - January 2014
+# v0.10 - TBD
+
+    - Added top level Makefile
+
+ # v0.9 - January 2014
 
     - Upgraded the base version of Open vSwitch from 1.5 to 2.0.0
     - Updated to use DPDK 1.6.0
