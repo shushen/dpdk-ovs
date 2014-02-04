@@ -193,9 +193,6 @@ static void flush_client_port_cache(uint8_t clientid);
 /* vports details */
 static struct vport_info *vports;
 
-/* Drain period to flush packets out of the physical ports and caches */
-static uint64_t port_flush_period;
-
 static void vport_set_name(unsigned i, const char *fmt, ...)
 {
 	va_list ap;
@@ -509,10 +506,6 @@ void vport_init(void)
 
 	/* initalise veth queues */
 	init_veth();
-
-	/* initialize flush periods using CPU frequency */
-	port_flush_period = (rte_get_tsc_hz() + US_PER_S - 1) /
-	        US_PER_S * PORT_FLUSH_PERIOD_US;
 }
 
 /*
@@ -755,38 +748,22 @@ flush_nic_tx_ring(unsigned vportid)
 {
 	struct rte_mbuf *pkts[PKT_BURST_SIZE];
 	struct vport_phy *phy = &vports[vportid].phy;
-	static uint64_t prev_tsc[MAX_PHYPORTS] = { 0 };
 	uint8_t portid = phy->index;
-	uint64_t diff_tsc, cur_tsc = rte_rdtsc();
-	unsigned tx_count, pkts_sent, i;
+	unsigned num_pkts, i;
 
-	tx_count = rte_ring_count(phy->tx_q);
+	/* get packets from NIC tx staging queue */
+	num_pkts = rte_ring_sc_dequeue_burst(phy->tx_q, (void **)pkts, PKT_BURST_SIZE);
 
-	/* If queue idles with less than PKT_BURST packets, drain it*/
-	if (tx_count < PKT_BURST_SIZE) {
-		diff_tsc = cur_tsc - prev_tsc[portid];
-		if (unlikely(diff_tsc < port_flush_period))
-			return;
+	/* send packets to NIC tx queue */
+	if (likely(num_pkts != 0)) {
+		unsigned sent = rte_eth_tx_burst(portid, 0, pkts, num_pkts);
+		if (unlikely(sent < num_pkts)) {
+			for (i = sent; i < num_pkts; i++)
+				rte_pktmbuf_free(pkts[i]);
+			stats_vport_tx_drop_increment(vportid, num_pkts - sent);
+		}
+		stats_vport_tx_increment(vportid, sent);
 	}
-
-	/* maximum number of packets that can be handles is PKT_BURST_SIZE */
-	if (tx_count > PKT_BURST_SIZE)
-		tx_count = PKT_BURST_SIZE;
-
-	if (unlikely(rte_ring_dequeue_bulk(phy->tx_q, (void **)pkts, tx_count) != 0))
-		return;
-
-	pkts_sent = rte_eth_tx_burst(portid, 0, pkts, tx_count);
-
-	prev_tsc[portid] = cur_tsc;
-
-	if (unlikely(pkts_sent < tx_count)) {
-		for (i = pkts_sent; i < tx_count; i++)
-			rte_pktmbuf_free(pkts[i]);
-
-		stats_vport_tx_drop_increment(vportid, tx_count - pkts_sent);
-	}
-	stats_vport_tx_increment(vportid, pkts_sent);
 }
 
 /* 
