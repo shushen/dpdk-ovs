@@ -58,6 +58,7 @@
 #define MBUFS_PER_PORT    3072
 #define MBUFS_PER_KNI     3072
 #define MBUFS_PER_VETH    3072
+#define MBUFS_PER_VHOST   3072
 #define MBUFS_PER_DAEMON  2048
 
 #define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
@@ -79,6 +80,7 @@ init_mbuf_pools(void)
 			+ (port_cfg.num_phy_ports * MBUFS_PER_PORT)
 			+ (num_kni * MBUFS_PER_KNI)
 			+ (num_veth * MBUFS_PER_VETH)
+			+ (num_vhost * MBUFS_PER_VHOST)
 			+ MBUFS_PER_DAEMON;
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
@@ -101,6 +103,7 @@ int
 init(int argc, char *argv[])
 {
 	int retval;
+	unsigned lcore;
 	uint8_t total_ports = 0;
 
 	/* init EAL, parsing EAL args */
@@ -134,7 +137,12 @@ init(int argc, char *argv[])
 	datapath_init();
 	vport_init();
 	stats_init();
+	vhost_init();
 
+	/* Set flags on each core for safe vhost device removal. */
+	RTE_LCORE_FOREACH(lcore) {
+		dev_removal_flag[lcore] = ACK_DEV_REMOVAL;
+	}
 	return 0;
 }
 

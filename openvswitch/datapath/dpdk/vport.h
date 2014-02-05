@@ -40,23 +40,28 @@
 
 #include "kni.h"
 #include "veth.h"
+#include "vhost.h"
 
-#define MAX_VPORTS          80
 #define MAX_PHYPORTS        16
 #define MAX_CLIENTS         16
+#define MAX_VHOST_PORTS 	64
 #define PKT_BURST_SIZE      32u
 #define CLIENT0             0
 #define CLIENT1             1
 #define PHYPORT0            0x10
 #define KNI0                0x20
 #define VETH0               0x40
+#define VHOST0              0x50
 #define CLIENT_MASK         0x00
 #define PORT_MASK           0x0F
 #define KNI_MASK            0x1F
 #define VETH_MASK           0x3F
-#define VPORT_IN_USE      0
-#define VPORT_NOT_IN_USE  1
-#define VPORT_EXISTS      0
+#define VHOST_MASK          0x4F
+#define VPORT_IN_USE		0
+#define VPORT_NOT_IN_USE	1
+#define VPORT_EXISTS		0
+
+#define MAX_VPORTS			256
 
 struct port_info {
 	uint8_t num_phy_ports;
@@ -76,20 +81,32 @@ struct port_stats {
 
 struct port_info *ports;
 
+struct virtio_net;
+struct virtio_net_hdr_mrg_rxbuf;
+
+/* Flags to communicate if a device can be removed safely from ovs_dpdk data path. */
+#define REQUEST_DEV_REMOVAL 1
+#define ACK_DEV_REMOVAL 0
+
+volatile uint8_t dev_removal_flag[RTE_MAX_LCORE];   /* Flag to synchronize device removal. */
+
 void vport_init(void);
 void vport_fini(void);
 
-int send_to_vport(uint8_t vportid, struct rte_mbuf *buf);
-uint16_t receive_from_vport(uint8_t vportid, struct rte_mbuf **bufs);
+int send_to_vport(uint32_t vportid, struct rte_mbuf *buf);
+uint16_t receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs);
 void flush_nic_tx_ring(unsigned vportid);
 const char *vport_name(unsigned vportid);
 int16_t vport_in_use(unsigned vportid);
 int vport_exists(unsigned vportid);
 void vport_set_in_use(unsigned vportid);
 void vport_set_not_in_use(unsigned vportid);
+int vport_vhost_up(struct virtio_net *dev);
+int vport_vhost_down(unsigned portid);
 
 void flush_clients(void);
 void flush_ports(void);
+void flush_vhost_devs(void);
 
 #endif /* __VPORT_H_ */
 

@@ -32,87 +32,26 @@
  *
  */
 
-#include "vport.h"
-
-#define MAX_BUFS             100
-#define MAX_VPORTS           256
-
-struct rte_mbuf *buf_array[MAX_VPORTS][MAX_BUFS] = {NULL};
-
-int buf_tail[MAX_VPORTS] = {0};
-int buf_head[MAX_VPORTS] = {0};
-
-uint16_t
-receive_from_vport(uint32_t portid, struct rte_mbuf **bufs)
-{
-	int count = 0;
-	int i = 0;
-	int head = buf_head[portid];
-	int tail = buf_tail[portid];
-
-	/* check how many buffers can be received */
-	count = tail - head;
-
-	/* only receive PKT_BURST_SIZE as maximum */
-	if (count > PKT_BURST_SIZE)
-		count = PKT_BURST_SIZE;
-
-	for (i = 0; i < count; i++) {
-		bufs[i] = buf_array[portid][head];
-		head = ++buf_head[portid];
-	}
-
-	return count;
-}
 
 
-int
-send_to_vport(uint32_t portid, struct rte_mbuf *buf)
-{
-	int tail = buf_tail[portid]++;
+#ifndef _DPDK_VHOST_H_
+#define _DPDK_VHOST_H_
 
-	/* add one buffer to buf structure and update index */
-	buf_array[portid][tail] = buf;
-	return 0;
-}
+/* Uncomment the line below to enable debug prints for userspace vhost devices. */
+//#define VHOST_DEBUG
 
-void vport_init(void)
-{
-	/* init and fini will both re-initialize buf pointers and indices */
-	vport_fini();
-	return;
-}
+#ifdef VHOST_DEBUG
+#define LOG_LEVEL RTE_LOG_DEBUG
+#define LOG_DEBUG(log_type, fmt, args...) do {	\
+	RTE_LOG(DEBUG, log_type, fmt, ##args);		\
+} while (0)
+#else
+#define LOG_DEBUG(log_type, fmt, args...) do{} while(0)
+#endif
 
-void vport_fini(void)
-{
-	int bufs = 0;
-	int ports = 0;
+/* Maximum character device basename size. */
+#define MAX_BASENAME_SZ 20
 
-	/* initialize all buf pointers and indices to zero */
-	for (bufs = 0; bufs < MAX_BUFS; bufs++)
-		for (ports = 0; ports < MAX_VPORTS; ports++) {
-			buf_array[ports][bufs] = NULL;
-			buf_tail[ports] = 0;
-			buf_head[ports] = 0;
-		}
+int vhost_init(void);
 
-	return;
-}
-
-int16_t vport_in_use(unsigned vportid)
-{
-	return 0;
-}
-
-int vport_exists(unsigned vportid)
-{
-	return  0;
-}
-void vport_set_in_use(unsigned vportid)
-{
-}
-
-void vport_set_not_in_use(unsigned vportid)
-{
-}
-
+#endif /* _DPDK_VHOST_H_ */

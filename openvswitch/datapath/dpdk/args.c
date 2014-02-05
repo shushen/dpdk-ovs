@@ -50,6 +50,7 @@
 #include "vport.h"
 #include "kni.h"
 #include "veth.h"
+#include "vhost.h"
 
 #define PORT_OFFSET 0x10
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
@@ -72,6 +73,16 @@ uint16_t nb_cfg_params = sizeof(cfg_params_array_default) /
 
 static const char *progname;
 
+/* Character device basename. Can be set by user. */
+extern char dev_basename[MAX_BASENAME_SZ];
+/* Character device index. Can be set by user. */
+extern uint32_t dev_index;
+
+/* Specify timeout (in useconds) between retries on TX. */
+extern uint32_t burst_tx_delay_time;
+/* Specify the number of retries on TX. */
+extern uint32_t burst_tx_retry_num;
+
 /**
  * Prints out usage information to stdout
  */
@@ -84,6 +95,24 @@ usage(void)
 	    " -n NUM_CLIENTS: number of client processes to use\n"
 	    " -k NUM_KNI: number of kni ports to use\n"
 	    " -v NUM_VETH: number of host kni (veth) ports to use\n"
+		" -h NUM_VHOST: number of vhost (devices) ports to use\n"
+		" --vswitchd COREMASK\n"
+		"   CPU ID of the core used to display statistics and communicate with the vswitch daemon\n"
+		" --config (port,queue,lcore)[,(port,queue,lcore]\n"
+		"   Each port/queue/core group specifies the CPU ID of the core that will handle\n"
+		"   ingress traffic for the	specified queue on the specified port\n"
+		" --client_switching_core COREMASK\n"
+		"   CPU ID of the core used to manage client switching\n"
+		" --stats UPDATE_TIME\n"
+		"   Interval (in seconds) at which stats are updated. Set to 0 to disable (default)\n"
+		" --vhost_dev_basename CHAR_DEV_NAME\n"
+		"   Set the basename for the vhost character device\n"
+		" --vhost_dev_index INDEX\n"
+		"   Set the index to be appended to the vhost character device name\n"
+		" --vhost_retry_count COUNT\n"
+		"   Set the number of retries when sending packets to a vhost device\n"
+		" --vhost_retry_wait WAIT_TIME_US\n"
+		"   Wait time in useconds when retrying to send packets to a vhost device\n"
 	    , progname);
 }
 
@@ -143,6 +172,22 @@ parse_num_clients(const char *clients)
 
 	return temp;
 }
+
+/*
+ * Set the vhost character device basename. If this is not set
+ * the default vhost-net basename is used.
+ */
+static int
+us_vhost_parse_basename(const char *q_arg)
+{
+	if (strlen(q_arg) > MAX_BASENAME_SZ)
+		return -1;
+	else
+		rte_snprintf((char*)&dev_basename, MAX_BASENAME_SZ, "%s", q_arg);
+
+	return 0;
+}
+
 
 int
 parse_config(const char *q_arg)
@@ -218,15 +263,19 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 			{PARAM_CONFIG, 1, 0, 0},
 			{PARAM_VSWITCHD, 1, 0, 0},
 			{PARAM_CSC, 1, 0, 0},
+			{VHOST_CHAR_DEV_NAME, 1, 0, 0},
+			{VHOST_CHAR_DEV_IDX, 1, 0, 0},
+			{VHOST_RETRY_COUNT, 1, 0, 0},
+			{VHOST_RETRY_WAIT, 1, 0, 0},
 			{NULL, 0, 0, 0}
 	};
 
 	progname = argv[0];
 
-	/* Initialize the three counters to "not used" */
-	num_clients = num_kni = num_veth = 0;
+	/* Initialize counters to "not used" */
+	num_clients = num_kni = num_veth = num_vhost = 0;
 
-	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:h:", lgopts,
 		&option_index)) != EOF) {
 		switch (opt) {
 			case 'p':  /* Physical ports */
@@ -259,6 +308,14 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				}
 				num_veth = (uint8_t)temp;
 				break;
+			case 'h':  /* vHost ports */
+				temp = parse_num_clients(optarg);
+				if (temp <= 0) {
+					usage();
+					return -1;
+				}
+				num_vhost = (uint8_t)temp;
+				break;
 			case 0:
 				if (!strcmp(lgopts[option_index].name, PARAM_CONFIG)) {
 					ret = parse_config(optarg);
@@ -272,6 +329,37 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					vswitchd_core = atoi(optarg);
 				} else if (strncmp(lgopts[option_index].name, PARAM_CSC, 16) == 0) {
 					client_switching_core = atoi(optarg);
+				} else if (strncmp(lgopts[option_index].name, VHOST_CHAR_DEV_NAME, 18) == 0) {
+					 temp = us_vhost_parse_basename(optarg);
+					 if (temp < 0) {
+						 printf ("Invalid argument for character device basename\n");
+						 usage();
+						 return -1;
+					 }
+				} else if (strncmp(lgopts[option_index].name, VHOST_CHAR_DEV_IDX, 15) == 0) {
+					temp = atoi(optarg);
+					if (temp < 0) {
+						printf("Invalid argument for character device index\n");	
+						usage();
+						return -1;
+					}
+					dev_index = (uint32_t)temp;
+				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_COUNT, 17) == 0) {
+					temp = atoi(optarg);
+					if (temp < 0) {
+						printf("Invalid argument for retry count\n");	
+						usage();
+						return -1;
+					}
+					burst_tx_retry_num = (uint32_t)temp;
+				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_WAIT, 16) == 0) {
+					temp = atoi(optarg);
+					if (temp < 0) {
+						printf("Invalid argument for retry wait time\n");	
+						usage();
+						return -1;
+					}
+					burst_tx_delay_time = (uint32_t)temp;
 				}
 				break;
 			default:
@@ -295,6 +383,12 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 
 	if (num_veth > MAX_VETH_PORTS) {
 		printf ("Number of host KNI (vEth) ports is invalid\n");
+		usage();
+		return -1;
+	}
+
+	if (num_vhost > MAX_VHOST_PORTS) {
+		printf ("Number of vhost ports is invalid\n");
 		usage();
 		return -1;
 	}

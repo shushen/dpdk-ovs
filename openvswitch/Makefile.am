@@ -10,7 +10,7 @@ AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
 SUBDIRS = datapath
 if HAVE_DPDK
-SUBDIRS += . datapath/dpdk
+SUBDIRS += . datapath/dpdk datapath/dpdk/fd_link
 endif
 
 if HAVE_DPDK

@@ -32,87 +32,55 @@
  *
  */
 
-#include "vport.h"
 
-#define MAX_BUFS             100
-#define MAX_VPORTS           256
 
-struct rte_mbuf *buf_array[MAX_VPORTS][MAX_BUFS] = {NULL};
+#ifndef _VHOST_NET_CDEV_H_
+#define _VHOST_NET_CDEV_H_
 
-int buf_tail[MAX_VPORTS] = {0};
-int buf_head[MAX_VPORTS] = {0};
+#include <linux/vhost.h>
 
-uint16_t
-receive_from_vport(uint32_t portid, struct rte_mbuf **bufs)
+struct vhost_memory;
+struct vhost_vring_state;
+struct vhost_vring_addr;
+struct vhost_vring_file;
+
+/*
+ * Structure used to identify device context.
+ */
+struct vhost_device_ctx
 {
-	int count = 0;
-	int i = 0;
-	int head = buf_head[portid];
-	int tail = buf_tail[portid];
+	pid_t		pid;	/* PID of process calling the IOCTL. */
+	uint64_t 	fh;		/* Populated with fi->fh to track the device index. */
+};
 
-	/* check how many buffers can be received */
-	count = tail - head;
+/*
+ * Structure contains function pointers to be defined in virtio-net.c. These
+ * functions are called in CUSE context and are used to configure devices.
+ */
+struct vhost_net_device_ops {
+	int (* new_device) 		(struct vhost_device_ctx);
+	void (* destroy_device) (struct vhost_device_ctx);
 
-	/* only receive PKT_BURST_SIZE as maximum */
-	if (count > PKT_BURST_SIZE)
-		count = PKT_BURST_SIZE;
+	int (* get_features) 	(struct vhost_device_ctx, uint64_t *);
+	int (* set_features) 	(struct vhost_device_ctx, uint64_t *);
 
-	for (i = 0; i < count; i++) {
-		bufs[i] = buf_array[portid][head];
-		head = ++buf_head[portid];
-	}
+	int (* set_mem_table) 	(struct vhost_device_ctx, const void *, uint32_t);
 
-	return count;
-}
+	int (* set_vring_num) 	(struct vhost_device_ctx, struct vhost_vring_state *);
+	int (* set_vring_addr) 	(struct vhost_device_ctx, struct vhost_vring_addr *);
+	int (* set_vring_base) 	(struct vhost_device_ctx, struct vhost_vring_state *);
+	int (* get_vring_base) 	(struct vhost_device_ctx, uint32_t, struct vhost_vring_state *);
 
+	int (* set_vring_kick) 	(struct vhost_device_ctx, struct vhost_vring_file *);
+	int (* set_vring_call) 	(struct vhost_device_ctx, struct vhost_vring_file *);
 
-int
-send_to_vport(uint32_t portid, struct rte_mbuf *buf)
-{
-	int tail = buf_tail[portid]++;
+	int (* set_backend) 	(struct vhost_device_ctx, struct vhost_vring_file *);
 
-	/* add one buffer to buf structure and update index */
-	buf_array[portid][tail] = buf;
-	return 0;
-}
+	int (* set_owner) 		(struct vhost_device_ctx);
+	int (* reset_owner) 	(struct vhost_device_ctx);
+};
 
-void vport_init(void)
-{
-	/* init and fini will both re-initialize buf pointers and indices */
-	vport_fini();
-	return;
-}
+int register_cuse_device(const char *base_name, int index, struct vhost_net_device_ops const * const);
+void cuse_session_loop(void);
 
-void vport_fini(void)
-{
-	int bufs = 0;
-	int ports = 0;
-
-	/* initialize all buf pointers and indices to zero */
-	for (bufs = 0; bufs < MAX_BUFS; bufs++)
-		for (ports = 0; ports < MAX_VPORTS; ports++) {
-			buf_array[ports][bufs] = NULL;
-			buf_tail[ports] = 0;
-			buf_head[ports] = 0;
-		}
-
-	return;
-}
-
-int16_t vport_in_use(unsigned vportid)
-{
-	return 0;
-}
-
-int vport_exists(unsigned vportid)
-{
-	return  0;
-}
-void vport_set_in_use(unsigned vportid)
-{
-}
-
-void vport_set_not_in_use(unsigned vportid)
-{
-}
-
+#endif /* _VHOST_NET_CDEV_H_ */

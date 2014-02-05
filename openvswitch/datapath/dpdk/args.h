@@ -41,6 +41,10 @@
 #define PARAM_CONFIG "config"
 #define PARAM_STATS "stats"
 #define PARAM_VSWITCHD "vswitchd"
+#define VHOST_CHAR_DEV_NAME "vhost_dev_basename"
+#define VHOST_CHAR_DEV_IDX "vhost_dev_index"
+#define VHOST_RETRY_COUNT "vhost_retry_count"
+#define VHOST_RETRY_WAIT "vhost_retry_wait"
 #define PARAM_CSC "client_switching_core"
 #define PARAM_KSC "kni_switching_core"
 
@@ -58,8 +62,6 @@ int parse_app_args(uint8_t max_ports, int argc, char *argv[]);
 int parse_config(const char *q_arg);
 
 /* global var for number of clients - extern in header */
-uint8_t num_clients;
-uint8_t num_kni;
 unsigned stats_display_interval; /* in seconds, set to 0 to disable update */
 unsigned vswitchd_core;
 unsigned client_switching_core;
