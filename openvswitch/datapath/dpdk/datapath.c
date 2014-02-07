@@ -52,9 +52,13 @@
 #define SOCKET0             0
 #define PKT_BURST_SIZE      32u
 #define VSWITCHD_RINGSIZE   2048
-#define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
-#define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
-#define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_ALLOC_THRESHOLD	(VSWITCHD_RINGSIZE/4)
+#define VSWITCHD_PACKET_RING_NAME	"MProc_Vswitchd_Packet_Ring"
+#define VSWITCHD_REPLY_RING_NAME	"MProc_Vswitchd_Reply_Ring"
+#define VSWITCHD_MESSAGE_RING_NAME	"MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME		"MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME	"MProc_Vswitchd_Alloc_Ring"
+
 /* Flow messages flags bits */
 #define FLAG_ROOT              0x100
 #define FLAG_MATCH             0x200
@@ -110,6 +114,11 @@ static struct rte_ring *vswitchd_packet_ring = NULL;
 static struct rte_ring *vswitchd_message_ring = NULL;
 /* ring to send reply messages to vswitchd */
 static struct rte_ring *vswitchd_reply_ring = NULL;
+
+/* Holds packets to be freed */
+static struct rte_ring *vswitchd_free_ring = NULL;
+/* Holds newly allocated packets */
+static struct rte_ring *vswitchd_alloc_ring = NULL;
 
 static void send_reply_to_vswitchd(struct dpdk_message *reply);
 
@@ -201,21 +210,35 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 void
 handle_request_from_vswitchd(void)
 {
-	int j = 0;
-	uint16_t dq_pkt = PKT_BURST_SIZE;
-	struct rte_mbuf *buf[PKT_BURST_SIZE] = {0};
+	uint16_t j = 0, dq_pkt = 0;
+	struct rte_mbuf *buf[PKT_BURST_SIZE];
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
-	while (dq_pkt > 0 &&
-	       unlikely(rte_ring_mc_dequeue_bulk(
-	       vswitchd_message_ring, (void **)buf, dq_pkt) != 0))
-		dq_pkt = (uint16_t)RTE_MIN(rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
+	dq_pkt = rte_ring_sc_dequeue_burst(vswitchd_message_ring, (void**) buf,
+			PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by daemon */
 	stats_vport_rx_increment(VSWITCHD, dq_pkt);
 
 	for (j = 0; j < dq_pkt; j++) {
 		handle_vswitchd_cmd(buf[j]);
+	}
+
+	/* Free any packets from the vswitch daemon */
+	dq_pkt = rte_ring_sc_dequeue_burst(vswitchd_free_ring, (void**)buf,
+			PKT_BURST_SIZE);
+	for (j = 0; j < dq_pkt; j++)
+	    rte_pktmbuf_free(buf[j]);
+
+	/* Allocate mbufs for the vswitch daemon to use in case the alloc ring
+	 * count is too low */
+	while (rte_ring_count(vswitchd_alloc_ring) < VSWITCHD_ALLOC_THRESHOLD) {
+		for (j = 0; j < PKT_BURST_SIZE; j++) {
+			if ((buf[j] = rte_pktmbuf_alloc(pktmbuf_pool)) == NULL)
+				break;
+		}
+		if (j)
+			rte_ring_sp_enqueue_bulk(vswitchd_alloc_ring, (void**) buf, j);
 	}
 }
 
@@ -606,6 +629,18 @@ datapath_init(void)
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
+
+	vswitchd_free_ring = rte_ring_create(VSWITCHD_FREE_RING_NAME,
+	         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_free_ring == NULL)
+			rte_exit(EXIT_FAILURE, "Cannot create free ring for vswitchd");
+
+	vswitchd_alloc_ring = rte_ring_create(VSWITCHD_ALLOC_RING_NAME,
+	         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_alloc_ring == NULL)
+			rte_exit(EXIT_FAILURE, "Cannot create alloc ring for vswitchd");
 
 	dpif_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (dpif_socket < 0)

@@ -38,10 +38,11 @@ VLOG_DEFINE_THIS_MODULE(dpdk_link);
 
 #define PKT_BURST_SIZE 256
 
-#define PKTMBUF_POOL_NAME          "MProc_pktmbuf_pool"
 #define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
 #define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
 #define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
 
 #ifdef PG_DEBUG
 #define DPDK_DEBUG() printf("DPDK-LINK.c %s Line %d\n", __FUNCTION__, __LINE__);
@@ -49,10 +50,23 @@ VLOG_DEFINE_THIS_MODULE(dpdk_link);
 #define DPDK_DEBUG()
 #endif
 
+#define enqueue_mbufs_to_be_freed(mbufs, num_mbufs) { \
+    while (rte_ring_mp_enqueue_bulk(free_ring, mbufs, num_mbufs) != 0); \
+}
+
+#define enqueue_mbuf_to_be_freed(mbuf) { \
+    while (rte_ring_mp_enqueue(free_ring, mbuf) != 0); \
+}
+
+#define alloc_mbufs(mbufs, num_mbufs) { \
+    while (rte_ring_mc_dequeue_bulk(alloc_ring, mbufs, num_mbufs) != 0); \
+}
+
 static struct rte_ring *message_ring = NULL;
 static struct rte_ring *reply_ring = NULL;
 static struct rte_ring *packet_ring = NULL;
-static struct rte_mempool *mp = NULL;
+static struct rte_ring *free_ring = NULL;
+static struct rte_ring *alloc_ring = NULL;
 
 /* Sends 'packet' and 'request' data to datapath. */
 int
@@ -68,7 +82,7 @@ int
 dpdk_link_send_bulk(struct dpif_dpdk_message *request,
                     const struct ofpbuf *const *packets, size_t num_pkts)
 {
-    struct rte_mbuf *mbufs[PKT_BURST_SIZE] = {NULL};
+    struct rte_mbuf *mbufs[PKT_BURST_SIZE];
     uint8_t *mbuf_data = NULL;
     int i = 0;
     int ret = 0;
@@ -79,19 +93,13 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
 
     DPDK_DEBUG()
 
-    for (i = 0; i < num_pkts; i++) {
-        mbufs[i] = rte_pktmbuf_alloc(mp);
+       alloc_mbufs(mbufs, num_pkts);
 
-        if (!mbufs[i]) {
-            for (; i >= 0; i--)
-                rte_pktmbuf_free(mbufs[i]);
-            return ENOBUFS;
-        }
-        
-	mbufs[i]->pkt.nb_segs = 1;
+    for (i = 0; i < num_pkts; i++) {
+        mbufs[i]->pkt.nb_segs = 1;
 
         if (request->type == DPIF_DPDK_FLOW_FAMILY)
-            request[i].flow_msg.id = (uint32_t)syscall(SYS_gettid);
+            request[i].flow_msg.id = (uint32_t) syscall(SYS_gettid);
 
         mbuf_data = rte_pktmbuf_mtod(mbufs[i], uint8_t *);
         rte_memcpy(mbuf_data, &request[i], sizeof(request[i]));
@@ -100,15 +108,13 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
             mbuf_data = mbuf_data + sizeof(request[i]);
             if (likely(packets[i]->size <= (mbufs[i]->buf_len - sizeof(request[i])))) {
                 rte_memcpy(mbuf_data, packets[i]->data, packets[i]->size);
-                rte_pktmbuf_data_len(mbufs[i]) =
-                                 sizeof(request[i]) + packets[i]->size;
+                rte_pktmbuf_data_len(mbufs[i]) = sizeof(request[i])
+                        + packets[i]->size;
                 rte_pktmbuf_pkt_len(mbufs[i]) = rte_pktmbuf_data_len(mbufs[i]);
             } else {
-                RTE_LOG(ERR, APP, "%s, %d: %s", __FUNCTION__, __LINE__,
-                "memcpy prevented: packet size exceeds available mbuf space");
-                for (i = 0; i < num_pkts; i++) {
-                    rte_pktmbuf_free(mbufs[i]);
-                }
+                RTE_LOG(ERR, APP,"%s, %d: %s", __FUNCTION__, __LINE__,
+                        "memcpy prevented: packet size exceeds available mbuf space");
+                enqueue_mbufs_to_be_freed(mbufs, num_pkts);
                 return ENOMEM;
             }
         } else {
@@ -119,9 +125,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
 
     ret = rte_ring_mp_enqueue_bulk(message_ring, (void * const *)mbufs, num_pkts);
     if (ret == -ENOBUFS) {
-        for (i = 0; i < num_pkts; i++) {
-            rte_pktmbuf_free(mbufs[i]);
-        }
+        enqueue_mbufs_to_be_freed(mbufs, num_pkts);
         ret = ENOBUFS;
     } else if (unlikely(ret == -EDQUOT)) {
         /* do not return this error code to the caller */
@@ -176,7 +180,7 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 
     rte_memcpy(reply, pktmbuf_data, pktmbuf_len);
 
-    rte_pktmbuf_free(mbuf);
+    enqueue_mbuf_to_be_freed(mbuf);
 
     return 0;
 }
@@ -192,7 +196,7 @@ dpdk_link_recv_packet(struct ofpbuf **pkt, struct dpif_dpdk_upcall *info)
 
     DPDK_DEBUG()
 
-    if (rte_ring_sc_dequeue(packet_ring, (void **)&mbuf) != 0) {
+    if (rte_ring_mc_dequeue(packet_ring, (void **)&mbuf) != 0) {
         return EAGAIN;
     }
 
@@ -202,7 +206,7 @@ dpdk_link_recv_packet(struct ofpbuf **pkt, struct dpif_dpdk_upcall *info)
     pktmbuf_data = (uint8_t *)pktmbuf_data + sizeof(*info);
     *pkt = ofpbuf_clone_data(pktmbuf_data, pktmbuf_len - sizeof(*info));
 
-    rte_pktmbuf_free(mbuf);
+    enqueue_mbuf_to_be_freed(mbuf);
 
     return 0;
 }
@@ -218,24 +222,32 @@ dpdk_link_init(void)
 
     reply_ring = rte_ring_lookup(VSWITCHD_REPLY_RING_NAME);
     if (reply_ring == NULL) {
-        rte_exit(EXIT_FAILURE, "Cannot get reply ring - is datapath running?\n");
+        rte_exit(EXIT_FAILURE,
+                     "Cannot get reply ring - is datapath running?\n");
     }
 
     message_ring = rte_ring_lookup(VSWITCHD_MESSAGE_RING_NAME);
     if (message_ring == NULL) {
-        rte_exit(EXIT_FAILURE, "Cannot get message ring - is datapath running?\n");
+        rte_exit(EXIT_FAILURE,
+                     "Cannot get message ring - is datapath running?\n");
     }
 
     packet_ring = rte_ring_lookup(VSWITCHD_PACKET_RING_NAME);
     if (packet_ring == NULL) {
         rte_exit(EXIT_FAILURE,
-                     "Cannot get packet packet ring - is datapath running?\n");
+                     "Cannot get packet ring - is datapath running?\n");
     }
 
-    mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);
-    if (mp == NULL) {
+    free_ring = rte_ring_lookup(VSWITCHD_FREE_RING_NAME);
+    if (free_ring == NULL) {
         rte_exit(EXIT_FAILURE,
-                      "Cannot get mempool for mbufs - is datapath running?\n");
+                     "Cannot get free ring - is datapath running?\n");
+    }
+
+    alloc_ring = rte_ring_lookup(VSWITCHD_ALLOC_RING_NAME);
+    if (alloc_ring == NULL) {
+        rte_exit(EXIT_FAILURE,
+                     "Cannot get alloc ring - is datapath running?\n");
     }
 
     return 0;

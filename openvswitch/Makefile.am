@@ -22,16 +22,16 @@ dpdk_dir=$(RTE_SDK)
 dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
 dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
 
-dpdk_libs=$(dpdk_lib_dir)/libethdev.a \
-      $(dpdk_lib_dir)/librte_cmdline.a \
-      $(dpdk_lib_dir)/librte_hash.a \
-      $(dpdk_lib_dir)/librte_lpm.a \
+dpdk_libs=\
       $(dpdk_lib_dir)/librte_mbuf.a \
-      $(dpdk_lib_dir)/librte_mempool.a \
-      $(dpdk_lib_dir)/librte_ring.a \
       $(dpdk_lib_dir)/librte_eal.a \
       $(dpdk_lib_dir)/librte_pmd_ring.a \
       $(dpdk_lib_dir)/libethdev.a \
+      $(dpdk_lib_dir)/librte_cmdline.a \
+      $(dpdk_lib_dir)/librte_hash.a \
+      $(dpdk_lib_dir)/librte_lpm.a \
+      $(dpdk_lib_dir)/librte_mempool.a \
+      $(dpdk_lib_dir)/librte_ring.a \
       $(dpdk_lib_dir)/librte_malloc.a \
       $(dpdk_lib_dir)/librte_ivshmem.a 
 endif
