@@ -61,14 +61,10 @@
 #define MBUFS_PER_VHOST   3072
 #define MBUFS_PER_DAEMON  2048
 
-#define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
-
 #define MBUF_CACHE_SIZE 128
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define RX_MBUF_DATA_SIZE 2048
 #define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
-
-
 
 /**
  * Initialise the mbuf pool

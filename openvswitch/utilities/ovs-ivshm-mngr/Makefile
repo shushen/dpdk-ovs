@@ -37,43 +37,26 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app ut vport vport_ut
+# Default target, can be overriden by command line or environment
+RTE_TARGET ?= x86_64-ivshmem-linuxapp-gcc
 
-distclean: clean
+include $(RTE_SDK)/mk/rte.vars.mk
 
-app:
-	$(MAKE) -f Makefile.app
+# binary name
+APP = ovs-ivshm-mngr
 
-ut:
-	$(MAKE) -f Makefile.ut
+# all source are stored in SRCS-y
+SRCS-y := main.c
 
-vport:
-	cd libvport && $(MAKE)
-	 
-vport_ut:
-	$(MAKE) -f Makefile.vport_ut
-	
-check: ut
+CFLAGS += -O3
+CFLAGS += -I$(OVS_DIR)/datapath/dpdk
+CFLAGS += -I$(OVS_DIR)/datapath/dpdk/libvport
+CFLAGS += $(WERROR_FLAGS)
 
-check-am:
+LDFLAGS += -L$(OVS_DIR)/datapath/dpdk/libvport/build/lib -lovs_vport
+
+include $(RTE_SDK)/mk/rte.extapp.mk
+
+check:
 	$(warning "This target is not implemented")
 
-check-local:
-	$(warning "This target is not implemented")
-
-check-recursive:
-	$(warning "This target is not implemented")
-
-clean: clean-app clean-ut clean-vport clean-vport_ut
-
-clean-app:
-	$(MAKE) -f Makefile.app clean
-
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
-
-clean-vport:
-	cd libvport && $(MAKE) clean
-	
-clean-vport_ut:
-	$(MAKE) -f Makefile.vport_ut clean

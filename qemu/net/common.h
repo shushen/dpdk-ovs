@@ -26,8 +26,8 @@
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 /* define common names for structures shared between ovs_dpdk and client */
-#define MP_CLIENT_RXQ_NAME "MProc_Client_%u_RX"
-#define MP_CLIENT_TXQ_NAME "MProc_Client_%u_TX"
+#define OVS_CLIENT_RXQ_NAME	"OVS_Client_%u_RX"
+#define OVS_CLIENT_TXQ_NAME "OVS_Client_%u_TX"
 #define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
 /*
  * This is the maximum number of digits that are required to represent
@@ -42,18 +42,18 @@
 static inline const char *
 get_rx_queue_name(unsigned id)
 {
-	static char buffer[sizeof(MP_CLIENT_RXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
+	static char buffer[sizeof(OVS_CLIENT_RXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
 
-	rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_RXQ_NAME, id);
+	rte_snprintf(buffer, sizeof(buffer), OVS_CLIENT_RXQ_NAME, id);
 	return buffer;
 }
 
 static inline const char *
 get_tx_queue_name(unsigned id)
 {
-	static char buffer[sizeof(MP_CLIENT_TXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
+	static char buffer[sizeof(OVS_CLIENT_TXQ_NAME) + MAX_DIGITS_UNSIGNED_INT];
 
-	rte_snprintf(buffer, sizeof(buffer), MP_CLIENT_TXQ_NAME, id);
+	rte_snprintf(buffer, sizeof(buffer), OVS_CLIENT_TXQ_NAME, id);
 	return buffer;
 }
 

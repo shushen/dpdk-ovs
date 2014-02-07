@@ -40,7 +40,6 @@
 #include <rte_memzone.h>
 #include <rte_malloc.h>
 #include <rte_string_fns.h>
-#include <rte_ivshmem.h>
 
 #include "init.h"
 #include "vport.h"
@@ -58,13 +57,11 @@
 #define NO_FLAGS        0
 #define SOCKET0         0
 
-#define MZ_PORT_INFO "MProc_port_info"
-#define MZ_VPORT_INFO "MProc_vport_info"
-/* define common names for structures shared between server and client */
-#define MP_CLIENT_RXQ_NAME "MProc_Client_%u_RX"
-#define MP_CLIENT_TXQ_NAME "MProc_Client_%u_TX"
-#define MP_CLIENT_FREE_Q_NAME "MProc_Client_%u_FREE_Q"
-#define MP_PORT_TXQ_NAME "MProc_PORT_%u_TX"
+#define MZ_PORT_INFO			"OVS_port_info"
+#define OVS_CLIENT_RXQ_NAME		"OVS_Client_%u_RX"
+#define OVS_CLIENT_TXQ_NAME		"OVS_Client_%u_TX"
+#define OVS_CLIENT_FREE_Q_NAME	"OVS_Client_%u_FREE_Q"
+#define OVS_PORT_TXQ_NAME 		"OVS_PORT_%u_TX"
 
 /* Ethernet port TX/RX ring sizes */
 #define RTE_MP_RX_DESC_DEFAULT    512
@@ -72,11 +69,8 @@
 /* Ring size for communication with clients */
 #define CLIENT_QUEUE_RINGSIZE     4096
 
-/* Template used to create QEMU's command line files */
-#define QEMU_CMD_FILE_FMT "/tmp/.ivshmem_qemu_cmdline_client_%u"
-
 #define PORT_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
-#define LOCAL_MBUF_CACHE_SIZE 32 
+#define LOCAL_MBUF_CACHE_SIZE 32
 #define CACHE_NAME_LEN 32
 #define MAX_QUEUE_NAME_SIZE 32
 
@@ -137,27 +131,6 @@ static const struct rte_eth_txconf tx_conf_default = {
 		.tx_rs_thresh = TX_RS_THRESH,
 };
 
-enum vport_type {
-	VPORT_TYPE_DISABLED = 0,
-	VPORT_TYPE_VSWITCHD,
-	VPORT_TYPE_PHY,
-	VPORT_TYPE_CLIENT,
-	VPORT_TYPE_KNI,
-	VPORT_TYPE_VETH,
-	VPORT_TYPE_VHOST,
-};
-
-struct vport_phy {
-	struct rte_ring *tx_q;
-	uint8_t index;
-};
-
-struct vport_client {
-	struct rte_ring *rx_q;
-	struct rte_ring *tx_q;
-	struct rte_ring *free_q;
-};
-
 /*
  * Local cache used to buffer the mbufs before enqueueing them to client's
  * or port's TX queues.
@@ -166,19 +139,6 @@ struct local_mbuf_cache {
 	struct rte_mbuf *cache[LOCAL_MBUF_CACHE_SIZE];
 	                   /* per-port and per-core local mbuf cache */
 	unsigned count;    /* number of mbufs in the local cache */
-};
-
-struct vport_kni {
-	uint8_t index;
-};
-
-struct vport_veth {
-	uint8_t index;
-};
-
-struct vport_vhost {
-	struct virtio_net *dev;
-	uint8_t index;
 };
 
 /*
@@ -191,20 +151,7 @@ static struct local_mbuf_cache **client_mbuf_cache = NULL;
 static struct local_mbuf_cache **port_mbuf_cache = NULL;
 static struct local_mbuf_cache **vhost_mbuf_cache = NULL;
 
-#define VPORT_INFO_NAMESZ   (32)
 
-struct vport_info {
-	enum vport_type __rte_cache_aligned type;
-	char __rte_cache_aligned name[VPORT_INFO_NAMESZ];
-	uint8_t __rte_cache_aligned in_use;
-	union {
-		struct vport_phy phy;
-		struct vport_client client;
-		struct vport_kni kni;
-		struct vport_veth veth;
-		struct vport_vhost vhost;
-	};
-};
 
 static int send_to_client(uint32_t client, struct rte_mbuf *buf);
 static int send_to_port(uint32_t vportid, struct rte_mbuf *buf);
@@ -249,46 +196,26 @@ get_queue_name(unsigned id, const char *queue_name_template)
 static inline const char *
 get_rx_queue_name(unsigned id)
 {
-	return get_queue_name(id, MP_CLIENT_RXQ_NAME);
+	return get_queue_name(id, OVS_CLIENT_RXQ_NAME);
 }
 
 static inline const char *
 get_tx_queue_name(unsigned id)
 {
-	return get_queue_name(id, MP_CLIENT_TXQ_NAME);
+	return get_queue_name(id, OVS_CLIENT_TXQ_NAME);
 }
 
 static inline const char *
 get_free_queue_name(unsigned id)
 {
-	return get_queue_name(id, MP_CLIENT_FREE_Q_NAME);
+	return get_queue_name(id, OVS_CLIENT_FREE_Q_NAME);
 }
 
 static inline const char *
 get_port_tx_queue_name(unsigned id)
 {
-	return get_queue_name(id, MP_PORT_TXQ_NAME);
+	return get_queue_name(id, OVS_PORT_TXQ_NAME);
 }
-
-
-static void
-save_ivshmem_cmdline_to_file(const char *cmdline, unsigned clientid)
-{
-	FILE *file;
-	char path[PATH_MAX];
-
-	rte_snprintf(path, sizeof(path), QEMU_CMD_FILE_FMT, clientid);
-
-	file = fopen(path, "w");
-	if (file == NULL)
-	    rte_exit(EXIT_FAILURE, "Cannot create QEMU cmdline for client %u\n",
-	            clientid);
-
-	RTE_LOG(INFO, APP, "QEMU cmdline for client '%u': %s \n", clientid, cmdline);
-	fprintf(file, "%s\n", cmdline);
-	fclose(file);
-}
-
 
 /*
  * Attempts to create a ring or exit
@@ -704,9 +631,6 @@ init_shm_rings(void)
 {
 	unsigned i, clientid;
 	char cache_name[CACHE_NAME_LEN];
-	char ivshmem_config_name[IVSHMEM_NAME_LEN];
-	char cmdline[PATH_MAX];
-
 
 	client_mbuf_cache = secure_rte_zmalloc("per-core-client cache",
 			sizeof(*client_mbuf_cache) * rte_lcore_count(), 0);
@@ -736,33 +660,24 @@ init_shm_rings(void)
 					sizeof(**vhost_mbuf_cache) * num_vhost, 0);
 		}
 	}
+
 	for (i = 0; i < num_clients; i++) {
 		clientid = CLIENT1 + i;
-
-		rte_snprintf(ivshmem_config_name, IVSHMEM_NAME_LEN, "ovs_config_%d", clientid);
-
-		/* Create IVSHMEM config file for this client */
-		if (rte_ivshmem_metadata_create(ivshmem_config_name) < 0)
-			rte_exit(EXIT_FAILURE, "Cannot create ivshmem config '%s'\n",
-					ivshmem_config_name);
 
 		struct vport_client *cl = &vports[clientid].client;
 		RTE_LOG(INFO, APP, "Initialising Client %d\n", clientid);
 		/* Create a "multi producer multi consumer" queue for each client */
 		cl->rx_q = queue_create(get_rx_queue_name(clientid), NO_FLAGS);
+		rte_snprintf(cl->ring_names.rx, sizeof(cl->ring_names.rx), "%s",
+				cl->rx_q->name);
+
 		cl->tx_q = queue_create(get_tx_queue_name(clientid), NO_FLAGS);
+		rte_snprintf(cl->ring_names.tx, sizeof(cl->ring_names.tx), "%s",
+				cl->tx_q->name);
+
 		cl->free_q = queue_create(get_free_queue_name(clientid), NO_FLAGS);
-
-		/* Adding the rings to be shared with the current client */
-		rte_ivshmem_metadata_add_ring(cl->rx_q, ivshmem_config_name);
-		rte_ivshmem_metadata_add_ring(cl->tx_q, ivshmem_config_name);
-		rte_ivshmem_metadata_add_ring(cl->free_q, ivshmem_config_name);
-
-		/* Generate QEMU's command line */
-		rte_ivshmem_metadata_cmdline_generate(cmdline, sizeof(cmdline),
-				ivshmem_config_name);
-
-		save_ivshmem_cmdline_to_file(cmdline, clientid);
+		rte_snprintf(cl->ring_names.free, sizeof(cl->ring_names.free), "%s",
+				cl->free_q->name);
 	}
 
 	for (i = 0; i < ports->num_phy_ports; i++) {
@@ -816,14 +731,14 @@ void vport_init(void)
 	for (i = CLIENT1; i < num_clients; i++) {
 		vports[i].type = VPORT_TYPE_CLIENT;
 		vport_set_not_in_use(i);
-		vport_set_name(i, "Client     %2u", i);
+		vport_set_name(i, "Client%u", i);
 	}
 	/* vport for kni */
 	for (i = 0; i < num_kni; i++) {
 		vports[KNI0 + i].type = VPORT_TYPE_KNI;
 		vports[KNI0 + i].kni.index = i;
 		vport_set_not_in_use(KNI0 + i);
-		vport_set_name(KNI0 + i, "KNI Port  %2u", i);
+		vport_set_name(KNI0 + i, "KNI%u", i);
 	}
 	/* vport for veth */
 	for (i = 0; i < num_veth; i++) {
@@ -989,7 +904,6 @@ send_to_vhost(uint32_t vportid, struct rte_mbuf *buf)
 }
 
 
-
 int
 send_to_vport(uint32_t vportid, struct rte_mbuf *buf)
 {
@@ -1123,7 +1037,7 @@ receive_from_vhost(uint32_t vportid, struct rte_mbuf **bufs)
 	return rx_count;
 }
 
-uint16_t
+inline uint16_t
 receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs)
 {
 	if (unlikely(vportid >= MAX_VPORTS)) {
@@ -1417,4 +1331,20 @@ int vport_vhost_down(unsigned portid)
 {
 	vports[portid].vhost.dev = NULL;
 	return 0;
+}
+
+void vport_set_kni_fifo_names(unsigned vportid,
+		const struct vport_kni_fifo_names *names)
+{
+	struct vport_kni_fifo_names *internal;
+
+	internal = &vports[vportid].kni.fifo_names;
+
+	rte_snprintf(internal->tx, sizeof(internal->tx), "%s", names->tx);
+	rte_snprintf(internal->rx, sizeof(internal->rx), "%s", names->rx);
+	rte_snprintf(internal->alloc, sizeof(internal->alloc), "%s", names->alloc);
+	rte_snprintf(internal->free, sizeof(internal->free), "%s", names->free);
+	rte_snprintf(internal->req, sizeof(internal->req), "%s", names->req);
+	rte_snprintf(internal->resp, sizeof(internal->resp), "%s", names->resp);
+	rte_snprintf(internal->sync, sizeof(internal->sync), "%s", names->sync);
 }

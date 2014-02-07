@@ -67,6 +67,7 @@ TESTSUITE_AT = \
 	tests/interface-reconfigure.at \
 	tests/vlog.at \
 	tests/dpdk-datapath.at \
+	tests/ovs-vport.at \
 	tests/dpif-dpdk.at \
 	tests/dpdk-link.at
 TESTSUITE = $(srcdir)/tests/testsuite

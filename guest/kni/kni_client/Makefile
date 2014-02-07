@@ -52,6 +52,8 @@ SRCS-y := kni_client.c
 
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
-CFLAGS += "-Wno-error"
+CFLAGS += -I$(SRCDIR)/libvport/build/include
+
+LDFLAGS += -L$(SRCDIR)/libvport/build/lib -lovs_vport
 
 include $(RTE_SDK)/mk/rte.extapp.mk

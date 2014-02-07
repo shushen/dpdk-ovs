@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <rte_mbuf.h>
 
+#include "vport-types.h"
 #include "kni.h"
 #include "veth.h"
 #include "vhost.h"
@@ -60,8 +61,6 @@
 #define VPORT_IN_USE		0
 #define VPORT_NOT_IN_USE	1
 #define VPORT_EXISTS		0
-
-#define MAX_VPORTS			256
 
 struct port_info {
 	uint8_t num_phy_ports;
@@ -103,6 +102,8 @@ void vport_set_in_use(unsigned vportid);
 void vport_set_not_in_use(unsigned vportid);
 int vport_vhost_up(struct virtio_net *dev);
 int vport_vhost_down(unsigned portid);
+void vport_set_kni_fifo_names(unsigned vportid,
+		const struct vport_kni_fifo_names *kni_fifos);
 
 void flush_clients(void);
 void flush_ports(void);

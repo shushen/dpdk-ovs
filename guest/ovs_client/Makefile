@@ -45,6 +45,8 @@ APP = ovs_client
 SRCS-y := ovs_client.c
 
 CFLAGS += $(WERROR_FLAGS) -O3
-CFLAGS += -I$(SRCDIR)/../shared
+CFLAGS += -I$(SRCDIR)/libvport/build/include
+
+LDFLAGS += -L$(SRCDIR)/libvport/build/lib -lovs_vport
 
 include $(RTE_SDK)/mk/rte.extapp.mk

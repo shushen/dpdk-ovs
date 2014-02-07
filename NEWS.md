@@ -1,6 +1,11 @@
 # v0.10 - TBD
 
     - Added top level Makefile
+    - Added new IVSHMEM utility application to manage port sharing with guests
+      - Added more flexibility to what is being shared with each guest through command line
+      - Separated DPDK IVSHMEM code from Open vSwitch datapath
+    - Added new public API to cleanly open up internal vport.c features with external clients
+      - Added support to both ovs_client and kni_client applications
 
  # v0.9 - January 2014
 

@@ -33,47 +33,22 @@
 #
 #  **********************************************************************
 
-ifeq ($(RTE_SDK),)
-$(error "Please define RTE_SDK environment variable")
-endif
+include $(RTE_SDK)/mk/rte.vars.mk
 
-all: app ut vport vport_ut
+# library name
+LIB = libovs_vport.a
+
+CFLAGS += $(WERROR_FLAGS) -I$(SRCDIR) -O3
+
+# all source are stored in SRCS-y
+SRCS-y := ovs-vport.c
+
+# install includes
+SYMLINK-y-include := ovs-vport.h vport-types.h
+
+include $(RTE_SDK)/mk/rte.extlib.mk
+
+clean:
+	rm -rf $(SRCDIR)/build
 
 distclean: clean
-
-app:
-	$(MAKE) -f Makefile.app
-
-ut:
-	$(MAKE) -f Makefile.ut
-
-vport:
-	cd libvport && $(MAKE)
-	 
-vport_ut:
-	$(MAKE) -f Makefile.vport_ut
-	
-check: ut
-
-check-am:
-	$(warning "This target is not implemented")
-
-check-local:
-	$(warning "This target is not implemented")
-
-check-recursive:
-	$(warning "This target is not implemented")
-
-clean: clean-app clean-ut clean-vport clean-vport_ut
-
-clean-app:
-	$(MAKE) -f Makefile.app clean
-
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
-
-clean-vport:
-	cd libvport && $(MAKE) clean
-	
-clean-vport_ut:
-	$(MAKE) -f Makefile.vport_ut clean
