@@ -137,7 +137,8 @@ init(int argc, char *argv[])
 	datapath_init();
 	vport_init();
 	stats_init();
-	vhost_init();
+	if (num_vhost)
+		vhost_init();
 
 	/* Set flags on each core for safe vhost device removal. */
 	RTE_LCORE_FOREACH(lcore) {
