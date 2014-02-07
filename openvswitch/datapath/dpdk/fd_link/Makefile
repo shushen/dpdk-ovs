@@ -42,3 +42,15 @@ all:
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+check:
+	$(warning "This target is not implemented")
+
+check-am:
+	$(warning "This target is not implemented")
+
+check-local:
+	$(warning "This target is not implemented")
+
+check-recursive:
+	$(warning "This target is not implemented")
