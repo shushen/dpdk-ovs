@@ -362,7 +362,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		}
 	}
 
-	if (num_clients == 0 || num_clients > MAX_CLIENTS) {
+	if (num_clients > MAX_CLIENTS) {
 		printf ("Number of clients is invalid\n");
 		usage();
 		return -1;

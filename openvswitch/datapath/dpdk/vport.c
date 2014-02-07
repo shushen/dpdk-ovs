@@ -551,7 +551,7 @@ init_port(uint8_t port_num)
 			.mq_mode = ETH_RSS
 		}
 	};
-	const uint16_t rx_rings = 1, tx_rings = num_clients;
+	const uint16_t rx_rings = 1, tx_rings = num_clients ? num_clients : 1;
 	struct rte_eth_link link = {0};
 	uint16_t q = 0;
 	int retval = 0;
@@ -623,13 +623,15 @@ init_shm_rings(void)
 	unsigned i, clientid;
 	char cache_name[CACHE_NAME_LEN];
 
-	client_mbuf_cache = secure_rte_zmalloc("per-core-client cache",
-			sizeof(*client_mbuf_cache) * rte_lcore_count(), 0);
+	if (num_clients) {
+		client_mbuf_cache = secure_rte_zmalloc("per-core-client cache",
+				sizeof(*client_mbuf_cache) * rte_lcore_count(), 0);
 
-	for (i = 0; i < rte_lcore_count(); i++) {
-		rte_snprintf(cache_name, sizeof(cache_name), "core%u client cache", i);
-		client_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
-				sizeof(**client_mbuf_cache) * num_clients, 0);
+		for (i = 0; i < rte_lcore_count(); i++) {
+			rte_snprintf(cache_name, sizeof(cache_name), "core%u client cache", i);
+			client_mbuf_cache[i] = secure_rte_zmalloc(cache_name,
+					sizeof(**client_mbuf_cache) * num_clients, 0);
+		}
 	}
 
 	port_mbuf_cache = secure_rte_zmalloc("per-core-core cache",
@@ -653,7 +655,7 @@ init_shm_rings(void)
 	}
 
 	for (i = 0; i < num_clients; i++) {
-		clientid = CLIENT1 + i;
+		clientid = CLIENT0 + i;
 
 		struct vport_client *cl = &vports[clientid].client;
 		RTE_LOG(INFO, APP, "Initialising Client %d\n", clientid);
@@ -715,15 +717,15 @@ vport_init(void)
 	/* vports setup */
 
 	/* vport 0 is for vswitchd */
-	vports[0].type = VPORT_TYPE_VSWITCHD;
-	vport_disable(0);
-	vport_set_name(0, "vswitchd");
+	vports[VSWITCHD].type = VPORT_TYPE_VSWITCHD;
+	vport_disable(VSWITCHD);
+	vport_set_name(VSWITCHD, "vswitchd");
 
 	/* vport for client */
-	for (i = CLIENT1; i < num_clients; i++) {
-		vports[i].type = VPORT_TYPE_CLIENT;
-		vport_disable(i);
-		vport_set_name(i, "Client%u", i);
+	for (i = 0; i < num_clients; i++) {
+		vports[CLIENT0 + i].type = VPORT_TYPE_CLIENT;
+		vport_disable(CLIENT0 + i);
+		vport_set_name(CLIENT0 + i, "Client%u", CLIENT0 + i);
 	}
 	/* vport for kni */
 	for (i = 0; i < num_kni; i++) {
@@ -806,7 +808,7 @@ send_to_client(uint32_t client, struct rte_mbuf *buf)
 	struct local_mbuf_cache *per_cl_cache = NULL;
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
 
-	per_cl_cache = &client_mbuf_cache[lcore_id][client - CLIENT1];
+	per_cl_cache = &client_mbuf_cache[lcore_id][client - CLIENT0];
 
 	per_cl_cache->cache[per_cl_cache->count++] = buf;
 
@@ -1206,7 +1208,7 @@ flush_clients(void)
 	for (clientid = 0; clientid < local_num_clients; clientid++) {
 		per_client_cache = &client_mbuf_cache[lcore_id][clientid];
 		if (per_client_cache->count)
-			flush_client_port_cache(clientid + CLIENT1);
+			flush_client_port_cache(clientid + CLIENT0);
 	}
 }
 
@@ -1223,7 +1225,7 @@ flush_client_port_cache(uint32_t clientid)
 	unsigned tx_count = 0, i = 0;
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
 
-	per_cl_cache = &client_mbuf_cache[lcore_id][clientid - CLIENT1];
+	per_cl_cache = &client_mbuf_cache[lcore_id][clientid - CLIENT0];
 
 	cl = &vports[clientid].client;
 
@@ -1344,12 +1346,10 @@ vport_next_available_index(enum vport_type type)
 	case VPORT_TYPE_BRIDGE:
 		/* TODO - we currently only support one bridge, which is
 		 * hardcoded to port 0. */
-		return CLIENT0;
+		return VSWITCHD;
 	case VPORT_TYPE_CLIENT:
-		start_idx = CLIENT1;
-		/* Currently, num_clients includes client 0, thus client 0
-		 * must be subtracted from the range */
-		end_idx = CLIENT1 + (num_clients - 1);
+		start_idx = CLIENT0;
+		end_idx = CLIENT0 + num_clients;
 		break;
 	case VPORT_TYPE_PHY:
 		start_idx = PHYPORT0;

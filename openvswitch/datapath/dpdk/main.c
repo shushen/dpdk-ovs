@@ -220,7 +220,7 @@ do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
 static inline void __attribute__((always_inline))
 do_client_switching(void)
 {
-	static unsigned client = CLIENT1;
+	static unsigned client = CLIENT0;
 	static unsigned kni_vportid = KNI0;
 	static unsigned veth_vportid = VETH0;
 	static unsigned vhost_vportid = VHOST0;
@@ -229,14 +229,14 @@ do_client_switching(void)
 	struct rte_mbuf *bufs[PKT_BURST_SIZE];
 
 	/* Client ports */
+	if (num_clients) {
+		rx_count = receive_from_vport(client, &bufs[0]);
+		do_switch_packets(client, bufs, rx_count);
 
-	rx_count = receive_from_vport(client, &bufs[0]);
-	do_switch_packets(client, bufs, rx_count);
-
-
-	/* move to next client and dont handle client 0*/
-	if (++client == num_clients) {
-		client = 1;
+		/* move to next client */
+		if (++client == (unsigned)CLIENT0 + num_clients) {
+			client = CLIENT0;
+		}
 	}
 
 	/* KNI ports */

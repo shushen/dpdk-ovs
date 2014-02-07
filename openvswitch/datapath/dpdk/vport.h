@@ -50,8 +50,8 @@
 #define MAX_VHOST_PORTS        64
 #define MAX_MEMNICS            16
 #define PKT_BURST_SIZE         32u
-#define CLIENT0                0
-#define CLIENT1                1
+#define VSWITCHD               0
+#define CLIENT0                1
 #define PHYPORT0               0x10
 #define KNI0                   0x20
 #define MEMNIC0                0x30
