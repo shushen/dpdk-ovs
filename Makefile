@@ -92,7 +92,7 @@ kni-deps: dpdk
 config: patch-dpdk-kni config-dpdk config-ovs config-qemu
 
 config-dpdk:
-	cd $(DPDK_DIR) && EXTRA_CFLAGS=-fPIC $(MAKE) install T=$(RTE_TARGET) -j $(NUMPROC) && cd $(ROOT_DIR)
+	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) config T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 config-ovs:
 	cd $(OVS_DIR) && ./boot.sh && ./configure RTE_SDK=$(DPDK_DIR) --disable-ssl && cd $(ROOT_DIR)
@@ -103,10 +103,10 @@ config-qemu:
 
 #Targets for Clean##################
 .PHONY: clean clean-qemu clean-ivshm clean-kni clean-ovs clean-dpdk clean-patch-dpdk-kni
-clean: clean-ivshm clean-kni clean-ovs clean-dpdk clean-qemu clean-patch-dpdk-kni
+clean: config-dpdk clean-ivshm clean-kni clean-ovs clean-qemu clean-patch-dpdk-kni clean-dpdk
 
 clean-dpdk:
-	cd $(DPDK_DIR) && $(MAKE) uninstall && cd $(ROOT_DIR)
+	cd $(DPDK_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
 
 clean-qemu:
 	cd $(QEMU_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
@@ -135,6 +135,7 @@ check-ovs:
 .PHONY: dpdk ivshm kni ovs qemu
 
 dpdk: config-dpdk
+	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) install T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 ovs:
 	cd $(OVS_DIR) && $(MAKE) && cd $(ROOT_DIR)
@@ -160,5 +161,10 @@ patch-dpdk-kni:
 	fi
 
 clean-patch-dpdk-kni:
-	patch -R -N -p1 -d $(DPDK_DIR) <$(KNI_PATCH);
+	@if patch -R -N -p1 -d $(DPDK_DIR) --dry-run --silent <$(KNI_PATCH) 2>&1 >/dev/null; then \
+		echo "Reversing KNI patch"; \
+		patch -R -N -p1 -d $(DPDK_DIR) <$(KNI_PATCH); \
+	else \
+		echo "KNI patch doesn't reverse. If the patch was not already applied ignore this message."; \
+	fi
 #End KNI patching###################
