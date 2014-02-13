@@ -80,7 +80,7 @@
 /* Number of descriptors per cacheline. */
 #define DESC_PER_CACHELINE (CACHE_LINE_SIZE / sizeof(struct vring_desc))
 #define MAX_PRINT_BUFF         6072  /* Size of buffers used for rte_snprintfs for printing packets */
-#define MAX_MRG_PKT_BURST      16    /* Max burst for merge buffers. This is used for legacy virtio. */
+#define MAX_MRG_PKT_BURST      1     /* Max burst for merge buffers. This is used for legacy virtio. */
 #define BURST_TX_WAIT_US       15    /* Defines how long we wait between retries on TX */
 #define BURST_TX_RETRIES       4     /* Number of retries on TX. */
 
@@ -288,10 +288,10 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	struct rte_mbuf *buff;
 	/* The virtio_hdr is initialised to 0. */
 	struct virtio_net_hdr_mrg_rxbuf virtio_hdr = {{0,0,0,0,0,0},0};
-	uint64_t buff_addr = 0;
-	uint64_t buff_hdr_addr = 0;
-	uint32_t head[PKT_BURST_SIZE], packet_len = 0;
-	uint32_t head_idx, packet_success = 0;
+	uint64_t buff_addr = 0, virtio_buff_addr[PKT_BURST_SIZE];
+	uint64_t virtio_hdr_addr[PKT_BURST_SIZE];
+	uint32_t head[PKT_BURST_SIZE], packet_len[PKT_BURST_SIZE];
+	uint32_t packet_count = 0;
 	uint32_t mergeable, mrg_count = 0;
 	uint32_t retry = 0;
 	uint16_t avail_idx, res_cur_idx;
@@ -334,7 +334,8 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 									res_end_idx);
 	} while (unlikely(success == 0));
 	res_cur_idx = res_base_idx;
-	LOG_DEBUG(APP, "(%"PRIu64") Current Index %d| End Index %d\n", dev->device_fh, res_cur_idx, res_end_idx);
+	LOG_DEBUG(APP, "(%"PRIu64") Current Index %d| End Index %d\n", 
+			dev->device_fh, res_cur_idx, res_end_idx);
 
 	/* Prefetch available ring to retrieve indexes. */
 	rte_prefetch0(&vq->avail->ring[res_cur_idx & (vq->size - 1)]);
@@ -343,29 +344,29 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	mergeable = dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF);
 
 	/* Retrieve all of the head indexes first to avoid caching issues. */
-	for (head_idx = 0; head_idx < count; head_idx++)
-		head[head_idx] = vq->avail->ring[(res_cur_idx + head_idx) & (vq->size - 1)];
+	for (packet_count = 0; packet_count < count; packet_count++)
+		head[packet_count] = vq->avail->ring[(res_cur_idx + packet_count) & (vq->size - 1)];
 
-	/*Prefetch descriptor index. */
-	rte_prefetch0(&vq->desc[head[packet_success]]);
-
-	while (res_cur_idx != res_end_idx) {
+	for (packet_count = 0; packet_count < count; packet_count++) {
+		/* Prefetch mem structure for address translation. */
+		rte_prefetch0((void*)(uintptr_t)dev->mem);
 		/* Get descriptor from available ring */
-		desc = &vq->desc[head[packet_success]];
+		desc = &vq->desc[head[packet_count]];
+		rte_prefetch0((void*)(uintptr_t)desc);
 
-		buff = pkts[packet_success];
+		buff = pkts[packet_count];
+		rte_prefetch0((void*)(uintptr_t)buff);
 
 		/* Convert from gpa to vva (guest physical addr -> vhost virtual addr) */
 		buff_addr = gpa_to_vva(dev, desc->addr);
-		/* Prefetch buffer address. */
-		rte_prefetch0((void*)(uintptr_t)buff_addr);
 
 		if (mergeable && (mrg_count != 0)) {
-			desc->len = packet_len = rte_pktmbuf_data_len(buff);
+			desc->len = packet_len[packet_count] = rte_pktmbuf_data_len(buff);
+			virtio_hdr_addr[packet_count] = virtio_hdr_addr[packet_count - 1];	
 		} else {
 			/* Copy virtio_hdr to packet and increment buffer address */
-			buff_hdr_addr = buff_addr;
-			packet_len = rte_pktmbuf_data_len(buff) + vq->vhost_hlen;
+			virtio_hdr_addr[packet_count] = buff_addr;	
+			packet_len[packet_count] = rte_pktmbuf_data_len(buff) + vq->vhost_hlen;
 
 			/*
 			 * If the descriptors are chained the header and data are placed in
@@ -379,43 +380,63 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 				desc->len = rte_pktmbuf_data_len(buff);
 			} else {
 				buff_addr += vq->vhost_hlen;
-				desc->len = packet_len;
+				desc->len = packet_len[packet_count];
 			}
 		}
+		if (mergeable) {
+			mrg_count++;		
+			if ((mrg_count == MAX_MRG_PKT_BURST) || ((packet_count + 1) == count)) 
+				mrg_count = 0;
+		}
 
-		/* Update used ring with desc information */
-		vq->used->ring[res_cur_idx & (vq->size - 1)].id = head[packet_success];
-		vq->used->ring[res_cur_idx & (vq->size - 1)].len = packet_len;
+		virtio_buff_addr[packet_count] = buff_addr;	
+	}
 
-		/* Copy mbuf data to buffer */
-		rte_memcpy((void *)(uintptr_t)buff_addr, (const void*)buff->pkt.data, rte_pktmbuf_data_len(buff));
-
-		PRINT_PACKET(dev, (uintptr_t)buff_addr, rte_pktmbuf_data_len(buff), 0);
-
+	/* The used ring is updated with desc information for each packet. */	
+	for (packet_count = 0; packet_count < count; packet_count++) {
+		vq->used->ring[res_cur_idx & (vq->size - 1)].id = head[packet_count];
+		vq->used->ring[res_cur_idx & (vq->size - 1)].len = packet_len[packet_count];
 		res_cur_idx++;
-		packet_success++;
+	}	
 
+	/* The header for each packet is copied if applicable. */	
+	for (packet_count = 0; packet_count < count; packet_count++) {
 		/* If mergeable is disabled then a header is required per buffer. */
 		if (!mergeable) {
-			rte_memcpy((void *)(uintptr_t)buff_hdr_addr, (const void*)&virtio_hdr, vq->vhost_hlen);
-			PRINT_PACKET(dev, (uintptr_t)buff_hdr_addr, vq->vhost_hlen, 1);
+			rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count], 
+					(const void*)&virtio_hdr, vq->vhost_hlen);
+			PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count], 
+					vq->vhost_hlen, 1);
 		} else {
 			mrg_count++;
-			/* Merge buffer can only handle so many buffers at a time. Tell the guest if this limit is reached. */
-			if ((mrg_count == MAX_MRG_PKT_BURST) || (res_cur_idx == res_end_idx)) {
+			/* 
+			 * Merge buffer can only handle so many buffers at a time. 
+			 * Tell the guest if this limit is reached.
+			 */
+			if ((mrg_count == MAX_MRG_PKT_BURST) || ((packet_count + 1) == count)) {
 				virtio_hdr.num_buffers = mrg_count;
-				LOG_DEBUG(APP, "(%"PRIu64") RX: Num merge buffers %d\n", dev->device_fh, virtio_hdr.num_buffers);
-				rte_memcpy((void *)(uintptr_t)buff_hdr_addr, (const void*)&virtio_hdr, vq->vhost_hlen);
-				PRINT_PACKET(dev, (uintptr_t)buff_hdr_addr, vq->vhost_hlen, 1);
+				LOG_DEBUG(APP, "(%"PRIu64") RX: Num merge buffers %d\n", 
+						dev->device_fh, virtio_hdr.num_buffers);
+				rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count], 
+						(const void*)&virtio_hdr, vq->vhost_hlen);
+				PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count], 
+						vq->vhost_hlen, 1);
 				mrg_count = 0;
 			}
 		}
-		if (res_cur_idx < res_end_idx) {
-			/* Prefetch descriptor index. */
-			rte_prefetch0(&vq->desc[head[packet_success]]);
-		}
 	}
 
+	/* The packet contents is copied to the guest descriptor for each packet. */
+	for (packet_count = 0; packet_count < count; packet_count++) {
+		buff = pkts[packet_count];
+	
+		/* Copy mbuf data to buffer */
+		rte_memcpy((void *)(uintptr_t)virtio_buff_addr[packet_count], 
+				(const void*)buff->pkt.data, rte_pktmbuf_data_len(buff));
+		PRINT_PACKET(dev, (uintptr_t)virtio_buff_addr[packet_count], 
+				rte_pktmbuf_data_len(buff), 0);
+	}
+		
 	rte_compiler_barrier();
 
 	/* Wait until it's our turn to add our buffer to the used ring. */
@@ -441,10 +462,10 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	struct rte_mbuf *mbuf;
 	struct vhost_virtqueue *vq;
 	struct vring_desc *desc;
-	uint64_t buff_addr = 0;
+	uint64_t buff_addr = 0, virtio_buff_addr[PKT_BURST_SIZE];
 	uint32_t head[PKT_BURST_SIZE];
-	uint32_t used_idx, i;
-	uint16_t free_entries, packet_success = 0;
+	uint32_t used_idx;
+	uint16_t free_entries, packet_count = 0;
 	uint16_t avail_idx;
 
 	vq = dev->virtqueue[VIRTIO_TXQ];
@@ -466,27 +487,41 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	if (free_entries > count)
 		free_entries = count;
 
-	/*
+	/* 
 	 * Performance is better if cachelines containing descriptors are not accessed by multiple
-	 * cores. We try finish with a cacheline before passing it on.
+	 * cores. We try finish with a cacheline before passing it on. 
 	 */
 	if (likely(free_entries > DESC_PER_CACHELINE))
 		free_entries = free_entries - ((vq->last_used_idx + free_entries) % DESC_PER_CACHELINE);
 
 	LOG_DEBUG(APP, "(%"PRIu64") Buffers available %d\n", dev->device_fh, free_entries);
+
 	/* Retrieve all of the head indexes first to avoid caching issues. */
-	for (i = 0; i < free_entries; i++)
-		head[i] = vq->avail->ring[(vq->last_used_idx + i) & (vq->size - 1)];
+	for (packet_count = 0; packet_count < free_entries; packet_count++)
+		head[packet_count] = vq->avail->ring[(vq->last_used_idx + packet_count) & (vq->size - 1)];
 
-	/* Prefetch descriptor index. */
-	rte_prefetch0(&vq->desc[head[packet_success]]);
-	rte_prefetch0(&vq->used->ring[vq->last_used_idx & (vq->size - 1)]);
+	/* Allocate all mbufs required for this burst. */
+	for (packet_count = 0; packet_count < free_entries; packet_count++) {
+		mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
+		if (unlikely(mbuf == NULL)) {
+			RTE_LOG(ERR, APP, "Failed to allocate memory for mbuf.\n");
+			free_entries = packet_count;	
+			if (free_entries == 0)
+				return 0;
+			break;
+		}
+		pkts[packet_count] = mbuf;
+	}
 
-	while (packet_success < free_entries) {
-		desc = &vq->desc[head[packet_success]];
+	for (packet_count = 0; packet_count < free_entries; packet_count++) {
+		/* Prefetch mem structure for address translation. */
+		rte_prefetch0((void*)(uintptr_t)dev->mem);
+		/* Get descriptor from available ring */
+		desc = &vq->desc[head[packet_count]];
 
 		/* Discard first buffer as it is the virtio header */
 		desc = &vq->desc[desc->next];
+		rte_prefetch0((void*)(uintptr_t)desc);
 
 		/* Buffer address translation. */
 		buff_addr = gpa_to_vva(dev, desc->addr);
@@ -495,44 +530,35 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 
 		used_idx = vq->last_used_idx & (vq->size - 1);
 
-		if (packet_success < (free_entries - 1)) {
-			/* Prefetch descriptor index. */
-			rte_prefetch0(&vq->desc[head[packet_success+1]]);
-			rte_prefetch0(&vq->used->ring[(used_idx + 1) & (vq->size - 1)]);
-		}
-
 		/* Update used index buffer information. */
-		vq->used->ring[used_idx].id = head[packet_success];
+		vq->used->ring[used_idx].id = head[packet_count];
 		vq->used->ring[used_idx].len = 0;
 
-		/* Allocate an mbuf and populate the structure. */
-		mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
-		if (unlikely(mbuf == NULL)) {
-			RTE_LOG(ERR, APP, "Failed to allocate memory for mbuf.\n");
-			return packet_success;
-		}
-
-		/* Setup dummy mbuf. */
+		mbuf = pkts[packet_count];
 		mbuf->pkt.data_len = desc->len;
 		mbuf->pkt.pkt_len = mbuf->pkt.data_len;
 
-		rte_memcpy((void*) mbuf->pkt.data,
-		        (const void*) buff_addr, mbuf->pkt.data_len);
-
-		pkts[packet_success]=mbuf;
-
-		PRINT_PACKET(dev, (uintptr_t)buff_addr, desc->len, 0);
+		virtio_buff_addr[packet_count] = buff_addr;
 
 		vq->last_used_idx++;
-		packet_success++;
+	}
+
+	for (packet_count = 0; packet_count < free_entries; packet_count++) {
+		mbuf = pkts[packet_count];
+		
+		rte_memcpy((void*) mbuf->pkt.data,
+		        (const void*) virtio_buff_addr[packet_count], mbuf->pkt.data_len);
+		PRINT_PACKET(dev, (uintptr_t)buff_addr, desc->len, 0);
 	}
 
 	rte_compiler_barrier();
-	vq->used->idx += packet_success;
+	vq->used->idx += packet_count;
+
 	/* Kick guest if required. */
 	if (!(vq->avail->flags & VRING_AVAIL_F_NO_INTERRUPT))
 		eventfd_write(vq->kickfd,1);
-	return packet_success;
+
+	return packet_count;
 }
 
 /**
