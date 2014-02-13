@@ -47,9 +47,13 @@
 #include <assert.h>
 
 #define VSWITCHD_RINGSIZE   2048
+#define VSWITCHD_ALLOC_THRESHOLD   (VSWITCHD_RINGSIZE/4)
 #define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
 #define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
 #define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
+#define PKT_BURST_SIZE      32
 #define NO_FLAGS            0
 #define SOCKET0             0
 
@@ -60,6 +64,10 @@ static struct rte_ring *vswitchd_packet_ring = NULL;
 static struct rte_ring *vswitchd_message_ring = NULL;
 /* ring to send reply messages to vswitchd */
 static struct rte_ring *vswitchd_reply_ring = NULL;
+/* Holds packets to be freed */
+static struct rte_ring *vswitchd_free_ring = NULL;
+/* Holds newly allocated packets */
+static struct rte_ring *vswitchd_alloc_ring = NULL;
 
 void init_test_rings(void);
 
@@ -79,10 +87,6 @@ main(int argc, char *argv[])
 	/* Test dpdk_link_send_bulk(), num_pkts > PKT_BURST_SIZE */
 	result = dpdk_link_send_bulk(&request, test_ofpbuf_array, 500);
 	assert(result == EINVAL);
-
-	/* Test dpdk_link_send_bulk(), can't alloc enough mbufs */
-	result = dpdk_link_send_bulk(&request, test_ofpbuf_array, 10);
-	assert(result == ENOBUFS);
 
 	return 0;
 }
@@ -121,6 +125,18 @@ init_test_rings(void)
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
+
+	vswitchd_free_ring = rte_ring_create(VSWITCHD_FREE_RING_NAME,
+			VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_free_ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create free ring for vswitchd");
+
+	vswitchd_alloc_ring = rte_ring_create(VSWITCHD_ALLOC_RING_NAME,
+			VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_alloc_ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create alloc ring for vswitchd");
 
 	dpdk_link_init();
 }
