@@ -38,6 +38,8 @@
 #define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
 #define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
 #define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
 #define NO_FLAGS            0
 #define SOCKET0             0
 
@@ -85,4 +87,4 @@ enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply);
 void
 create_dpif_flow_del_message(struct dpif_flow_del *del);
 void
-init_test_rings(void);
+init_test_rings(unsigned mempool_size);

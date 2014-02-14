@@ -62,6 +62,10 @@ static struct rte_ring *vswitchd_packet_ring = NULL;
 struct rte_ring *vswitchd_message_ring = NULL;
 /* ring to send reply messages to vswitchd */
 struct rte_ring *vswitchd_reply_ring = NULL;
+/* Holds packets to be freed */
+static struct rte_ring *vswitchd_free_ring = NULL;
+/* Holds newly allocated packets */
+static struct rte_ring *vswitchd_alloc_ring = NULL;
 
 /* Create dpdk flow message
  */
@@ -159,7 +163,9 @@ enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply)
 	void *pktmbuf_data = NULL;
 	int rslt = 0;
 
-	mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
+	if (rte_ring_mc_dequeue(vswitchd_alloc_ring, (void**)&mbuf) != 0)
+		return -1;
+
 	pktmbuf_data = rte_pktmbuf_mtod(mbuf, void *);
 	rte_memcpy(pktmbuf_data, &reply, sizeof(reply));
 	rte_pktmbuf_data_len(mbuf) = sizeof(reply);
@@ -167,7 +173,7 @@ enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply)
 	rslt = rte_ring_mp_enqueue(vswitchd_reply_ring, (void *)mbuf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
-			rte_pktmbuf_free(mbuf);
+			rte_ring_mp_enqueue(vswitchd_free_ring, mbuf);
 			return -1;
 		}
 		return 0;
@@ -182,11 +188,13 @@ enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply)
  * pointer used throughout dpdk_link.c
  */
 void
-init_test_rings(void) 
+init_test_rings(unsigned mempool_size)
 {
+	int i = 0;
+	struct rte_mbuf *mbuf;
 
 	pktmbuf_pool = rte_mempool_create("MProc_pktmbuf_pool",
-	                     20, /* num mbufs */
+	                     mempool_size, /* num mbufs */
 	                     2048 + sizeof(struct rte_mbuf) + 128, /* pktmbuf size */
 	                     0, /*cache size */
 	                     sizeof(struct rte_pktmbuf_pool_private),
@@ -207,6 +215,23 @@ init_test_rings(void)
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
+
+
+	vswitchd_free_ring = rte_ring_create(VSWITCHD_FREE_RING_NAME,
+			VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_free_ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create free ring for vswitchd");
+
+	vswitchd_alloc_ring = rte_ring_create(VSWITCHD_ALLOC_RING_NAME,
+			VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_alloc_ring == NULL)
+		rte_exit(EXIT_FAILURE, "Cannot create alloc ring for vswitchd");
+
+	for (i = 0; i < 20; i++)
+		if ((mbuf = rte_pktmbuf_alloc(pktmbuf_pool)) != NULL)
+			rte_ring_sp_enqueue(vswitchd_alloc_ring, mbuf);
 
 	dpdk_link_init();
 }

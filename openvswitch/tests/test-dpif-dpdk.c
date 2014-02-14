@@ -98,7 +98,8 @@ main(int argc, char *argv[])
 	int c = 0;
 
 	rte_eal_init(argc, argv);
-	init_test_rings();
+	/* Init all rings and a fake mempool with 20 mbufs */
+	init_test_rings(20);
 
 	dpif_create_and_open("br0", "dpdk", dpifp);
 

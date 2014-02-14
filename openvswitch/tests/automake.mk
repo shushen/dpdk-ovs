@@ -202,6 +202,7 @@ tests_test_csum_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-dpdk-link
 tests_test_dpdk_link_SOURCES = tests/test-dpdk-link.c
+tests_test_dpdk_link_SOURCES += tests/dpdk-ring-stub.c
 tests_test_dpdk_link_LDADD = lib/libopenvswitch.a $(dpdk_libs)
 
 noinst_PROGRAMS += tests/test-dpif-dpdk
