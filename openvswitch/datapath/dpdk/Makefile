@@ -50,7 +50,7 @@ ut:
 vport:
 	cd libvport && $(MAKE)
 	 
-vport_ut:
+vport_ut: vport
 	$(MAKE) -f Makefile.vport_ut
 	
 check: ut
