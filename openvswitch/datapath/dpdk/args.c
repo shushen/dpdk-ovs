@@ -158,7 +158,7 @@ parse_portmask(uint8_t max_ports, const char *portmask)
  * Take the number of clients parameter passed to the app
  * and convert to a number to store in the num_clients variable
  */
-static int
+static uint32_t
 parse_num_clients(const char *clients)
 {
 	char *end = NULL;
@@ -171,7 +171,7 @@ parse_num_clients(const char *clients)
 	if (end == NULL || *end != '\0' || temp == 0)
 		return -1;
 
-	return temp;
+	return (uint32_t) temp;
 }
 
 /*
@@ -257,7 +257,8 @@ parse_config(const char *q_arg)
 int
 parse_app_args(uint8_t max_ports, int argc, char *argv[])
 {
-	int option_index, opt, ret, temp;
+	int option_index, opt, ret;
+	uint32_t temp;
 	char **argvopt = argv;
 	static struct option lgopts[] = {
 			{PARAM_STATS, 1, 0, 0},
@@ -291,7 +292,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					usage();
 					return -1;
 				}
-				num_clients = (uint8_t)temp;
+				num_clients = temp;
 				break;
 			case 'k':  /* KNI ports */
 				temp = parse_num_clients(optarg);
@@ -299,7 +300,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					usage();
 					return -1;
 				}
-				num_kni = (uint8_t)temp;
+				num_kni = temp;
 				break;
 			case 'v':  /* vEth ports */
 				temp = parse_num_clients(optarg);
@@ -307,7 +308,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					usage();
 					return -1;
 				}
-				num_veth = (uint8_t)temp;
+				num_veth = temp;
 				break;
 			case 'h':  /* vHost ports */
 				temp = parse_num_clients(optarg);
@@ -315,7 +316,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					usage();
 					return -1;
 				}
-				num_vhost = (uint8_t)temp;
+				num_vhost = temp;
 				break;
 			case 'm':  /* MEMNIC ports */
 				temp = parse_num_clients(optarg);
@@ -352,7 +353,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 						usage();
 						return -1;
 					}
-					dev_index = (uint32_t)temp;
+					dev_index = temp;
 				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_COUNT, 17) == 0) {
 					temp = atoi(optarg);
 					if (temp < 0) {
@@ -360,7 +361,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 						usage();
 						return -1;
 					}
-					burst_tx_retry_num = (uint32_t)temp;
+					burst_tx_retry_num = temp;
 				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_WAIT, 16) == 0) {
 					temp = atoi(optarg);
 					if (temp < 0) {
@@ -368,7 +369,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 						usage();
 						return -1;
 					}
-					burst_tx_delay_time = (uint32_t)temp;
+					burst_tx_delay_time = temp;
 				}
 				break;
 			default:
