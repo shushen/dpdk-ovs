@@ -6,6 +6,7 @@
       - Separated DPDK IVSHMEM code from Open vSwitch datapath
     - Added new public API to cleanly open up internal vport.c features with external clients
       - Added support to both ovs_client and kni_client applications
+    - Added new userspace vhost device type based on the DPDK sample application.
 
  # v0.9 - January 2014
 
