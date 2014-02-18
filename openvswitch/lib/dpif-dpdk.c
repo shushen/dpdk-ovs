@@ -979,6 +979,9 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
         upcall->key = ofpbuf_tail(buf);
         upcall->key_len = key.size;
         upcall->userdata = 0;
+
+        /* free memory allocated in ofpbuf key */
+        ofpbuf_uninit(&key);
     }
 
     SIGNAL_HANDLED(dpdk_sock, sock_msg);
