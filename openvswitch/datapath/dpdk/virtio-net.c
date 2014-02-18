@@ -236,11 +236,8 @@ host_memory_map (struct virtio_net *dev, struct virtio_memory *mem, pid_t pid, u
 	/* Read the fd directory contents. */
 	while (NULL != (dptr = readdir(dp))) {
 		rte_snprintf (memfile, PATH_MAX, "/proc/%u/fd/%s", pid, dptr->d_name);
-		realpath(memfile, resolved_path);
-		if (resolved_path == NULL) {
-			RTE_LOG(ERR, VHOST_CONFIG, "(%"PRIu64") Failed to resolve fd directory\n", dev->device_fh);
-			closedir(dp);
-			return -1;
+		if (!realpath(memfile, resolved_path) && (resolved_path == NULL)) {
+			break;
 		}
 		if (strncmp(resolved_path, procmap.fname,
 			strnlen(procmap.fname, PATH_MAX)) == 0) {
