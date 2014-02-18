@@ -88,10 +88,10 @@ kni-deps: dpdk
 
 #Targets for Configuration###########
 #These do not include a make and can therefore be used with tools.
-.PHONY: config patch-dpdk-kni config-dpdk config-ovs config-qemu
-config: patch-dpdk-kni config-dpdk config-ovs config-qemu
+.PHONY: config patch-dpdk-kni clean-patch-dpdk-kni config-dpdk config-ovs config-qemu
+config: config-dpdk config-ovs config-qemu
 
-config-dpdk:
+config-dpdk: patch-dpdk-kni
 	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) config T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 config-ovs:
