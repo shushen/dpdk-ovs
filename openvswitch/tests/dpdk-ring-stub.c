@@ -229,7 +229,8 @@ init_test_rings(unsigned mempool_size)
 	if (vswitchd_alloc_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create alloc ring for vswitchd");
 
-	for (i = 0; i < 20; i++)
+	/* Populate the alloc queue with mbufs from the mbuf mempool */
+	for (i = 0; i < mempool_size; i++)
 		if ((mbuf = rte_pktmbuf_alloc(pktmbuf_pool)) != NULL)
 			rte_ring_sp_enqueue(vswitchd_alloc_ring, mbuf);
 
