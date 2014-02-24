@@ -86,6 +86,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
     uint8_t *mbuf_data = NULL;
     int i = 0;
     int ret = 0;
+    uint32_t tid = 0;
 
     if (num_pkts > PKT_BURST_SIZE) {
         return EINVAL;
@@ -93,13 +94,18 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
 
     DPDK_DEBUG()
 
-       alloc_mbufs(mbufs, num_pkts);
+    alloc_mbufs(mbufs, num_pkts);
+
+    /* Get thread id to ensure reply is handled by the same thread */
+    tid = (uint32_t)syscall(SYS_gettid);
 
     for (i = 0; i < num_pkts; i++) {
         mbufs[i]->pkt.nb_segs = 1;
 
         if (request->type == DPIF_DPDK_FLOW_FAMILY)
-            request[i].flow_msg.id = (uint32_t) syscall(SYS_gettid);
+            request[i].flow_msg.id = tid;
+        else if (request->type == DPIF_DPDK_VPORT_FAMILY)
+            request[i].vport_msg.id = tid;
 
         mbuf_data = rte_pktmbuf_mtod(mbufs[i], uint8_t *);
         rte_memcpy(mbuf_data, &request[i], sizeof(request[i]));
@@ -142,10 +148,14 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
     struct rte_mbuf *mbuf = NULL;
     void *pktmbuf_data = NULL;
     int pktmbuf_len = 0;
+    uint32_t tid = 0;
 
     bool loop = true;
 
     DPDK_DEBUG()
+
+    /* Get thread id to ensure reply is received by sending thread */
+    tid = (uint32_t)syscall(SYS_gettid);
 
     while(loop) {
         while (rte_ring_mc_dequeue(reply_ring, (void **)&mbuf) != 0)
@@ -155,12 +165,18 @@ dpdk_link_recv_reply(struct dpif_dpdk_message *reply)
 
         switch(((struct dpif_dpdk_message *)pktmbuf_data)->type) {
         case DPIF_DPDK_VPORT_FAMILY:
-            loop = false;
+            /* Allow multi-threading */
+            if (((struct dpif_dpdk_message *)pktmbuf_data)->vport_msg.id != tid ){
+                /* Don't touch other processes' packets - re-enqueue */
+                while (rte_ring_mp_enqueue(reply_ring, (void *)mbuf) != 0)
+                    ;
+            } else {
+                loop = false;
+            }
             break;
         case DPIF_DPDK_FLOW_FAMILY:
             /* Allow multi-threading */
-            if (((struct dpif_dpdk_message *)pktmbuf_data)->flow_msg.id !=
-                  (uint32_t)syscall(SYS_gettid) ){
+            if (((struct dpif_dpdk_message *)pktmbuf_data)->flow_msg.id != tid ){
                 /* Don't touch other processes' packets - re-enqueue */
                 while (rte_ring_mp_enqueue(reply_ring, (void *)mbuf) != 0)
                     ;

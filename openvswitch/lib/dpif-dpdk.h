@@ -110,9 +110,10 @@ struct dpif_dpdk_action {
 
 /* A 'vport managment' message between vswitchd <-> datapath. */
 struct dpif_dpdk_vport_message {
-	uint8_t cmd;                 /* Command to execute on vport. */
-	uint32_t flags;              /* Additional flags, if any, or null. */
-	uint32_t port_no;           /* Number of the vport. */
+	uint32_t id;              /* Thread ID of sending thread */
+	uint8_t cmd;              /* Command to execute on vport. */
+	uint32_t flags;           /* Additional flags, if any, or null. */
+	uint32_t port_no;         /* Number of the vport. */
 	struct dpif_dpdk_vport_stats stats;  /* Current statistics for the given vport. */
 };
 
