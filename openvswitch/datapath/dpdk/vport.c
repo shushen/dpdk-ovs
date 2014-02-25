@@ -809,7 +809,7 @@ send_to_client(uint32_t client, struct rte_mbuf *buf)
 		flush_client_port_cache(client);
 
 	cl = &vports[client].client;
-	ret = rte_ring_sc_dequeue_burst(cl->free_q, (void *)freebufs, PKT_BURST_SIZE);
+	ret = rte_ring_mc_dequeue_burst(cl->free_q, (void *)freebufs, PKT_BURST_SIZE);
 	for (i = 0; i < ret; i++)
 		rte_pktmbuf_free(freebufs[i]);
 
