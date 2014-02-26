@@ -138,5 +138,5 @@ utilities_ovs_benchmark_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 include utilities/bugtool/automake.mk
 
 if HAVE_DPDK
-SUBDIRS += . utilities/ovs-ivshm-mngr utilities/ovs-ivshm-mngr/test
+SUBDIRS += utilities/ovs-ivshm-mngr utilities/ovs-ivshm-mngr/test
 endif
