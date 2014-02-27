@@ -291,7 +291,7 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	uint64_t buff_addr = 0, virtio_buff_addr[PKT_BURST_SIZE];
 	uint64_t virtio_hdr_addr[PKT_BURST_SIZE];
 	uint32_t head[PKT_BURST_SIZE], packet_len[PKT_BURST_SIZE];
-	uint32_t packet_count = 0;
+	uint32_t packet_offset, packet_count = 0;
 	uint32_t mergeable, mrg_count = 0;
 	uint32_t retry = 0;
 	uint16_t avail_idx, res_cur_idx;
@@ -361,12 +361,12 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 		buff_addr = gpa_to_vva(dev, desc->addr);
 
 		if (mergeable && (mrg_count != 0)) {
-			desc->len = packet_len[packet_count] = rte_pktmbuf_data_len(buff);
+			desc->len = packet_len[packet_count] = rte_pktmbuf_pkt_len(buff);
 			virtio_hdr_addr[packet_count] = virtio_hdr_addr[packet_count - 1];	
 		} else {
 			/* Copy virtio_hdr to packet and increment buffer address */
 			virtio_hdr_addr[packet_count] = buff_addr;	
-			packet_len[packet_count] = rte_pktmbuf_data_len(buff) + vq->vhost_hlen;
+			packet_len[packet_count] = rte_pktmbuf_pkt_len(buff) + vq->vhost_hlen;
 
 			/*
 			 * If the descriptors are chained the header and data are placed in
@@ -377,7 +377,7 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 				desc = &vq->desc[desc->next];
 				/* Buffer address translation. */
 				buff_addr = gpa_to_vva(dev, desc->addr);
-				desc->len = rte_pktmbuf_data_len(buff);
+				desc->len = rte_pktmbuf_pkt_len(buff);
 			} else {
 				buff_addr += vq->vhost_hlen;
 				desc->len = packet_len[packet_count];
@@ -429,13 +429,17 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	/* The packet contents is copied to the guest descriptor for each packet. */
 	for (packet_count = 0; packet_count < count; packet_count++) {
 		buff = pkts[packet_count];
-	
-		/* Copy mbuf data to buffer */
-		rte_memcpy((void *)(uintptr_t)virtio_buff_addr[packet_count], 
-				(const void*)buff->pkt.data, rte_pktmbuf_data_len(buff));
-		PRINT_PACKET(dev, (uintptr_t)virtio_buff_addr[packet_count], 
-				rte_pktmbuf_data_len(buff), 0);
+		packet_offset = 0;
+		while (buff != NULL) {
+			/* Copy mbuf data to buffer */
+			rte_memcpy((void *)(uintptr_t)virtio_buff_addr[packet_count] + packet_offset,
+					(const void*)buff->pkt.data, rte_pktmbuf_data_len(buff));
+			packet_offset += rte_pktmbuf_data_len(buff);
+			buff = buff->pkt.next;
+		}
 	}
+	PRINT_PACKET(dev, (uintptr_t)virtio_buff_addr[packet_count], 
+			packet_offset, 0);
 		
 	rte_compiler_barrier();
 
@@ -462,9 +466,9 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	struct rte_mbuf *mbuf;
 	struct vhost_virtqueue *vq;
 	struct vring_desc *desc;
-	uint64_t buff_addr = 0, virtio_buff_addr[PKT_BURST_SIZE];
+	uint64_t buff_addr = 0;
 	uint32_t head[PKT_BURST_SIZE];
-	uint32_t used_idx;
+	uint32_t used_idx, packet_offset;
 	uint16_t free_entries, packet_count = 0;
 	uint16_t avail_idx;
 
@@ -516,17 +520,29 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	for (packet_count = 0; packet_count < free_entries; packet_count++) {
 		/* Prefetch mem structure for address translation. */
 		rte_prefetch0((void*)(uintptr_t)dev->mem);
+
+		mbuf = pkts[packet_count];
+		packet_offset = 0;
 		/* Get descriptor from available ring */
 		desc = &vq->desc[head[packet_count]];
 
-		/* Discard first buffer as it is the virtio header */
-		desc = &vq->desc[desc->next];
-		rte_prefetch0((void*)(uintptr_t)desc);
+		/* Make sure that contents from all descriptors are copied. */
+		while (desc->flags & VRING_DESC_F_NEXT) {
+			/* Discard first buffer as it is the virtio header */
+			desc = &vq->desc[desc->next];
+			rte_prefetch0((void*)(uintptr_t)desc);
 
-		/* Buffer address translation. */
-		buff_addr = gpa_to_vva(dev, desc->addr);
-		/* Prefetch buffer address. */
-		rte_prefetch0((void*)(uintptr_t)buff_addr);
+			/* Buffer address translation. */
+			buff_addr = gpa_to_vva(dev, desc->addr);
+			/* Prefetch buffer address. */
+			rte_prefetch0((void*)(uintptr_t)buff_addr);
+
+			rte_memcpy((void*) mbuf->pkt.data + packet_offset,
+					(const void*) buff_addr, desc->len);
+			packet_offset += desc->len;
+		}
+		mbuf->pkt.data_len = packet_offset;
+		mbuf->pkt.pkt_len = mbuf->pkt.data_len;
 
 		used_idx = vq->last_used_idx & (vq->size - 1);
 
@@ -534,21 +550,9 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 		vq->used->ring[used_idx].id = head[packet_count];
 		vq->used->ring[used_idx].len = 0;
 
-		mbuf = pkts[packet_count];
-		mbuf->pkt.data_len = desc->len;
-		mbuf->pkt.pkt_len = mbuf->pkt.data_len;
-
-		virtio_buff_addr[packet_count] = buff_addr;
-
 		vq->last_used_idx++;
-	}
 
-	for (packet_count = 0; packet_count < free_entries; packet_count++) {
-		mbuf = pkts[packet_count];
-		
-		rte_memcpy((void*) mbuf->pkt.data,
-		        (const void*) virtio_buff_addr[packet_count], mbuf->pkt.data_len);
-		PRINT_PACKET(dev, (uintptr_t)buff_addr, desc->len, 0);
+		PRINT_PACKET(dev, (uintptr_t)mbuf->pkt.data, mbuf->pkt.data_len, 0);
 	}
 
 	rte_compiler_barrier();
