@@ -866,7 +866,7 @@ dpif_dpdk_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
             switch (op->type) {
             case DPIF_OP_FLOW_PUT :
                 put = &op->u.flow_put;
-                dpif_dpdk_flow_put(dpif_, put);
+                op->error = dpif_dpdk_flow_put(dpif_, put);
                 break;
             case DPIF_OP_EXECUTE :
                 execute = &op->u.execute;
@@ -878,7 +878,7 @@ dpif_dpdk_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
                 break;
             case DPIF_OP_FLOW_DEL :
                 del = &op->u.flow_del;
-                dpif_dpdk_flow_del(dpif_, del);
+                op->error = dpif_dpdk_flow_del(dpif_, del);
                 break;
             default :
                 NOT_REACHED();
@@ -886,7 +886,25 @@ dpif_dpdk_operate(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
             }
         }
 
-        dpdk_link_send_bulk(requests, packets, exec);
+        if (exec > 0) {
+            int err = dpdk_link_send_bulk(requests, packets, exec);
+
+            for (i = 0; i < n_ops; i++) {
+                struct dpif_op *op = ops[i];
+
+                switch (op->type) {
+                case DPIF_OP_FLOW_PUT:
+                case DPIF_OP_FLOW_DEL:
+                    break;
+                case DPIF_OP_EXECUTE:
+                    op->error = err;
+                    break;
+                default:
+                    NOT_REACHED();
+                    break;
+                }
+            }
+        }
     }
 }
 
