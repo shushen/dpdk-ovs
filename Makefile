@@ -143,10 +143,10 @@ ovs:
 qemu:
 	cd $(QEMU_DIR) && $(MAKE) && cd $(ROOT_DIR)
 
-ivshm:
+ivshm: ovs
 	cd $(IVSHM_DIR) && $(MAKE) && cd $(ROOT_DIR)
 
-kni:
+kni: ovs
 	cd $(KNI_DIR) && $(MAKE) && cd $(ROOT_DIR)
 
 #End Simple Targets#################
