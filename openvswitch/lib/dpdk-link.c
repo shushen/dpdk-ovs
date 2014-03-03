@@ -94,7 +94,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
 
     DPDK_DEBUG()
 
-    alloc_mbufs(mbufs, num_pkts);
+    alloc_mbufs((void **)mbufs, num_pkts);
 
     /* Get thread id to ensure reply is handled by the same thread */
     tid = (uint32_t)syscall(SYS_gettid);
@@ -120,7 +120,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
             } else {
                 RTE_LOG(ERR, APP,"%s, %d: %s", __FUNCTION__, __LINE__,
                         "memcpy prevented: packet size exceeds available mbuf space");
-                enqueue_mbufs_to_be_freed(mbufs, num_pkts);
+                enqueue_mbufs_to_be_freed((void * const *)mbufs, num_pkts);
                 return ENOMEM;
             }
         } else {
@@ -131,7 +131,7 @@ dpdk_link_send_bulk(struct dpif_dpdk_message *request,
 
     ret = rte_ring_mp_enqueue_bulk(message_ring, (void * const *)mbufs, num_pkts);
     if (ret == -ENOBUFS) {
-        enqueue_mbufs_to_be_freed(mbufs, num_pkts);
+        enqueue_mbufs_to_be_freed((void * const *)mbufs, num_pkts);
         ret = ENOBUFS;
     } else if (unlikely(ret == -EDQUOT)) {
         /* do not return this error code to the caller */
