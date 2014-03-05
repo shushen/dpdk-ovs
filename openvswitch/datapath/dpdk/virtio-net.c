@@ -236,7 +236,7 @@ host_memory_map (struct virtio_net *dev, struct virtio_memory *mem, pid_t pid, u
 	/* Read the fd directory contents. */
 	while (NULL != (dptr = readdir(dp))) {
 		rte_snprintf (memfile, PATH_MAX, "/proc/%u/fd/%s", pid, dptr->d_name);
-		if (!realpath(memfile, resolved_path) && (resolved_path == NULL)) {
+		if (!realpath(memfile, resolved_path)) {
 			break;
 		}
 		if (strncmp(resolved_path, procmap.fname,
