@@ -1,58 +1,80 @@
-# Intel(R) DPDK vSwitch
+# Intel® DPDK vSwitch
 
-## What is Intel(R) DPDK vSwitch?
+## What is Intel® DPDK vSwitch?
 
-The Intel(R) DPDK Accelerated Open vSwitch (Intel(R) DPDK vSwitch) is a fork
-of the open source Open vSwitch multilayer virtual switch found at
-[http://openvswitch.org/](openvswitch.org).
+The Intel® DPDK Accelerated Open vSwitch (Intel® DPDK vSwitch) is a fork of Open vSwitch, the Open Source multilayer virtual switch found at [openvswitch.org].
 
-For more information on the project, check out the Intel(R) DPDK vSwitch
-homepage at [01.org](https://01.org/packet-processing/intel%C2%AE-ovdk).
+For more information on the project, check out the Intel® DPDK vSwitch homepage at [01.org].
+
+______
 
 ## Getting Started
 
-To get started right away, we recommend that you check out the latest version
-of the [Intel(R) DPDK vSwitch Getting Started Guide][ovdk gsg] hosted on
-[01.org][ovdk gsg]. This document gives an in-depth overview of the components,
-system requirements and basic operation of Intel(R) DPDK vSwitch.
+To get started right away, we recommend that you check out the documentation contained in the `docs` directory. These files provide an in-depth overview of the components, system requirements and basic operation of Intel(R) DPDK vSwitch.  The documents are written in Markdown format, so for best results, view the documentation using a Markdown viewer, or on [GitHub].
 
-[ovdk gsg]: https://01.org/downloads/222
+______
+
+## Requirements
+
+Intel® DPDK vSwitch has been validated against the following Linux distributions:
+
+* Intel® DPDK 1.6
+* Wind River Linux 5.1
+* Fedora 16
+
+Additionally, Intel® DPDK vSwitch has been validated on the following processors:
+
+* Intel® Xeon® Processor E5 Family
+* Intel® Atom® Processor C2000 Family
+
+______
 
 ## Build Instructions
 
-Three different utilities are necessary to build Open vSwitch: Intel(R) DPDK,
-QEMU and Open vSwitch. Of these, DPDK must be built first due to dependencies
-in DPDK vSwitch.
+Three different utilities are necessary to build Open vSwitch: Intel® DPDK, QEMU and Open vSwitch. Of these, Intel® DPDK must be built first due to dependencies in Intel® DPDK vSwitch.
 
- * DPDK
+* DPDK
 
-    Refer to the [Intel(R) DPDK Getting Started Guide](http://dpdk.org/doc) for
-    a relevant make target, eg:
+    Refer to the Intel® DPDK [Getting Started Guide] for a relevant make target, eg:
 
-        cd $(DPDK_DIR)
-        make install T=x86_64-ivshmem-linuxapp-gcc
+    ```bash
+    cd $(DPDK_DIR)
+    make install T=x86_64-ivshmem-linuxapp-gcc
+    ```
 
- * Openvswitch
+* Openvswitch
 
-        cd $(OVS_DIR)/openvswitch
-        ./boot.sh
-        ./configure RTE_SDK=$(DPDK_DIR)
-        make
+    ```bash
+    cd $(OVS_DIR)/openvswitch
+    ./boot.sh
+    ./configure RTE_SDK=$(DPDK_DIR)
+    make
+    ```
 
- *  Qemu
+*  QEMU
 
-        cd $(OVS_DIR)/qemu
-        ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --target-list=x86_64-softmmu
-        make
+    ```bash
+    cd $(OVS_DIR)/qemu
+    ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --target-list=x86_64-softmmu
+    make
+    ```
+
+______
 
 ## Further Information
 
-For further information, please check out the Getting Started Guide, or use
-the mailing list.
+For further information, please check out the `docs` directory, or use the mailing list.
+
+______
 
 ## Contribute
 
-Please submit all questions, bugs and patch requests to the official
-[mailing list](https://lists.01.org/mailman/listinfo/dpdk-ovs). For further
-information on this process, please refer to the ``CONTRIBUTE`` file.
+Please submit all questions, bugs and patch requests to the official [mailing list]. For further information on this process, please refer to the ``CONTRIBUTE`` file.
 
+______
+
+[01.org]: https://01.org/packet-processing/intel%C2%AE-ovdk
+[openvswitch.org]: http://openvswitch.org
+[GitHub]:  https://github.com/01org/dpdk-ovs/tree/master/docs
+[mailing list]: https://lists.01.org/mailman/listinfo/dpdk-ovs
+[Getting Started Guide]: http://dpdk.org/doc
