@@ -89,7 +89,7 @@ struct flow_table_entry {
 	rte_rwlock_t lock;   /* Lock to allow multiple readers and one writer */
 	struct flow_key key;     /* Flow key. */
 	struct flow_stats stats; /* Flow statistics. */
-	bool used;               /* Flow is used */
+	bool enabled;            /* Flow is being used */
 	struct action actions[MAX_ACTIONS];    /* Type of action */
 };
 
@@ -186,7 +186,7 @@ flow_table_add_flow(const struct flow_key *key, const struct action *actions)
 	rte_rwlock_write_lock(&flow_table[pos].lock);
 
 	flow_table[pos].key = *key;
-	flow_table[pos].used = true;
+	flow_table[pos].enabled = true;
 	memcpy(&(flow_table[pos].actions), actions,
 	                 sizeof(flow_table[pos].actions));
 
@@ -227,7 +227,7 @@ flow_table_mod_flow(const struct flow_key *key, const struct action *actions,
 	}
 
 	ret = pos;
-	flow_table[pos].used = true;
+	flow_table[pos].enabled = true;
 
 	/* release lock as table has been written */
 	rte_rwlock_write_unlock(&flow_table[pos].lock);
@@ -239,7 +239,7 @@ inline static int
 copy_entry_from_table(int pos, struct flow_key *key, struct action *actions,
                         struct flow_stats *stats)
 {
-	if (likely(flow_table[pos].used)) {
+	if (likely(flow_table[pos].enabled)) {
 		if (key) {
 			*key = flow_table[pos].key;
 		}
@@ -357,7 +357,7 @@ flow_table_del_flow(const struct flow_key *key)
 	       sizeof(flow_table[pos].key));
 	memset((void *)&flow_table[pos].actions, 0,
 	       sizeof(flow_table[pos].actions));
-	flow_table[pos].used = false;
+	flow_table[pos].enabled = false;
 
 	/* release lock as table has been written */
 	rte_rwlock_write_unlock(&flow_table[pos].lock);
@@ -387,7 +387,7 @@ flow_table_del_all(void)
 		memset(key, 0, sizeof(struct flow_key));
 		memset((void *)&flow_table[pos].actions, 0,
 		       sizeof(flow_table[pos].actions));
-		flow_table[pos].used = false;
+		flow_table[pos].enabled = false;
 
 		/* release lock as table has been written */
 		rte_rwlock_write_unlock(&flow_table[pos].lock);
@@ -568,14 +568,15 @@ switch_packet(struct rte_mbuf *pkt, struct flow_key *key)
 
 	if (likely(pos >= 0)) {
 		rte_rwlock_read_lock(&flow_table[pos].lock);
-		if (flow_table[pos].used) {
+		if (flow_table[pos].enabled) {
 			struct action *actions;
 			actions = &flow_table[pos].actions[0];
 			action_execute(actions, pkt);
 			flow_table_update_stats(pos, pkt);
+			rte_rwlock_read_unlock(&flow_table[pos].lock);
+			return;
 		}
 		rte_rwlock_read_unlock(&flow_table[pos].lock);
-		return;
 	}
 	struct dpdk_upcall info;
 	/* flow table miss, send unmatched packet to the daemon */
