@@ -83,7 +83,8 @@
 #define TCP_HDR_FROM_PKT(pkt) (struct tcp_hdr*)\
 	(rte_pktmbuf_mtod(pkt, unsigned char *) + \
 			sizeof(struct ether_hdr) + \
-			sizeof(struct ipv4_hdr))
+			IPV4_HEADER_SIZE(rte_pktmbuf_mtod(pkt, struct ipv4_hdr*)))
+
 
 struct flow_table_entry {
 	rte_rwlock_t lock;   /* Lock to allow multiple readers and one writer */
@@ -474,7 +475,7 @@ flow_key_extract(const struct rte_mbuf *pkt, uint8_t in_port,
 
 	if (key->ether_type == ETHER_TYPE_IPv4) {
 		ipv4_hdr = (struct ipv4_hdr *)pkt_data;
-		pkt_data += sizeof(struct ipv4_hdr);
+		pkt_data += IPV4_HEADER_SIZE(ipv4_hdr);
 
 		key->ip_dst = rte_be_to_cpu_32(ipv4_hdr->dst_addr);
 		key->ip_src = rte_be_to_cpu_32(ipv4_hdr->src_addr);

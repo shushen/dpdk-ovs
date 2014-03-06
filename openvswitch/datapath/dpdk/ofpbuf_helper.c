@@ -42,6 +42,7 @@
 #include <rte_mbuf.h>
 
 #include "ofpbuf.h"
+#include "flow.h"
 
 /* We declare a struct ofpbuf per core as each thread may do an action
  * simultaneously and while the ofbuf itself is merely overlayed on top
@@ -70,7 +71,7 @@ void * overlay_ofpbuf(struct rte_mbuf *mbuf)
 	else
 		buf[id].l3 = buf[id].l2 + sizeof(struct ether_hdr);
 
-	buf[id].l4 = buf[id].l3 + sizeof(struct ipv4_hdr);
+	buf[id].l4 = buf[id].l3 + IPV4_HEADER_SIZE((struct ipv4_hdr *)buf[id].l3);
 
 	/* Only TCP and UDP set actions are supported */
 	if (tcp_pkt(buf[id].l4))

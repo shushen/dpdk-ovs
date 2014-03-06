@@ -42,6 +42,11 @@
 
 #include "action.h"
 
+/* Calculates the IPv4 header size using the Internet Header Length field (IHL).
+ * This field contains the number of 32-bit words in the header. */
+#define IPV4_HEADER_SIZE(ipv4_hdr) \
+	(((ipv4_hdr)->version_ihl & 0x0F) * sizeof(uint32_t))
+
 /* Maximum number of flow table entries */
 #define MAX_FLOWS              (1 << 16)
 
