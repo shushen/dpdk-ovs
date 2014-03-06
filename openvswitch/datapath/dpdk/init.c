@@ -32,7 +32,6 @@
  *
  */
 
-
 #include <string.h>
 #include <rte_string_fns.h>
 #include <rte_malloc.h>
@@ -63,8 +62,9 @@
 
 #define MBUF_CACHE_SIZE 128
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
-#define RX_MBUF_DATA_SIZE 2048
-#define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
+#define MAX_PACKET_SIZE 1520
+#define MBUF_SIZE (MAX_PACKET_SIZE + MBUF_OVERHEAD + \
+		RTE_MAX(sizeof(struct dpdk_message),sizeof(struct dpdk_upcall)))
 
 /**
  * Initialise the mbuf pool
@@ -78,6 +78,10 @@ init_mbuf_pools(void)
 			+ (num_veth * MBUFS_PER_VETH)
 			+ (num_vhost * MBUFS_PER_VHOST)
 			+ MBUFS_PER_DAEMON;
+
+	/* make sure the upcall does not the exceed mbuf headroom */
+	if (sizeof(struct dpdk_upcall) >= RTE_PKTMBUF_HEADROOM)
+		rte_panic("Upcall exceed mbuf headroom\n");
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
 	 * seems faster to use a cache instead */
