@@ -43,6 +43,7 @@
 
 #include "vport.h"
 #include "datapath.h"
+#include "ovdk_datapath_messages.h"
 #include "action.h"
 #include "stats.h"
 #include "init.h"
@@ -75,39 +76,6 @@
 #define PACKET_CMD_FAMILY      0x1F
 
 #define DPIF_SOCKNAME "\0dpif-dpdk"
-
-/* A 'vport managment' message between vswitchd <-> datapath.  */
-struct dpdk_vport_message {
-	uint32_t id;                 /* Thread ID of sending thread */
-	uint8_t cmd;                 /* Command to execute on vport. */
-	uint32_t flags;              /* Additional flags, if any, or null. */
-	uint32_t port_no;            /* Number of the vport. */
-	struct port_stats stats;     /* Current statistics for the given vport. */
-};
-
-struct dpdk_flow_message {
-	uint32_t id;
-	uint8_t cmd;
-	uint32_t flags;
-	struct flow_key key;
-	struct flow_stats stats;
-	struct action actions[MAX_ACTIONS];
-	bool clear;
-};
-
-struct dpdk_packet_message {
-	struct action actions[MAX_ACTIONS];
-};
-
-/* A message between vswitchd <-> datapath. */
-struct dpdk_message {
-	int16_t type;              /* Message type, if a request, or return code */
-	union {                    /* Actual message */
-		struct dpdk_vport_message vport_msg;
-		struct dpdk_flow_message flow_msg;
-		struct dpdk_packet_message packet_msg;
-	};
-};
 
 /* ring to send packets to vswitchd */
 static struct rte_ring *vswitchd_packet_ring = NULL;
