@@ -40,8 +40,8 @@
 #include <rte_eal.h>
 #include <rte_string_fns.h>
 
-#include <ovs-vport.h>
-#include <vport-types.h>
+#include "ovs-vport.h"
+#include "vport-types.h"
 
 static struct vport_info *stub_vports = NULL;
 static struct rte_mempool *pktmbuf_pool;

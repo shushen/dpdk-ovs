@@ -330,6 +330,14 @@ tests_test_memnic_SOURCES += datapath/dpdk/stats.c
 tests_test_memnic_CFLAGS = -iquote ./datapath/dpdk
 tests_test_memnic_LDADD = $(dpdk_libs)
 
+# used for ivshm-mngr integration tests
+noinst_PROGRAMS += tests/dummy-vports-info-mock
+tests_dummy_vports_info_mock_SOURCES = tests/dummy-vports-info-mock.c
+tests_dummy_vports_info_mock_SOURCES += datapath/dpdk/libvport/ovs-vport.c
+tests_dummy_vports_info_mock_CFLAGS = -iquote ./datapath/dpdk
+tests_dummy_vports_info_mock_CFLAGS += -iquote ./datapath/dpdk/libvport
+tests_dummy_vports_info_mock_LDADD = $(dpdk_libs)
+
 # idltest schema and IDL
 OVSIDL_BUILT += tests/idltest.c tests/idltest.h tests/idltest.ovsidl
 IDLTEST_IDL_FILES = tests/idltest.ovsschema tests/idltest.ann
