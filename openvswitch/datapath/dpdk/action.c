@@ -87,13 +87,23 @@ action_execute(const struct action *actions, struct rte_mbuf *mbuf)
 	for (i = 0; i < MAX_ACTIONS && actions[i].type != ACTION_NULL; i++) {
 		switch (actions[i].type) {
 		case ACTION_OUTPUT:
-			/* need to clone only if multiple OUTPUT case */
 			if (multiple_outputs) {
-				mb = rte_pktmbuf_clone(mbuf, (struct rte_mempool *)mp);
-				if (mb)
+				/* Using rte_pktmbuf_alloc() we don't get a full copy of mbuf,
+				 * just an "indirect" copy that references to the same data of
+				 * mbuf. The full copy is done by allocating a new mbuf and
+				 * copy the data over avoiding possible race conditions when
+				 * applying multiple actions on the packet. */
+				mb = rte_pktmbuf_alloc((struct rte_mempool *)mp);
+				if (mb) {
+					rte_memcpy(mb->pkt.data, mbuf->pkt.data,
+							rte_pktmbuf_data_len(mbuf));
+					rte_pktmbuf_data_len(mb) = rte_pktmbuf_data_len(mbuf);
+					rte_pktmbuf_pkt_len(mb) = rte_pktmbuf_pkt_len(mbuf);
 					action_output(&actions[i].data.output, mb);
-				else
-					RTE_LOG(ERR, APP, "Failed to clone pktmbuf\n");
+				}
+				else {
+					RTE_LOG(ERR, APP, "Failed to allocate pktmbuf\n");
+				}
 			}
 			else {
 				action_output(&actions[i].data.output, mbuf);
