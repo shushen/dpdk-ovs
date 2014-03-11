@@ -39,7 +39,7 @@
 #include "flow.h"
 #include "stats.h"
 
-/* A 'vport managment' message between vswitchd <-> datapath.  */
+/* A 'vport management' message between vswitchd <-> datapath.  */
 struct dpdk_vport_message {
 	uint32_t id;                 /* Thread ID of sending thread */
 	uint8_t cmd;                 /* Command to execute on vport. */
