@@ -36,6 +36,8 @@
 #ifndef _INIT_H_
 #define _INIT_H_
 
+#define NUM_BRIDGE 16
+
 /* The mbuf pool for packet rx */
 struct rte_mempool *pktmbuf_pool;
 uint32_t num_clients;

@@ -217,8 +217,6 @@ dpif_dpdk_ofport_type(enum dpif_dpdk_vport_type type, char *vport_type)
         return EINVAL;
 
     switch(type) {
-    /* TODO - remove this when bridges no longer need it */
-    case VPORT_TYPE_VSWITCHD:
     case VPORT_TYPE_BRIDGE:
         strncpy(vport_type, "internal", DPDK_PORT_MAX_STRING_LEN);
         break;
@@ -241,6 +239,7 @@ dpif_dpdk_ofport_type(enum dpif_dpdk_vport_type type, char *vport_type)
         strncpy(vport_type, "dpdkmemnic", DPDK_PORT_MAX_STRING_LEN);
         break;
     case VPORT_TYPE_DISABLED:
+    case VPORT_TYPE_VSWITCHD:
     default:
         VLOG_ERR("failed to get OFP type from ODP type '%d'", type);
         return EINVAL;
@@ -312,10 +311,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (request.type == VPORT_TYPE_DISABLED)
         return ENODEV;
 
-    /* We currently support only one bridge, hence hardcode port_no to 0 */
-    if (request.type == VPORT_TYPE_BRIDGE) {
-        request.port_no = 0;
-    } else if (request.type == VPORT_TYPE_PHY) {
+    if (request.type == VPORT_TYPE_PHY) {
         struct netdev_dpdk_phyport *phy_port = NETDEV_DPDK_PHYPORT_CAST(netdev);
 
         /* Set the physical port index in the request.  The datapath will need

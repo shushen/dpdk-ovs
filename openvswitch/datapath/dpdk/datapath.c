@@ -302,10 +302,7 @@ vport_cmd_new(struct dpdk_vport_message *request)
 	if (!vport_exists(port_no) || !vport_id_is_valid(port_no, port_type))
 		port_no = vport_next_available_index(port_type);
 
-	/* Bridge ports do not exist on the datapath - we should not
-	 * add one to the datapaths list of ports
-	 */
-	if (vport_exists(port_no) && port_type != VPORT_TYPE_BRIDGE) {
+	if (vport_exists(port_no)) {
 		if (!vport_is_enabled(port_no)) {
 			vport_enable(port_no);
 

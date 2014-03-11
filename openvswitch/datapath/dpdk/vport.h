@@ -57,11 +57,13 @@
 #define MEMNIC0                0x30
 #define VETH0                  0x40
 #define VHOST0                 0x50
+#define BRIDGE0                0x60
 #define CLIENT_MASK            0x00
 #define PORT_MASK              0x0F
 #define KNI_MASK               0x1F
 #define VETH_MASK              0x3F
 #define VHOST_MASK             0x4F
+#define BRIDGE_MASK            0x5F
 #define MAX_VPORT_NAME_SIZE    32
 
 struct port_info {
@@ -113,7 +115,7 @@ bool vport_is_enabled(unsigned vportid);
 int vport_vhost_up(struct virtio_net *dev);
 int vport_vhost_down(struct virtio_net *dev);
 void vport_set_kni_fifo_names(unsigned vportid,
-     const struct vport_kni_fifo_names *kni_fifos);
+const struct vport_kni_fifo_names *kni_fifos);
 
 void flush_clients(void);
 void flush_ports(void);

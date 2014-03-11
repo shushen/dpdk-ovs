@@ -120,6 +120,7 @@ struct vport_info {
 		struct vport_veth veth;
 		struct vport_vhost vhost;
 		struct vport_memnic memnic;
+		struct vport_veth bridge;
 	};
 };
 

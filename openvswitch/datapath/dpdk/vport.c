@@ -759,6 +759,14 @@ vport_init(void)
 		}
 	}
 
+	/* vport for bridge */
+	for (i = 0; i < NUM_BRIDGE; i++) {
+		vports[BRIDGE0 + i].type = VPORT_TYPE_BRIDGE;
+		vports[BRIDGE0 + i].bridge.index = i;
+		vport_disable(BRIDGE0 + i);
+		vport_set_name(BRIDGE0 + i, NULL);
+	}
+
 	/* now initialise the physical ports we will use */
 	for (i = 0; i < ports->num_phy_ports; i++) {
 		unsigned int vportid = cfg_params[i].port_id;
@@ -941,6 +949,12 @@ send_to_vport(uint32_t vportid, struct rte_mbuf *buf)
 	case VPORT_TYPE_VSWITCHD:
 		/* DPDK vSwitch cannot handle it now, ignore */
 		break;
+	case VPORT_TYPE_BRIDGE:
+		/* We still have no support for real
+		 * bridge ports.
+		 */
+		rte_pktmbuf_free(buf);
+		return 0;
 	default:
 		RTE_LOG(WARNING, APP, "unknown vport %u type %u\n",
 			vportid, vports[vportid].type);
@@ -1341,12 +1355,10 @@ vport_next_available_index(enum vport_type type)
 	uint32_t start_idx = 0, end_idx = 0, i = 0;
 
 	switch (type) {
-	/* TODO - remove this when bridges no longer need it */
-	case VPORT_TYPE_VSWITCHD:
 	case VPORT_TYPE_BRIDGE:
-		/* TODO - we currently only support one bridge, which is
-		 * hardcoded to port 0. */
-		return VSWITCHD;
+		start_idx = BRIDGE0;
+		end_idx = BRIDGE0 + NUM_BRIDGE;
+		break;
 	case VPORT_TYPE_CLIENT:
 		start_idx = CLIENT0;
 		end_idx = CLIENT0 + num_clients;
@@ -1388,12 +1400,6 @@ vport_next_available_index(enum vport_type type)
 inline bool
 vport_id_is_valid(unsigned vportid, enum vport_type type)
 {
-	/* Special case for bridges, until a special bridge range of ports is
-	 * assigned */
-	if (vports[vportid].type == VPORT_TYPE_VSWITCHD &&
-		type == VPORT_TYPE_BRIDGE)
-		return true;
-
 	/* We assume that type stored in the 'vports' array is constant, and
 	 * therefore indicative of the type of vport that can be stored at that
 	 * index. */

@@ -2,6 +2,7 @@
     - Added support for memnic, which uses IVSHMEM for communication between
       guest and host. The IVSHMEM that is used is separate from the DPDK
       hugepage
+    - Added support for multiple bridges
 
 # v0.10 - March 2014
 
