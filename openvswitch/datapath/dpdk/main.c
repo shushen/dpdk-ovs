@@ -135,10 +135,10 @@ stats_display(void)
 		     "Interface       rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "-------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		const char *name = vport_name(i);
-		if (*name == 0)
+		const char *name = vport_get_name(i);
+		if (name == NULL || *name == 0)
 			continue;
-		printf("%-13s ", name);
+		printf("%-*.*s ", 13, 13, name);
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 		       stats_vport_rx_get(i),
 		       stats_vport_rx_drop_get(i),

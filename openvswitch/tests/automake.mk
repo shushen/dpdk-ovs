@@ -69,6 +69,7 @@ TESTSUITE_AT = \
 	tests/dpdk-datapath.at \
 	tests/ovs-vport.at \
 	tests/dpif-dpdk.at \
+	tests/netdev-dpdk.at \
 	tests/dpdk-link.at
 TESTSUITE = $(srcdir)/tests/testsuite
 DISTCLEANFILES += tests/atconfig tests/atlocal
@@ -110,6 +111,7 @@ valgrind_wrappers = \
 	tests/valgrind/test-classifier \
 	tests/valgrind/test-csum \
 	tests/valgrind/test-dpdk-link \
+	tests/valgrind/test-netdev_dpdk \
 	tests/valgrind/test-file_name \
 	tests/valgrind/test-flows \
 	tests/valgrind/test-hash \
@@ -209,6 +211,10 @@ noinst_PROGRAMS += tests/test-dpif-dpdk
 tests_test_dpif_dpdk_SOURCES = tests/test-dpif-dpdk.c
 tests_test_dpif_dpdk_SOURCES += tests/dpdk-ring-stub.c
 tests_test_dpif_dpdk_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+
+noinst_PROGRAMS += tests/test-netdev-dpdk
+tests_test_netdev_dpdk_SOURCES = tests/test-netdev-dpdk.c
+tests_test_netdev_dpdk_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-file_name
 tests_test_file_name_SOURCES = tests/test-file_name.c

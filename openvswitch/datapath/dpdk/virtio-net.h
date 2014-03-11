@@ -32,9 +32,9 @@
  *
  */
 
-
-
 #include <sys/eventfd.h>
+#include "vport.h"
+
 
 #ifndef _VIRTIO_NET_H_
 #define _VIRTIO_NET_H_
@@ -71,13 +71,12 @@ struct vhost_virtqueue
  */
 struct virtio_net
 {
-	struct vhost_virtqueue	*virtqueue[VIRTIO_QNUM];	/* Contains all virtqueue information. */
-	struct virtio_memory 	*mem;						/* QEMU memory and memory region information. */
-	char                    name[32];					/* device port name ??? */
-	uint64_t 				features;					/* Negotiated feature set. */
-	uint64_t 				device_fh;					/* device identifier. */
-	uint32_t 				flags;						/* Device flags. Only used to check if device is running on data core. */
-	uint16_t 				port_id;					/* ovs_dpdk port id that the device is added to. */
+	struct vhost_virtqueue	*virtqueue[VIRTIO_QNUM];		/* Contains all virtqueue information. */
+	struct virtio_memory 	*mem;							/* QEMU memory and memory region information. */
+	uint64_t 				features;						/* Negotiated feature set. */
+	uint64_t 				device_fh;						/* device identifier. */
+	uint32_t 				flags;							/* Device flags. Only used to check if device is running on data core. */
+	char	 				port_name[VPORT_INFO_NAMESZ];	/* ovs_dpdk name of userspace vhost port. */
 } __rte_cache_aligned;
 
 /*

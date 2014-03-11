@@ -37,6 +37,7 @@
 #include <rte_ring.h>
 #include <rte_cycles.h>
 
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/ioctl.h>
@@ -49,16 +50,16 @@
 #include "init.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
-#define NO_FLAGS            0
-#define SOCKET0             0
-#define PKT_BURST_SIZE      32u
-#define VSWITCHD_RINGSIZE   2048
-#define VSWITCHD_ALLOC_THRESHOLD	(VSWITCHD_RINGSIZE/4)
-#define VSWITCHD_PACKET_RING_NAME	"MProc_Vswitchd_Packet_Ring"
-#define VSWITCHD_REPLY_RING_NAME	"MProc_Vswitchd_Reply_Ring"
-#define VSWITCHD_MESSAGE_RING_NAME	"MProc_Vswitchd_Message_Ring"
-#define VSWITCHD_FREE_RING_NAME		"MProc_Vswitchd_Free_Ring"
-#define VSWITCHD_ALLOC_RING_NAME	"MProc_Vswitchd_Alloc_Ring"
+#define NO_FLAGS               0
+#define SOCKET0                0
+#define PKT_BURST_SIZE         32u
+#define VSWITCHD_RINGSIZE      2048
+#define VSWITCHD_ALLOC_THRESHOLD   (VSWITCHD_RINGSIZE/4)
+#define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
+#define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
+#define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
 
 /* Flow messages flags bits */
 #define FLAG_ROOT              0x100
@@ -179,7 +180,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 void
 handle_request_from_vswitchd(void)
 {
-	uint16_t j = 0, dq_pkt = 0;
+	uint16_t j = 0;
+	uint16_t dq_pkt = 0;
 	struct rte_mbuf *buf[PKT_BURST_SIZE];
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
@@ -267,16 +269,65 @@ handle_unknown_cmd(void)
 
 /*
  * Attempt to add a new vport, and send result to vswitchd.
+ *
+ * This handles a request from the datapath to add a new port. The request can
+ * contain a port number, a port name, or both. If a port number is not
+ * available, the datapath attempts to get a free port within the port type's
+ * range.
+ *
+ * 0 is returned to the daemon and the 'request->port_no' field updated if the
+ * port number - generated or given - is available. If a port is not
+ * available - because it's in use or non-existent - 'EBUSY' or 'ENODEV' is
+ * returned respectively.
  */
 static void
 vport_cmd_new(struct dpdk_vport_message *request)
 {
 	struct dpdk_message reply = {0};
-	uint16_t port_no = request->port_no;
+	uint32_t port_no;
+	char *port_name;
+	uint8_t port_type;
 
-	reply.type = vport_in_use(port_no);
-	if (reply.type == VPORT_NOT_IN_USE)
-		vport_set_in_use(port_no);
+	port_type = request->type;
+	port_name = request->port_name;
+	port_no = request->port_no;
+
+	/* Calculate vportid for a given Physical port index */
+	if (port_type == VPORT_TYPE_PHY)
+		port_no = port_no + PHYPORT0;
+
+	/* Haven't requested a given port_number or one supplied is invalid, so get
+	 * one in range */
+	if (!vport_exists(port_no) || !vport_id_is_valid(port_no, port_type))
+		port_no = vport_next_available_index(port_type);
+
+	/* Bridge ports do not exist on the datapath - we should not
+	 * add one to the datapaths list of ports
+	 */
+	if (vport_exists(port_no) && port_type != VPORT_TYPE_BRIDGE) {
+		if (!vport_is_enabled(port_no)) {
+			vport_enable(port_no);
+
+			/* Haven't requested a given port_name, so use default one */
+			if (port_name == NULL)
+				port_name = vport_get_name(port_no);
+			else
+				vport_set_name(port_no, port_name);
+
+			/* We don't need to "set type", as the port's position in the 'vport_info'
+			 * array implicitly defines the type. This will change if the structure
+			 * of this array changes. */
+
+			/* Populate 'reply' */
+			request->port_no = port_no;
+			strncpy(request->port_name, port_name, MAX_VPORT_NAME_SIZE);
+			reply.type = 0;
+		} else {
+			reply.type = EBUSY;
+		}
+	} else {
+		reply.type = ENODEV;
+	}
 
 	reply.vport_msg = *request;
 	send_reply_to_vswitchd(&reply);
@@ -284,6 +335,11 @@ vport_cmd_new(struct dpdk_vport_message *request)
 
 /*
  * Attempt to delete single vport, and send result to vswitchd.
+ *
+ * This handles a request from the datapath to delete an exists port.
+ *
+ * Returns 0 to the datapath is port is deleted, else 'ENODEV' if device
+ * did not exist or was not enabled.
  */
 static void
 vport_cmd_del(struct dpdk_vport_message *request)
@@ -291,9 +347,12 @@ vport_cmd_del(struct dpdk_vport_message *request)
 	struct dpdk_message reply = {0};
 	uint16_t port_no = request->port_no;
 
-	reply.type = vport_in_use(request->port_no);
-	if (reply.type == VPORT_IN_USE)
-		vport_set_not_in_use(port_no);
+	if (vport_exists(port_no) && vport_is_enabled(port_no)) {
+		vport_disable(port_no);
+		reply.type = 0;
+	} else {
+		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+	}
 
 	reply.vport_msg = *request;
 	send_reply_to_vswitchd(&reply);
@@ -306,10 +365,24 @@ static void
 vport_cmd_get(struct dpdk_vport_message *request)
 {
 	struct dpdk_message reply = {0};
+	uint32_t port_no = request->port_no;
 
-	reply.type = vport_in_use(request->port_no);
-	if (reply.type == VPORT_IN_USE)
+	/* Correct 'port_no' value may not be included as part of 'request';
+	 * identify vport number associated with vport name. This is used by
+	 * the dpif's 'query_by_name' function. */
+	if (port_no == UINT32_MAX)
+		request->port_no = port_no = vport_name_to_portid(request->port_name);
+
+	if (vport_exists(port_no) && vport_is_enabled(port_no)) {
 		request->stats = stats_vport_get(request->port_no);
+		request->type = vport_get_type(request->port_no);
+
+		strncpy(request->port_name, vport_get_name(request->port_no),
+		        MAX_VPORT_NAME_SIZE);
+		reply.type = 0;
+	} else {
+		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+	}
 
 	reply.vport_msg = *request;
 
@@ -333,19 +406,20 @@ vport_cmd_dump(struct dpdk_vport_message *request)
 	else
 		request->port_no += 1;
 
-	/* Skip all ports without the in-use flag. This particular approach is
+	/* Skip all ports without the 'enabled' flag. This particular approach is
 	 * necessary due to the current design of the datapath. Ports are currently
 	 * declared and initialised at startup, rather than being allocated and
-	 * initialised "on the fly". We need to check for 'vport_in_use' rather than
-	 * 'vport_exists', to prevent vswitchd seeing ports that have not been
+	 * initialised "on the fly". We need to check for 'vport_is_enabled' rather
+	 * than 'vport_exists', to prevent vswitchd seeing ports that have not been
 	 * explicitly added via 'ovs-vsctl'. If this were not done the vswitchd
 	 * would spot the "alien" ports and try to remove them, causing issues. */
-	for (;request->port_no < MAX_VPORTS && \
-	     (vport_in_use(request->port_no) != VPORT_IN_USE); request->port_no++)
+	for ( ; request->port_no < MAX_VPORTS && !vport_is_enabled(request->port_no)\
+		      ; request->port_no++)
 		;
 
 	if (request->port_no < MAX_VPORTS) {
 		request->stats = stats_vport_get(request->port_no);
+		request->type = vport_get_type(request->port_no);
 		reply.type = 0;
 	} else {
 		reply.type = EOF;  /* "Exit case" for state machine */

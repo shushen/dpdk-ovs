@@ -45,6 +45,9 @@ struct dpdk_vport_message {
 	uint8_t cmd;                 /* Command to execute on vport. */
 	uint32_t flags;              /* Additional flags, if any, or null. */
 	uint32_t port_no;            /* Number of the vport. */
+	char port_name[MAX_VPORT_NAME_SIZE];   /* Name of the vport. */
+	enum vport_type type;        /* Type of the vport */
+	char reserved[16];           /* Padding - currently reserved for future use */
 	struct port_stats stats;     /* Current statistics for the given vport. */
 };
 

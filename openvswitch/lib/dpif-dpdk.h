@@ -23,10 +23,13 @@
 
 #include "ofpbuf.h"
 #include "dpif.h"
+#include "common.h"
 
 #define DPIF_DPDK_VPORT_FAMILY     0xE
 #define DPIF_DPDK_FLOW_FAMILY      0xF
 #define DPIF_DPDK_PACKET_FAMILY    0x1F
+
+#define DPDK_PORT_MAX_STRING_LEN   32
 
 struct dpif_dpdk_vport_stats {
 	uint64_t rx;        /* Rx packet count */
@@ -74,6 +77,17 @@ struct dpif_dpdk_upcall {
  */
 #define MAX_ACTIONS    (48)
 
+enum dpif_dpdk_vport_type {
+	VPORT_TYPE_DISABLED = 0,
+	VPORT_TYPE_VSWITCHD,
+	VPORT_TYPE_BRIDGE,
+	VPORT_TYPE_PHY,
+	VPORT_TYPE_CLIENT,
+	VPORT_TYPE_KNI,
+	VPORT_TYPE_VETH,
+	VPORT_TYPE_VHOST
+};
+
 enum dpif_dpdk_action_type {
 	ACTION_NULL,     /* Empty action */
 	ACTION_OUTPUT,   /* Output packet to port */
@@ -114,6 +128,9 @@ struct dpif_dpdk_vport_message {
 	uint8_t cmd;              /* Command to execute on vport. */
 	uint32_t flags;           /* Additional flags, if any, or null. */
 	uint32_t port_no;         /* Number of the vport. */
+	char port_name[DPDK_PORT_MAX_STRING_LEN];    /* Name of the vport. */
+	enum dpif_dpdk_vport_type type;      /* Type of the vport */
+	char reserved[16];           /* Padding - currently reserved for future use */
 	struct dpif_dpdk_vport_stats stats;  /* Current statistics for the given vport. */
 };
 

@@ -6,7 +6,7 @@ AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_get_stats], [0
 AT_CLEANUP
 
 AT_SETUP([Test dpif_dpdk_port_add])
-AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_add], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_add], [0], [ignore], [ignore])
 AT_CLEANUP
 
 AT_SETUP([Test dpif_dpdk_port_del])
@@ -14,11 +14,11 @@ AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_del], [0]
 AT_CLEANUP
 
 AT_SETUP([Test dpif_dpdk_port_query_by_number])
-AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_query_by_number], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_query_by_number], [0], [ignore], [ignore])
 AT_CLEANUP
 
 AT_SETUP([Test dpif_dpdk_port_query_by_name])
-AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_query_by_name], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 -- --dpif_dpdk_port_query_by_name], [0], [ignore], [ignore])
 AT_CLEANUP
 
 AT_SETUP([Test dpif_dpdk_get_max_ports])

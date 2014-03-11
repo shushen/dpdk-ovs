@@ -74,17 +74,18 @@
 extern struct rte_ring *vswitchd_message_ring;
 extern struct rte_ring *vswitchd_reply_ring;
 
-void
-create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply);
-void
-create_dpdk_flow_put_reply(struct dpif_dpdk_message *reply);
-void
-create_dpdk_flow_del_reply(struct dpif_dpdk_message *reply, uint8_t flow_exists);
-void
-create_dpif_flow_put_message(struct dpif_flow_put *put);
-int
-enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply);
-void
-create_dpif_flow_del_message(struct dpif_flow_del *del);
-void
-init_test_rings(unsigned mempool_size);
+void create_dpdk_port_add_reply(struct dpif_dpdk_message *reply,
+    uint32_t port_no, int return_code);
+void create_dpdk_port_del_reply(struct dpif_dpdk_message *reply,
+    int return_code);
+void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
+    uint32_t port_no, char port_name[32], enum dpif_dpdk_vport_type type,
+    int return_code);
+
+void create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply);
+void create_dpdk_flow_put_reply(struct dpif_dpdk_message *reply);
+void create_dpdk_flow_del_reply(struct dpif_dpdk_message *reply, uint8_t flow_exists);
+void create_dpif_flow_put_message(struct dpif_flow_put *put);
+int enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply);
+void create_dpif_flow_del_message(struct dpif_flow_del *del);
+void init_test_rings(unsigned mempool_size);

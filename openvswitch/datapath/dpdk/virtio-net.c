@@ -904,15 +904,17 @@ set_vring_kick(struct vhost_device_ctx ctx, struct vhost_vring_file *file)
 	return 0;
 }
 
-/* TODO - This function will be replaced when port naming is provided
- * in ovs_dpdk. */
+/*
+ * Function to get the tap device name from the provided file descriptor and save it
+ * in the device structure. This name must be identical to an existing ocs_dpdk port
+ * to associate the device with a port.
+ */
 static int
-get_port_id(struct virtio_net *dev, int tap_fd, int pid)
+get_port_name(struct virtio_net *dev, int tap_fd, int pid)
 {
 	struct fd_copy fd_tap;
 	struct ifreq ifr;
-	char tap_basename[] = "ovs_dpdk_";
-	uint32_t port_id;	
+	uint32_t size;
 
 	fd_tap.source_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 	fd_tap.target_fd = tap_fd;
@@ -926,17 +928,14 @@ get_port_id(struct virtio_net *dev, int tap_fd, int pid)
 	if (close(fd_tap.source_fd) < 0)
 		printf("fd close failed\n");
 
-	if (strncmp(ifr.ifr_name, tap_basename, sizeof(tap_basename) - 1) == 0){
-		port_id = strtoul(ifr.ifr_name + sizeof(tap_basename) - 1, NULL, 10);
-		return port_id;
-	} else {
-		LOG_DEBUG(VHOST_CONFIG, "Tap device does not meet required naming convention: ovs_dpdk_<PORTID>\n");
-	}
+	size = strnlen(ifr.ifr_name, sizeof(ifr.ifr_name)) > sizeof(dev->port_name)?
+			sizeof(dev->port_name): strnlen(ifr.ifr_name, sizeof(ifr.ifr_name));
 
-	return -1;
+	strncpy(dev->port_name, ifr.ifr_name, size);
+
+	return 0;
 }
 
-/* TODO: Function below will be changed when port naming is introduced in ovs_dpdk. */
 /*
  * Called from CUSE IOCTL: VHOST_NET_SET_BACKEND
  * To complete device initialisation when the virtio driver is loaded we are provided with a
@@ -961,8 +960,10 @@ set_backend(struct vhost_device_ctx ctx, struct vhost_vring_file *file)
 	if (!(dev->flags & VIRTIO_DEV_RUNNING)) {
 		if (((int)dev->virtqueue[VIRTIO_TXQ]->backend != VIRTIO_DEV_STOPPED) &&
 			((int)dev->virtqueue[VIRTIO_RXQ]->backend != VIRTIO_DEV_STOPPED)) {
-			dev->port_id = get_port_id(dev, file->fd, ctx.pid);
-			notify_ops->new_device(dev);
+			if (get_port_name(dev, file->fd, ctx.pid) < 0)
+				return -1;
+			if (notify_ops->new_device(dev) < 0)
+				return -1;
 		}
 	/* Otherwise we remove it. */
 	} else

@@ -35,6 +35,7 @@
 #ifndef __VPORT_H_
 #define __VPORT_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <rte_mbuf.h>
 
@@ -43,24 +44,22 @@
 #include "veth.h"
 #include "vhost.h"
 
-#define MAX_PHYPORTS        16
-#define MAX_CLIENTS         16
-#define MAX_VHOST_PORTS 	64
-#define PKT_BURST_SIZE      32u
-#define CLIENT0             0
-#define CLIENT1             1
-#define PHYPORT0            0x10
-#define KNI0                0x20
-#define VETH0               0x40
-#define VHOST0              0x50
-#define CLIENT_MASK         0x00
-#define PORT_MASK           0x0F
-#define KNI_MASK            0x1F
-#define VETH_MASK           0x3F
-#define VHOST_MASK          0x4F
-#define VPORT_IN_USE		0
-#define VPORT_NOT_IN_USE	1
-#define VPORT_EXISTS		0
+#define MAX_PHYPORTS           16
+#define MAX_CLIENTS            16
+#define MAX_VHOST_PORTS        64
+#define PKT_BURST_SIZE         32u
+#define CLIENT0                0
+#define CLIENT1                1
+#define PHYPORT0               0x10
+#define KNI0                   0x20
+#define VETH0                  0x40
+#define VHOST0                 0x50
+#define CLIENT_MASK            0x00
+#define PORT_MASK              0x0F
+#define KNI_MASK               0x1F
+#define VETH_MASK              0x3F
+#define VHOST_MASK             0x4F
+#define MAX_VPORT_NAME_SIZE    32
 
 struct port_info {
 	uint8_t num_phy_ports;
@@ -95,20 +94,26 @@ void vport_fini(void);
 int send_to_vport(uint32_t vportid, struct rte_mbuf *buf);
 uint16_t receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs);
 void flush_nic_tx_ring(unsigned vportid);
-const char *vport_name(unsigned vportid);
-int16_t vport_in_use(unsigned vportid);
-int vport_exists(unsigned vportid);
-void vport_set_in_use(unsigned vportid);
-void vport_set_not_in_use(unsigned vportid);
+
+uint32_t vport_name_to_portid(const char *name);
+uint32_t vport_next_available_index(enum vport_type type);
+bool vport_id_is_valid(unsigned vportid, enum vport_type type);
+bool vport_exists(unsigned vportid);
+
+void vport_set_name(unsigned vportid, const char *fmt, ...);
+char *vport_get_name(unsigned vportid);
+enum vport_type vport_get_type(unsigned vportid);
+void vport_enable(unsigned vportid);
+void vport_disable(unsigned vportid);
+bool vport_is_enabled(unsigned vportid);
+
 int vport_vhost_up(struct virtio_net *dev);
-int vport_vhost_down(unsigned portid);
+int vport_vhost_down(struct virtio_net *dev);
 void vport_set_kni_fifo_names(unsigned vportid,
-		const struct vport_kni_fifo_names *kni_fifos);
+     const struct vport_kni_fifo_names *kni_fifos);
 
 void flush_clients(void);
 void flush_ports(void);
 void flush_vhost_devs(void);
 
 #endif /* __VPORT_H_ */
-
-

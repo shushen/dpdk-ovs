@@ -37,6 +37,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <rte_mbuf.h>
 #include <rte_memory.h>
@@ -65,6 +66,7 @@ struct vport_client_ring_names {
 enum vport_type {
 	VPORT_TYPE_DISABLED = 0,
 	VPORT_TYPE_VSWITCHD,
+	VPORT_TYPE_BRIDGE,
 	VPORT_TYPE_PHY,
 	VPORT_TYPE_CLIENT,
 	VPORT_TYPE_KNI,
@@ -103,7 +105,7 @@ struct vport_vhost {
 struct vport_info {
 	enum vport_type __rte_cache_aligned type;
 	char __rte_cache_aligned name[VPORT_INFO_NAMESZ];
-	uint8_t __rte_cache_aligned in_use;
+	bool __rte_cache_aligned enabled;
 	union {
 		struct vport_phy phy;
 		struct vport_client client;

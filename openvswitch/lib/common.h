@@ -23,17 +23,11 @@
 
 #define MAX_DIGITS_UNSIGNED_INT    20
 
-#define MAX_VPORTS                 256 
+#define MAX_VPORTS                 256
 
 #define VLAN_ID_MASK               0xFFF
 #define VLAN_PRIO_SHIFT            13
 
-#define DPDK_BRIDGE_PREFIX         "br"
-#define DPDK_BRIDGE_PREFIX_LEN     2
-#define DPDK_BRIDGE_MAX_STRING_LEN 4
-#define DPDK_PORT_PREFIX           "ovs_dpdk_"
-#define DPDK_PORT_PREFIX_LEN       9
-#define DPDK_PORT_MAX_STRING_LEN   12
 #define BASE10                     10
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1

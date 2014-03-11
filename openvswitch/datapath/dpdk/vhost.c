@@ -79,27 +79,36 @@ set_irq_status (struct virtio_net *dev)
 }
 
 /*
- * Remove a device from ovs_dpdk data path. Synchonization occurs through the use 
- * of the lcore dev_removal_flag. Device is made volatile here to avoid re-ordering 
- * of dev->remove=1 which can cause an infinite loop in the rte_pause loop.
+ * Remove a device from ovs_dpdk data path. Synchonization occurs through the
+ * use of the lcore dev_removal_flag. Device is made volatile here to avoid
+ * re-ordering of dev->remove=1 which can cause an infinite loop in the
+ * rte_pause loop.
  */
 static void
 destroy_device (volatile struct virtio_net *dev)
 {
 	unsigned lcore;
 
-	vport_vhost_down(dev->port_id);
+	/* Remove device from ovs_dpdk port. */
+	if (vport_vhost_down((struct virtio_net*) dev) < 0) {
+		RTE_LOG(INFO, APP,
+			"Device could not be removed from ovs_dpdk port %s\n",
+			dev->port_name);
+		dev->flags &= ~VIRTIO_DEV_RUNNING;
+		return;
+	}
 	
 	/* Set the dev_removal_flag on each lcore. */
 	RTE_LCORE_FOREACH(lcore) {
 		dev_removal_flag[lcore] = REQUEST_DEV_REMOVAL;
 	}
-	
-	/* 
+
+	/*
 	 * Once each core has set the dev_removal_flag to ACK_DEV_REMOVAL we can be sure that
 	 * they can no longer access the device removed from the data path and that the devices
 	 * are no longer in use.
 	 */
+
 	RTE_LCORE_FOREACH(lcore) {
 		while (dev_removal_flag[lcore] != ACK_DEV_REMOVAL) {
 			rte_pause();
@@ -108,23 +117,32 @@ destroy_device (volatile struct virtio_net *dev)
 	
 	dev->flags &= ~VIRTIO_DEV_RUNNING;
 	
-	RTE_LOG(INFO, APP, "(%"PRIu64") Device has been removed from ovs_dpdk port %u\n", dev->device_fh, dev->port_id);
+	RTE_LOG(INFO, APP, "(%"PRIu64") Device has been removed from ovs_dpdk \
+		            port %s\n", dev->device_fh, dev->port_name);
 }
 
 /*
- * A new device is added to the data path. The name of the tap device associated with the
- * virtio device is used to match a device with an ovs_dpdk port.
+ * A new device is added to the data path. The name of the tap device associated
+ * with the virtio device is used to match a device with an ovs_dpdk port.
  */
 static int
 new_device (struct virtio_net *dev)
 {
 	/* Disable notifications. */
 	set_irq_status(dev);
+
+	/* Add device to ovs_dpdk port. */
+	if (vport_vhost_up(dev) < 0) {
+		RTE_LOG(INFO, APP,
+			"Device could not be added to ovs_dpdk port %s\n",
+			dev->port_name);
+		return -1;
+	}
+
 	dev->flags |= VIRTIO_DEV_RUNNING;
 
-	vport_vhost_up(dev);
-
-	RTE_LOG(INFO, APP, "(%"PRIu64") Vhost device has been added to ovs_dpdk port %u\n", dev->device_fh, dev->port_id);
+	RTE_LOG(INFO, APP, "(%"PRIu64") Vhost device has been added to \
+		ovs_dpdk port %s\n", dev->device_fh, dev->port_name);
 
 	return 0;
 }
@@ -140,9 +158,9 @@ static const struct virtio_net_device_ops virtio_net_device_ops =
 };
 
 /*
- * The initialisation of userspace vhost mainly consists of configuring and initialising
- * the CUSE character device. This will run as a separate thread as it is a blocking
- * function.
+ * The initialisation of userspace vhost mainly consists of configuring and
+ * initialising the CUSE character device. This will run as a separate thread as
+ * it is a blocking function.
  */
 
 int
@@ -161,7 +179,8 @@ vhost_init(void)
 	num_devices = MAX_VHOST_PORTS;
 
 	/* Register CUSE device to handle IOCTLs. */
-	ret = register_cuse_device((char*)&dev_basename, dev_index, get_virtio_net_callbacks());
+	ret = register_cuse_device((char*)&dev_basename, dev_index,
+			           get_virtio_net_callbacks());
 	if (ret != 0)
 		rte_exit(EXIT_FAILURE, "CUSE device setup failure.\n");
 

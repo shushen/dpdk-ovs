@@ -166,7 +166,7 @@ init_kni(void)
 	/* Create the rte_kni fifos for each KNI port */
 	for (port_id = 0; port_id < num_kni; port_id++) {
 		RTE_LOG(INFO, APP, "Initialising KNI port '%s'\n",
-				vport_name(KNI0 + port_id));
+				vport_get_name(KNI0 + port_id));
 		create_kni_fifos(&rte_kni_list[port_id], &kni_names, port_id);
 		vport_set_kni_fifo_names(KNI0 + port_id, &kni_names);
 		rte_spinlock_init(&rte_kni_locks[port_id]);

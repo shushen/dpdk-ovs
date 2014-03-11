@@ -127,7 +127,7 @@ clean-kni:
 check: check-ovs
 
 check-ovs:
-	cd $(OVS_DIR) && $(MAKE) check TESTSUITEFLAGS='1344-' && cd $(ROOT_DIR)
+	cd $(OVS_DIR) && $(MAKE) check TESTSUITEFLAGS='1329-' && cd $(ROOT_DIR)
 
 #End Targets for Check##############
 

@@ -65,6 +65,8 @@ ______
 
 * Passing a VLAN packet with VLAN ID `0`, but a priority greater than `0` (a priority tagged packet) is not currently supported, and passing this type of packet will render the switch unresponsive.
 
+* Adding bridges will warn with dpif|WARN|dpdk@ovs-dpdk: failed to add "bridgename" as port: No such device. This is because there is no real port in the datapath associated with the bridge.
+
 ______
 
 ## Intel® DPDK vSwitch Sample Guest Application

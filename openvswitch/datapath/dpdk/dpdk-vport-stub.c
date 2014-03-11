@@ -34,8 +34,8 @@
 
 #include "vport.h"
 
-#define MAX_BUFS             100
-#define MAX_VPORTS           256
+#define MAX_BUFS               100
+#define MAX_VPORTS             256
 
 struct rte_mbuf *buf_array[MAX_VPORTS][MAX_BUFS] = {NULL};
 
@@ -65,7 +65,6 @@ receive_from_vport(uint32_t portid, struct rte_mbuf **bufs)
 	return count;
 }
 
-
 int
 send_to_vport(uint32_t portid, struct rte_mbuf *buf)
 {
@@ -76,14 +75,16 @@ send_to_vport(uint32_t portid, struct rte_mbuf *buf)
 	return 0;
 }
 
-void vport_init(void)
+void
+vport_init(void)
 {
 	/* init and fini will both re-initialize buf pointers and indices */
 	vport_fini();
 	return;
 }
 
-void vport_fini(void)
+void
+vport_fini(void)
 {
 	int bufs = 0;
 	int ports = 0;
@@ -99,20 +100,56 @@ void vport_fini(void)
 	return;
 }
 
-int16_t vport_in_use(unsigned vportid)
+void
+vport_set_name(unsigned vportid, const char *fmt, ...)
+{
+}
+
+char *
+vport_get_name(unsigned vportid)
+{
+	return NULL;
+}
+
+uint32_t
+vport_name_to_portid(const char *name) {
+	return 0;
+}
+
+enum vport_type
+vport_get_type(unsigned vportid){
+	return 0;
+}
+
+uint32_t
+vport_next_available_index(enum vport_type type)
 {
 	return 0;
 }
 
-int vport_exists(unsigned vportid)
+bool
+vport_id_is_valid(unsigned vportid, enum vport_type type){
+	return true;
+}
+
+bool
+vport_is_enabled(unsigned vportid)
+{
+	return 1;
+}
+
+bool
+vport_exists(unsigned vportid)
 {
 	return  0;
 }
-void vport_set_in_use(unsigned vportid)
+
+void
+vport_enable(unsigned vportid)
 {
 }
 
-void vport_set_not_in_use(unsigned vportid)
+void
+vport_disable(unsigned vportid)
 {
 }
-

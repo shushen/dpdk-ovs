@@ -34,6 +34,7 @@
 
 #include <linux/virtio_net.h>
 #include <linux/virtio_ring.h>
+#include <string.h>
 
 #include <rte_ethdev.h>
 #include <rte_cycles.h>
@@ -53,34 +54,34 @@
 
 #define rpl_strnlen strnlen
 
-#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
-#define NO_FLAGS        0
-#define SOCKET0         0
+#define RTE_LOGTYPE_APP        RTE_LOGTYPE_USER1
+#define NO_FLAGS               0
+#define SOCKET0                0
 
-#define MZ_PORT_INFO			"OVS_port_info"
-#define OVS_CLIENT_RXQ_NAME		"OVS_Client_%u_RX"
-#define OVS_CLIENT_TXQ_NAME		"OVS_Client_%u_TX"
-#define OVS_CLIENT_FREE_Q_NAME	"OVS_Client_%u_FREE_Q"
-#define OVS_PORT_TXQ_NAME 		"OVS_PORT_%u_TX"
+#define MZ_PORT_INFO           "OVS_port_info"
+#define OVS_CLIENT_RXQ_NAME    "OVS_Client_%u_RX"
+#define OVS_CLIENT_TXQ_NAME    "OVS_Client_%u_TX"
+#define OVS_CLIENT_FREE_Q_NAME "OVS_Client_%u_FREE_Q"
+#define OVS_PORT_TXQ_NAME      "OVS_PORT_%u_TX"
 
 /* Ethernet port TX/RX ring sizes */
-#define RTE_MP_RX_DESC_DEFAULT    512
-#define RTE_MP_TX_DESC_DEFAULT    512
+#define RTE_MP_RX_DESC_DEFAULT 512
+#define RTE_MP_TX_DESC_DEFAULT 512
 /* Ring size for communication with clients */
-#define CLIENT_QUEUE_RINGSIZE     4096
+#define CLIENT_QUEUE_RINGSIZE  4096
 
 #define PORT_FLUSH_PERIOD_US  (100) /* TX drain every ~100us */
-#define LOCAL_MBUF_CACHE_SIZE 32
-#define CACHE_NAME_LEN 32
-#define MAX_QUEUE_NAME_SIZE 32
+#define LOCAL_MBUF_CACHE_SIZE  32
+#define CACHE_NAME_LEN         32
+#define MAX_QUEUE_NAME_SIZE    32
 
 /* Userspace vHost */
 /* Number of descriptors per cacheline. */
 #define DESC_PER_CACHELINE (CACHE_LINE_SIZE / sizeof(struct vring_desc))
-#define MAX_PRINT_BUFF 6072		/* Size of buffers used for rte_snprintfs for printing packets */
-#define MAX_MRG_PKT_BURST 16 	/* Max burst for merge buffers. This is used for legacy virtio. */
-#define BURST_TX_WAIT_US 15     /* Defines how long we wait between retries on TX */
-#define BURST_TX_RETRIES 4      /* Number of retries on TX. */
+#define MAX_PRINT_BUFF         6072  /* Size of buffers used for rte_snprintfs for printing packets */
+#define MAX_MRG_PKT_BURST      16    /* Max burst for merge buffers. This is used for legacy virtio. */
+#define BURST_TX_WAIT_US       15    /* Defines how long we wait between retries on TX */
+#define BURST_TX_RETRIES       4     /* Number of retries on TX. */
 
 /* Specify timeout (in useconds) between retries on TX. */
 uint32_t burst_tx_delay_time = BURST_TX_WAIT_US;
@@ -99,13 +100,13 @@ uint32_t burst_tx_retry_num = BURST_TX_RETRIES;
  * Controller and the DPDK ixgbe PMD. Consider using other values for other
  * network controllers and/or network drivers.
  */
-#define MP_DEFAULT_PTHRESH 36
-#define MP_DEFAULT_RX_HTHRESH 8
-#define MP_DEFAULT_TX_HTHRESH 0
-#define MP_DEFAULT_WTHRESH 0
-#define RX_FREE_THRESH 64
-#define TX_FREE_THRESH 32
-#define TX_RS_THRESH 32
+#define MP_DEFAULT_PTHRESH     36
+#define MP_DEFAULT_RX_HTHRESH  8
+#define MP_DEFAULT_TX_HTHRESH  0
+#define MP_DEFAULT_WTHRESH     0
+#define RX_FREE_THRESH         64
+#define TX_FREE_THRESH         32
+#define TX_RS_THRESH           32
 
 /*
  * Core mapping to access per-core caches using rte_lcore_id() function.
@@ -151,8 +152,6 @@ static struct local_mbuf_cache **client_mbuf_cache = NULL;
 static struct local_mbuf_cache **port_mbuf_cache = NULL;
 static struct local_mbuf_cache **vhost_mbuf_cache = NULL;
 
-
-
 static int send_to_client(uint32_t client, struct rte_mbuf *buf);
 static int send_to_port(uint32_t vportid, struct rte_mbuf *buf);
 static int send_to_kni(uint32_t vportid, struct rte_mbuf *buf);
@@ -172,15 +171,6 @@ static struct vport_info *vports;
 
 /* Drain period to flush packets out of the physical ports and caches */
 static uint64_t port_flush_period;
-
-static void vport_set_name(unsigned i, const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	vsnprintf(vports[i].name, VPORT_INFO_NAMESZ, fmt, ap);
-	va_end(ap);
-}
 
 /*
  * Given the queue name template, get the queue name
@@ -287,7 +277,7 @@ gpa_to_vva(struct virtio_net *dev, uint64_t guest_pa)
 }
 
 /*
- * Enqueues packets to the guest virtio RX virtqueue for vhost devices. 
+ * Enqueues packets to the guest virtio RX virtqueue for vhost devices.
  */
 static inline uint32_t __attribute__((always_inline))
 vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned count)
@@ -442,7 +432,7 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 }
 
 /*
- * Dequeues packets from the guest virtio TX virtqueue for vhost devices. 
+ * Dequeues packets from the guest virtio TX virtqueue for vhost devices.
  */
 static inline uint16_t __attribute__((always_inline))
 vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned count)
@@ -475,9 +465,9 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	if (free_entries > count)
 		free_entries = count;
 
-	/* 
+	/*
 	 * Performance is better if cachelines containing descriptors are not accessed by multiple
-	 * cores. We try finish with a cacheline before passing it on. 
+	 * cores. We try finish with a cacheline before passing it on.
 	 */
 	if (likely(free_entries > DESC_PER_CACHELINE))
 		free_entries = free_entries - ((vq->last_used_idx + free_entries) % DESC_PER_CACHELINE);
@@ -691,7 +681,8 @@ init_shm_rings(void)
 }
 
 
-void vport_init(void)
+void
+vport_init(void)
 {
 	const struct rte_memzone *mz = NULL;
 	uint8_t i = 0;
@@ -724,34 +715,34 @@ void vport_init(void)
 
 	/* vport 0 is for vswitchd */
 	vports[0].type = VPORT_TYPE_VSWITCHD;
-	vport_set_not_in_use(0);
+	vport_disable(0);
 	vport_set_name(0, "vswitchd");
 
 	/* vport for client */
 	for (i = CLIENT1; i < num_clients; i++) {
 		vports[i].type = VPORT_TYPE_CLIENT;
-		vport_set_not_in_use(i);
+		vport_disable(i);
 		vport_set_name(i, "Client%u", i);
 	}
 	/* vport for kni */
 	for (i = 0; i < num_kni; i++) {
 		vports[KNI0 + i].type = VPORT_TYPE_KNI;
 		vports[KNI0 + i].kni.index = i;
-		vport_set_not_in_use(KNI0 + i);
+		vport_disable(KNI0 + i);
 		vport_set_name(KNI0 + i, "KNI%u", i);
 	}
 	/* vport for veth */
 	for (i = 0; i < num_veth; i++) {
 		vports[VETH0 + i].type = VPORT_TYPE_VETH;
 		vports[VETH0 + i].veth.index = i;
-		vport_set_not_in_use(VETH0 + i);
+		vport_disable(VETH0 + i);
 		vport_set_name(VETH0 + i, "vEth Port  %2u", i);
 	}
 	/* vport for vhost */
 	for (i = 0; i < num_vhost; i++) {
 		vports[VHOST0 + i].type = VPORT_TYPE_VHOST;
 		vports[VHOST0 + i].vhost.index = i;
-		vport_set_not_in_use(VHOST0 + i);
+		vport_disable(VHOST0 + i);
 		vport_set_name(VHOST0 + i, "vHost Port %2u", i);
 	}
 
@@ -761,7 +752,7 @@ void vport_init(void)
 
 		vports[vportid].type = VPORT_TYPE_PHY;
 		vports[vportid].phy.index = port_cfg.id[i];
-		vport_set_not_in_use(vportid);
+		vport_disable(vportid);
 		vport_set_name(vportid, "Port       %2u", port_cfg.id[i]);
 
 		retval = init_port(port_cfg.id[i]);
@@ -903,7 +894,6 @@ send_to_vhost(uint32_t vportid, struct rte_mbuf *buf)
 	return 0;
 }
 
-
 int
 send_to_vport(uint32_t vportid, struct rte_mbuf *buf)
 {
@@ -1030,7 +1020,7 @@ receive_from_vhost(uint32_t vportid, struct rte_mbuf **bufs)
 
 	/* Read a port */
 	rx_count = vhost_dequeue_burst(dev, bufs, PKT_BURST_SIZE);
-	
+
 	/* Update number of packets transmitted by vHost device */
 	stats_vport_tx_increment(vportid, rx_count);
 
@@ -1108,9 +1098,9 @@ flush_nic_tx_ring(unsigned vportid)
 	stats_vport_tx_increment(vportid, pkts_sent);
 }
 
-/* 
+/*
  * This function must be called periodically to ensure that no mbufs get
- * stuck in the port mbuf cache. 
+ * stuck in the port mbuf cache.
  *
  * This must be called by each core that calls send_to_port()
  *
@@ -1128,11 +1118,11 @@ flush_ports(void)
 		if (per_port_cache->count)
 			flush_phy_port_cache(portid + PHYPORT0);
 	}
-	
+
 	return;
 }
 
-/* 
+/*
  * Flush any mbufs in port's cache to NIC TX pre-queue ring.
  *
  * Update 'next_tsc' to indicate when next flush is required
@@ -1145,7 +1135,7 @@ flush_phy_port_cache(uint32_t vportid)
 	struct vport_phy *phy;
 	uint8_t portid = vportid - PHYPORT0;
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
-	
+
 	per_port_cache = &port_mbuf_cache[lcore_id][portid];
 
 	phy = &vports[vportid].phy;
@@ -1157,18 +1147,18 @@ flush_phy_port_cache(uint32_t vportid)
 		uint8_t dropped = per_port_cache->count - tx_count;
 		for (i = tx_count; i < per_port_cache->count; i++)
 			rte_pktmbuf_free(per_port_cache->cache[i]);
-		
+
 		stats_vswitch_tx_drop_increment(dropped);
 		stats_vport_tx_drop_increment(vportid, dropped);
 		/* TODO: stats_vport_overrun_increment */
-	} 
+	}
 
 	per_port_cache->count = 0;
 }
 
-/* 
+/*
  * This function must be called periodically to ensure that no mbufs get
- * stuck in the client mbuf cache. 
+ * stuck in the client mbuf cache.
  *
  * This must be called by each core that calls send_to_client()
  *
@@ -1188,7 +1178,7 @@ flush_clients(void)
 	}
 }
 
-/* 
+/*
  * Flush any mbufs in 'clientid' client's cache to client ring.
  *
  * Update 'next_tsc' to indicate when next flush is required
@@ -1202,7 +1192,7 @@ flush_client_port_cache(uint32_t clientid)
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
 
 	per_cl_cache = &client_mbuf_cache[lcore_id][clientid - CLIENT1];
-		
+
 	cl = &vports[clientid].client;
 
 	tx_count = rte_ring_mp_enqueue_burst(cl->rx_q,
@@ -1212,7 +1202,7 @@ flush_client_port_cache(uint32_t clientid)
 		uint8_t dropped = per_cl_cache->count - tx_count;
 		for (i = tx_count; i < per_cl_cache->count; i++)
 			rte_pktmbuf_free(per_cl_cache->cache[i]);
-	
+
 		stats_vswitch_tx_drop_increment(dropped);
 		stats_vport_rx_drop_increment(clientid, dropped);
 		/* TODO: stats_vport_overrun_increment */
@@ -1223,15 +1213,15 @@ flush_client_port_cache(uint32_t clientid)
 	per_cl_cache->count = 0;
 }
 
-/* 
+/*
  * This function must be called periodically to ensure that no mbufs get
- * stuck in the vhost mbuf cache. 
+ * stuck in the vhost mbuf cache.
  *
  * This must be called by each core that calls send_to_vhost()
  *
  */
 void
-flush_vhost_devs(void) 
+flush_vhost_devs(void)
 {
 	uint32_t vhostid = 0;
 	uint8_t lcore_id = rte_lcore_id();
@@ -1245,7 +1235,7 @@ flush_vhost_devs(void)
 			flush_vhost_dev_port_cache(vhostid + VHOST0);
 		}
 	}
-	
+
 	return;
 }
 
@@ -1284,67 +1274,234 @@ flush_vhost_dev_port_cache(uint32_t vportid)
 	per_vhost_cache->count = 0;
 }
 
-const char *vport_name(unsigned vportid)
-{
-	if (vport_exists(vportid))
-		return NULL;
+/* Helper functions for vport management */
 
-	return vports[vportid].name;
+/* Get 'vportid' for a vport with the given 'name'.
+ *
+ * Attempts to resolve 'name' to its associated vport number. Returns:
+ * - 'vport_id' if 'name' is a valid vport name
+ * - 'UINT32_MAX' if 'name' is not associated with a vport
+ */
+uint32_t
+vport_name_to_portid(const char *name)
+{
+	int i = 0;
+
+	for (i = 0; i < MAX_VPORTS; i++) {
+		if (vport_exists(i) &&
+		    !strncmp(vports[i].name, name, MAX_VPORT_NAME_SIZE))
+			return i;
+	}
+
+	return UINT32_MAX;  /* Name not found */
 }
 
-/* Return 0 if vportid is valid, otherwise negative value */
-int vport_exists(unsigned vportid)
+/* Get an array index for next available vport of given 'type'.
+ *
+ * Returns an index if any free devices available, else 'MAX_VPORTS'.
+ */
+uint32_t
+vport_next_available_index(enum vport_type type)
 {
-	return (vportid < MAX_VPORTS && &vports[vportid] != NULL) ? VPORT_EXISTS :
-	                                                            ENODEV;
+	uint32_t start_idx = 0, end_idx = 0, i = 0;
+
+	switch (type) {
+	/* TODO - remove this when bridges no longer need it */
+	case VPORT_TYPE_VSWITCHD:
+	case VPORT_TYPE_BRIDGE:
+		/* TODO - we currently only support one bridge, which is
+		 * hardcoded to port 0. */
+		return CLIENT0;
+	case VPORT_TYPE_CLIENT:
+		start_idx = CLIENT1;
+		/* Currently, num_clients includes client 0, thus client 0
+		 * must be subtracted from the range */
+		end_idx = CLIENT1 + (num_clients - 1);
+		break;
+	case VPORT_TYPE_PHY:
+		start_idx = PHYPORT0;
+		end_idx = KNI0;
+		break;
+	case VPORT_TYPE_KNI:
+		start_idx = KNI0;
+		end_idx = KNI0 + num_kni;
+		break;
+	case VPORT_TYPE_VETH:
+		start_idx = VETH0;
+		end_idx = VETH0 + num_veth;
+		break;
+	case VPORT_TYPE_VHOST:
+		start_idx = VHOST0;
+		end_idx = VHOST0 + num_vhost;
+		break;
+	case VPORT_TYPE_DISABLED:
+	default:
+		return MAX_VPORTS;
+	}
+
+	for (i = start_idx; i < end_idx; i++) {
+		if (vport_exists(i) && !vport_is_enabled(i))
+			return i;
+	}
+
+	return MAX_VPORTS;
 }
 
-/* Return 0 if vportid is in use, non-zero value otherwise */
-int16_t vport_in_use(unsigned vportid)
+/* Checks if 'vportid' is valid for a vport of given 'type'. */
+inline bool
+vport_id_is_valid(unsigned vportid, enum vport_type type)
 {
-	int ret = vport_exists(vportid);
+	/* Special case for bridges, until a special bridge range of ports is
+	 * assigned */
+	if (vports[vportid].type == VPORT_TYPE_VSWITCHD &&
+		type == VPORT_TYPE_BRIDGE)
+		return true;
 
-	if (ret != VPORT_EXISTS)
-		return ret;
-	else
-		return vports[vportid].in_use ? VPORT_IN_USE :
-		                                VPORT_NOT_IN_USE;
+	/* We assume that type stored in the 'vports' array is constant, and
+	 * therefore indicative of the type of vport that can be stored at that
+	 * index. */
+	if(vportid < MAX_VPORTS)
+		return vports[vportid].type == type;
+
+	return false;
 }
 
-void vport_set_in_use(unsigned vportid)
+/* Check if vport indicated by 'vportid' currently exists in the datapath. */
+inline bool
+vport_exists(unsigned vportid)
 {
-	vports[vportid].in_use = VPORT_IN_USE;
+	/* We can assume that 'vports[vportid].type' will be 0 for unitialised
+	 * ports, owing to a prior memset on the 'vports' struct. This will need
+	 * to change when ports are dynamically added/removed in the datapath. */
+	return (vportid < MAX_VPORTS && vports[vportid].type != VPORT_TYPE_DISABLED);
 }
 
-void vport_set_not_in_use(unsigned vportid)
+/* External setters/getters for vports */
+
+/* Set name of a given vport */
+void
+vport_set_name(unsigned vportid, const char *fmt, ...)
 {
-	vports[vportid].in_use = VPORT_NOT_IN_USE;
+	va_list ap;
+
+	if(vport_exists(vportid)) {
+		va_start(ap, fmt);
+		vsnprintf(vports[vportid].name, VPORT_INFO_NAMESZ, fmt, ap);
+		va_end(ap);
+	}
 }
 
-int vport_vhost_up(struct virtio_net *dev)
+/* Get name of a given vport. */
+inline char *
+vport_get_name(unsigned vportid)
 {
-	vports[dev->port_id].vhost.dev = dev;
-	return 0;
+	if(vport_exists(vportid))
+		return vports[vportid].name;
+
+	return NULL;
 }
 
-int vport_vhost_down(unsigned portid)
+/* Get type of a given vport. */
+inline enum vport_type
+vport_get_type(unsigned vportid)
 {
-	vports[portid].vhost.dev = NULL;
-	return 0;
+	if(vport_exists(vportid))
+		return vports[vportid].type;
+
+	return VPORT_TYPE_DISABLED;
 }
 
-void vport_set_kni_fifo_names(unsigned vportid,
+inline void
+vport_enable(unsigned vportid)
+{
+	if(vport_exists(vportid))
+		vports[vportid].enabled = true;
+}
+
+inline void
+vport_disable(unsigned vportid)
+{
+	if(vport_exists(vportid))
+		vports[vportid].enabled = false;
+}
+
+/* Check if vport given by 'vportid' is enabled (i.e. has been "added"). */
+inline bool
+vport_is_enabled(unsigned vportid)
+{
+	if(vport_exists(vportid))
+		return vports[vportid].enabled;
+
+	return false;
+}
+
+/* vhost port control functions */
+
+inline int
+vport_vhost_up(struct virtio_net *dev)
+{
+	uint32_t vhostid;
+	struct vport_info *info;
+
+	/* Search for the portname and set the dev pointer. */
+	for (vhostid = 0; vhostid < num_vhost; vhostid++) {
+		info = &vports[VHOST0 + vhostid];
+		if (strncmp(dev->port_name, info->name, strnlen(dev->port_name,
+				sizeof(dev->port_name))) == 0 &&
+			(strnlen(dev->port_name, sizeof(dev->port_name)) ==
+				 strnlen(info->name, sizeof(info->name)))) {
+				info->vhost.dev = dev;
+				return 0;
+		}
+	}
+
+	RTE_LOG(ERR, APP, "(%"PRIu64") Port name %s does not match any \
+		ovs_dpdk port names for adding device\n",
+		dev->device_fh, dev->port_name);
+
+	return -1;
+}
+
+inline int
+vport_vhost_down(struct virtio_net *dev)
+{
+	uint32_t vhostid;
+	struct vport_info *info;
+
+	/* Search for the portname and clear the dev pointer. */
+	for (vhostid = 0; vhostid < num_vhost; vhostid++) {
+		info = &vports[VHOST0 + vhostid];
+		if (strncmp(dev->port_name, info->name, strnlen(dev->port_name,
+				sizeof(dev->port_name))) == 0 &&
+			(strnlen(dev->port_name, sizeof(dev->port_name)) ==
+				 strnlen(info->name, sizeof(info->name)))) {
+			info->vhost.dev = NULL;
+			return 0;
+		}
+	}
+
+	RTE_LOG(ERR, APP, "(%"PRIu64") Port name %s does not match any \
+		ovs_dpdk port names for device removal\n",
+		dev->device_fh, dev->port_name);
+
+	return -1;
+}
+
+void
+vport_set_kni_fifo_names(unsigned vportid,
 		const struct vport_kni_fifo_names *names)
 {
 	struct vport_kni_fifo_names *internal;
 
-	internal = &vports[vportid].kni.fifo_names;
+	if(vport_exists(vportid)) {
+		internal = &vports[vportid].kni.fifo_names;
 
-	rte_snprintf(internal->tx, sizeof(internal->tx), "%s", names->tx);
-	rte_snprintf(internal->rx, sizeof(internal->rx), "%s", names->rx);
-	rte_snprintf(internal->alloc, sizeof(internal->alloc), "%s", names->alloc);
-	rte_snprintf(internal->free, sizeof(internal->free), "%s", names->free);
-	rte_snprintf(internal->req, sizeof(internal->req), "%s", names->req);
-	rte_snprintf(internal->resp, sizeof(internal->resp), "%s", names->resp);
-	rte_snprintf(internal->sync, sizeof(internal->sync), "%s", names->sync);
+		rte_snprintf(internal->tx, sizeof(internal->tx), "%s", names->tx);
+		rte_snprintf(internal->rx, sizeof(internal->rx), "%s", names->rx);
+		rte_snprintf(internal->alloc, sizeof(internal->alloc), "%s", names->alloc);
+		rte_snprintf(internal->free, sizeof(internal->free), "%s", names->free);
+		rte_snprintf(internal->req, sizeof(internal->req), "%s", names->req);
+		rte_snprintf(internal->resp, sizeof(internal->resp), "%s", names->resp);
+		rte_snprintf(internal->sync, sizeof(internal->sync), "%s", names->sync);
+	}
 }

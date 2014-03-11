@@ -67,8 +67,43 @@ static struct rte_ring *vswitchd_free_ring = NULL;
 /* Holds newly allocated packets */
 static struct rte_ring *vswitchd_alloc_ring = NULL;
 
-/* Create dpdk flow message
- */
+void
+create_dpdk_port_add_reply(struct dpif_dpdk_message *reply, uint32_t port_no,
+                           int return_code)
+{
+	struct dpif_dpdk_vport_message vport_msg;
+
+	memset(reply, 0, sizeof(*reply));
+	vport_msg.port_no = port_no;
+
+	reply->vport_msg = vport_msg;
+	reply->type = return_code;
+}
+
+void
+create_dpdk_port_del_reply(struct dpif_dpdk_message *reply, int return_code)
+{
+	memset(reply, 0, sizeof(*reply));
+
+	reply->type = return_code;
+}
+
+void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
+                                  uint32_t port_no, char port_name[32],
+                                  enum dpif_dpdk_vport_type type, int return_code)
+{
+	struct dpif_dpdk_vport_message vport_msg;
+
+	memset(reply, 0, sizeof(*reply));
+	if (port_name)
+		strncpy(vport_msg.port_name, port_name, 32);
+	vport_msg.type = type;
+	vport_msg.port_no = port_no;
+
+	reply->vport_msg = vport_msg;
+	reply->type = return_code;
+}
+
 void
 create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply)
 {
@@ -80,15 +115,13 @@ create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply)
 
 	reply->type = FLOW_CMD_FAMILY;
 	memcpy(reply->flow_msg.actions, action_multiple, sizeof(action_multiple));
-
 }
 
 void
 create_dpdk_flow_put_reply(struct dpif_dpdk_message *reply)
 {
 	memset(reply, 0, sizeof(*reply));
-	reply->type = FLOW_CMD_FAMILY;
-
+	reply->type = 0;
 }
 
 void
@@ -99,16 +132,15 @@ create_dpdk_flow_del_reply(struct dpif_dpdk_message *reply, uint8_t flow_exists)
 		reply->type = ENOENT;
 }
 
-static void create_dpif_flow(struct ofpbuf *buf)
+static void
+create_dpif_flow(struct ofpbuf *buf)
 {
-
 	/* Flow key */
-	/* OVS 2.0 doesn't take in_port from the flow
-	 * struct, instead it's passed as a third parameter.
-	 * This is to allow handling both OF ports and datapath
-	 * ports.
+	/* OVS 2.0 doesn't take in_port from the flow struct, instead it's
+	 * passed as a third parameter. This is to allow handling both OF
+	 * ports and datapath ports.
 	 */
-    	memset(&flow, 0, sizeof(flow));
+	memset(&flow, 0, sizeof(flow));
 	flow.in_port.odp_port = 5; //unused
 	flow.nw_proto = 5;
 	memcpy(flow.dl_dst, "KNIO", ETHER_ADDR_LEN);
@@ -119,8 +151,6 @@ static void create_dpif_flow(struct ofpbuf *buf)
 	odp_flow_key_from_flow(buf, &flow, 5 /*in port*/);
 }
 
-/* Create a dpif flow put message
- */
 void
 create_dpif_flow_put_message(struct dpif_flow_put *put)
 {
@@ -138,10 +168,11 @@ create_dpif_flow_put_message(struct dpif_flow_put *put)
 
 	/* Flags */
 	put->flags = DPIF_FP_CREATE;
+
+	/* Set stats to NULL */
+	put->stats = NULL;
 }
 
-/* Create a dpif flow put message
- */
 void
 create_dpif_flow_del_message(struct dpif_flow_del *del)
 {
@@ -153,9 +184,8 @@ create_dpif_flow_del_message(struct dpif_flow_del *del)
 	del->key_len = buf->size;
 }
 
-/* Put a dpif_dpdk_message on the reply ring, ready
- * to be dequeued by flow_transact
- */
+/* Put a dpif_dpdk_message on the reply ring, ready to be dequeued by
+ * flow_transact */
 int
 enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply)
 {
@@ -183,7 +213,7 @@ enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply)
 
 /* dpdk_link_send() looks up each of these rings and will exit if
  * it doesn't find them so we must declare them.
- * 
+ *
  * We have to call dpdk_link send to initialise the "mp" pktmbuf pool
  * pointer used throughout dpdk_link.c
  */
@@ -207,12 +237,12 @@ init_test_rings(unsigned mempool_size)
 		rte_exit(EXIT_FAILURE, "Cannot create packet ring for vswitchd");
 
 	vswitchd_reply_ring = rte_ring_create(VSWITCHD_REPLY_RING_NAME,
-			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+	        VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_reply_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create reply ring for vswitchd");
 
 	vswitchd_message_ring = rte_ring_create(VSWITCHD_MESSAGE_RING_NAME,
-			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+	        VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
 
