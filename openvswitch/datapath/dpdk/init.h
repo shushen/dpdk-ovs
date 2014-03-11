@@ -42,7 +42,7 @@ uint32_t num_clients;
 uint32_t num_kni;
 uint32_t num_veth;
 uint32_t num_vhost;
-uint32_t num_memnics;
+uint32_t num_memnic;
 unsigned num_sockets;
 
 unsigned stats_display_interval;

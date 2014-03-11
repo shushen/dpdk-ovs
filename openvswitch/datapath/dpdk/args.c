@@ -323,7 +323,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					usage();
 					return -1;
 				}
-				num_memnics = (uint8_t)temp;
+				num_memnic = (uint8_t)temp;
 				break;
 			case 0:
 				if (!strcmp(lgopts[option_index].name, PARAM_CONFIG)) {
@@ -402,7 +402,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 		return -1;
 	}
 
-	if (num_memnics > MAX_MEMNICS) {
+	if (num_memnic > MAX_MEMNICS) {
 		printf ("Number of MEMNIC ports is invalid\n");
 		usage();
 		return -1;

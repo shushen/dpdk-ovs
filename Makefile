@@ -60,6 +60,7 @@ export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
 export KNI_DIR := $(ROOT_DIR)/guest/kni/kni_client
 export KNI_PATCH := $(ROOT_DIR)/guest/kni/rte_kni_module_1_6.patch
+export MEMNIC_PATCH := $(ROOT_DIR)/guest/memnic/memnic_set_mac_address.patch
 
 #End Directories####################
 
@@ -88,10 +89,10 @@ kni-deps: dpdk
 
 #Targets for Configuration###########
 #These do not include a make and can therefore be used with tools.
-.PHONY: config patch-dpdk-kni clean-patch-dpdk-kni config-dpdk config-ovs config-qemu
+.PHONY: config patch-dpdk-kni clean-patch-dpdk-kni patch-memnic clean-patch-memnic config-dpdk config-ovs config-qemu
 config: config-dpdk config-ovs config-qemu
 
-config-dpdk: patch-dpdk-kni
+config-dpdk: patch-dpdk-kni patch-memnic
 	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) config T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 config-ovs:
@@ -102,8 +103,8 @@ config-qemu:
 #End Targets for Configuration#######
 
 #Targets for Clean##################
-.PHONY: clean clean-qemu clean-ivshm clean-kni clean-ovs clean-dpdk clean-patch-dpdk-kni
-clean: config-dpdk clean-ivshm clean-kni clean-ovs clean-qemu clean-patch-dpdk-kni clean-dpdk
+.PHONY: clean clean-qemu clean-ivshm clean-kni clean-ovs clean-dpdk clean-patch-dpdk-kni clean-patch-memnic
+clean: config-dpdk clean-ivshm clean-kni clean-ovs clean-qemu clean-patch-dpdk-kni clean-patch-memnic clean-dpdk
 
 clean-dpdk:
 	cd $(DPDK_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
@@ -168,3 +169,21 @@ clean-patch-dpdk-kni:
 		echo "KNI patch doesn't reverse. If the patch was not already applied ignore this message."; \
 	fi
 #End KNI patching###################
+
+#MEMNIC patching#######################
+patch-memnic:
+	@if patch -N -p1 -d $(MEMNIC_DIR) --dry-run --silent <$(MEMNIC_PATCH) 2>&1 >/dev/null; then \
+		echo "Applying MEMNIC patch"; \
+		patch -N -p1 -d $(MEMNIC_DIR) <$(MEMNIC_PATCH); \
+	else \
+		echo "MEMNIC patch doesn't apply. If the patch was already applied ignore this message."; \
+	fi
+
+clean-patch-memnic:
+	@if patch -R -N -p1 -d $(MEMNIC_DIR) --dry-run --silent <$(MEMNIC_PATCH) 2>&1 >/dev/null; then \
+		echo "Reversing KNI patch"; \
+		patch -R -N -p1 -d $(MEMNIC_DIR) <$(MEMNIC_PATCH); \
+	else \
+		echo "MEMNIC patch doesn't reverse. If the patch was not already applied ignore this message."; \
+	fi
+#End MEMNIC patching###################

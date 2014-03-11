@@ -111,6 +111,7 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_dpdk_phy_class);
         netdev_register_provider(&netdev_dpdk_veth_class);
         netdev_register_provider(&netdev_dpdk_vhost_class);
+        netdev_register_provider(&netdev_dpdk_memnic_class);
         netdev_register_provider(&netdev_dpdk_internal_class);
 #endif
 

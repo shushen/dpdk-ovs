@@ -1,0 +1,26 @@
+diff --git a/linux/memnic_net.c b/linux/memnic_net.c
+index 747ae51..5f044b6 100644
+--- a/linux/memnic_net.c
++++ b/linux/memnic_net.c
+@@ -247,7 +247,20 @@ static void memnic_set_rx_mode(struct net_device *netdev)
+ 
+ static int memnic_set_mac(struct net_device *netdev, void *p)
+ {
+-	return 0;
++	struct sockaddr *addr = p;
++	struct memnic_net *memnic = netdev_priv(netdev);
++	struct memnic_area *nic = memnic->dev->base_addr;
++
++	if (netif_running(netdev))
++		return -EBUSY;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
++	memcpy(nic->hdr.mac_addr, addr->sa_data, netdev->addr_len);
++
++    return 0;
+ }
+ 
+ static int memnic_change_mtu(struct net_device *netdev, int new_mtu)

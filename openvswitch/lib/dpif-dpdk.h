@@ -85,7 +85,8 @@ enum dpif_dpdk_vport_type {
 	VPORT_TYPE_CLIENT,
 	VPORT_TYPE_KNI,
 	VPORT_TYPE_VETH,
-	VPORT_TYPE_VHOST
+	VPORT_TYPE_VHOST,
+	VPORT_TYPE_MEMNIC
 };
 
 enum dpif_dpdk_action_type {

@@ -273,11 +273,11 @@ do_client_switching(void)
 	}
 
 	/* MEMNIC */
-	if (num_memnics > 0) {
+	if (num_memnic > 0) {
 		rx_count = receive_from_vport(memnic_vportid, &bufs[0]);
 		do_switch_packets(memnic_vportid, bufs, rx_count);
 
-		if (++memnic_vportid == (unsigned)MEMNIC0 + num_memnics)
+		if (++memnic_vportid == (unsigned)MEMNIC0 + num_memnic)
 			memnic_vportid = MEMNIC0;
 	}
 

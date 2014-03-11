@@ -947,6 +947,7 @@ static int pci_ivshmem_init(PCIDevice *dev)
             }
 
             f_index = 1;
+            f[0].size = s->ivshmem_size;
         }
 
         if (check_total_shm_size(s, f, f_index))

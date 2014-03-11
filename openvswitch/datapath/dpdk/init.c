@@ -78,7 +78,7 @@ init_mbuf_pools(void)
 			+ (num_kni * MBUFS_PER_KNI)
 			+ (num_veth * MBUFS_PER_VETH)
 			+ (num_vhost * MBUFS_PER_VHOST)
-			+ (num_memnics * MBUFS_PER_MEMNIC)
+			+ (num_memnic * MBUFS_PER_MEMNIC)
 			+ MBUFS_PER_DAEMON;
 
 	/* make sure the upcall does not the exceed mbuf headroom */

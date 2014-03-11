@@ -47,6 +47,8 @@
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
+#define MEMNIC_SHM_NAME "/ovs_dpdk_not_used_%u"
+
 #define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
 
 int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
@@ -59,7 +61,7 @@ int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
 
 	RTE_LOG(INFO, APP, "MEMNIC initialize vport=%u\n", vportid);
 
-	sprintf(name, "/ovs_dpdk_%u", vportid);
+	sprintf(name, MEMNIC_SHM_NAME, vportid);
 	fd = shm_open(name, O_RDWR|O_CREAT, 0640);
 	if (fd == -1) {
 		RTE_LOG(WARNING, APP,

@@ -747,7 +747,7 @@ vport_init(void)
 		vport_set_name(VHOST0 + i, "vHost Port %2u", i);
 	}
 	/* vport for MEMNIC */
-	for (i = 0; i < num_memnics; i++) {
+	for (i = 0; i < num_memnic; i++) {
 		vports[MEMNIC0 + i].type = VPORT_TYPE_MEMNIC;
 		vport_disable(MEMNIC0 + i);
 		vport_set_name(MEMNIC0 + i, "MEMNIC    %2u", i);
@@ -1360,6 +1360,10 @@ vport_next_available_index(enum vport_type type)
 	case VPORT_TYPE_VHOST:
 		start_idx = VHOST0;
 		end_idx = VHOST0 + num_vhost;
+		break;
+	case VPORT_TYPE_MEMNIC:
+		start_idx = MEMNIC0;
+		end_idx = MEMNIC0 + num_memnic;
 		break;
 	case VPORT_TYPE_DISABLED:
 	default:
