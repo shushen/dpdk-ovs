@@ -54,6 +54,11 @@ else
 AM_LDFLAGS = -export-dynamic -lpthread
 endif
 
+# Disable GCC flag that produces compilation warnings in DPDK
+if HAVE_DPDK
+AM_CFLAGS += -Wno-bad-function-cast
+endif
+
 # PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo
 # files.  Creating .py[co] works OK for any given version of Open
 # vSwitch, but it causes trouble if you switch from a version with
