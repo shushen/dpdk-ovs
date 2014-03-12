@@ -234,7 +234,7 @@ Intel® DPDK vSwitch complies with a subset of OpenFlow specification v1.0; by d
 
 **Note:** Port 6653 is the default value for the controller port. Older versions of OFTest use port 6633 - if you encounter difficulty running OFTest, consider using the `--port` switch.
 
-A current list of the expected results for OFTest can be found in the source package.
+A current list of the expected results for OFTest can be found in the 'extras' directory of the source package.
 
 ______
 
