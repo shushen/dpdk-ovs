@@ -99,7 +99,7 @@ git clone git://github.com/floodlight/oftest
 Checkout the version of OFTest that Intel® DPDK vSwitch has been validated against:
 
 ```bash
-git checkout 624f55a79f774efdae0864715f0ca55ea6335aa6
+git checkout f5d71f148f8795464c2d4c750ca25c32aec98004
 ```
 
 OFTest requires a number of additional utilities to be installed prior to use, including, but not limited to:
