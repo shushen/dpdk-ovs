@@ -90,7 +90,7 @@ Start `ovs_dpdk`:
 ```bash
 ./ovs_dpdk -c 0x0F -n 4 --proc-type primary --base-virtaddr=<virt_addr>
   -- -p 0x03 -n 2 --stats=5 --vswitchd=0 --client_switching_core=1
-  --config="(0,0,2),(1,0,3)
+  --config="(0,0,2),(1,0,3)"
 ```
 
 Start the Open vSwitch daemon:
