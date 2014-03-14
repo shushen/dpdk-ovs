@@ -188,7 +188,7 @@ flow_stats.DeletedFlowStats ... ok
 flow_stats.EmptyAggregateStats ... ok
 counters.RxFrameErr ... ok
 counters.RxOErr ... ok
-counters.TxPktPerPort ... FAIL
+counters.TxPktPerPort ... ok
 counters.PktPerFlow ... ok
 counters.RxCrcErr ... ok
 counters.TxBytPerQueue ... ok
