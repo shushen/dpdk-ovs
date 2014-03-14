@@ -286,7 +286,7 @@ void
 udpif_destroy(struct udpif *udpif)
 {
     udpif_set_threads(udpif, 0, 0);
-    udpif_flush();
+    udpif_flush(udpif);
 
     list_remove(&udpif->list_node);
     latch_destroy(&udpif->exit_latch);
@@ -477,14 +477,28 @@ udpif_get_memory_usage(struct udpif *udpif, struct simap *usage)
     }
 }
 
-/* Removes all flows from all datapaths. */
+/* Remove flows from a single datapath. */
 void
-udpif_flush(void)
+udpif_flush(struct udpif *udpif)
+{
+    size_t n_handlers, n_revalidators;
+
+    n_handlers = udpif->n_handlers;
+    n_revalidators = udpif->n_revalidators;
+
+    udpif_set_threads(udpif, 0, 0);
+    dpif_flow_flush(udpif->dpif);
+    udpif_set_threads(udpif, n_handlers, n_revalidators);
+}
+
+/* Removes all flows from all datapaths. */
+static void
+udpif_flush_all_datapaths(void)
 {
     struct udpif *udpif;
 
     LIST_FOR_EACH (udpif, list_node, &all_udpifs) {
-        dpif_flow_flush(udpif->dpif);
+        udpif_flush(udpif);
     }
 }
 
@@ -1711,7 +1725,7 @@ upcall_unixctl_disable_megaflows(struct unixctl_conn *conn,
                                  void *aux OVS_UNUSED)
 {
     atomic_store(&enable_megaflows, false);
-    udpif_flush();
+    udpif_flush_all_datapaths();
     unixctl_command_reply(conn, "megaflows disabled");
 }
 
@@ -1726,6 +1740,6 @@ upcall_unixctl_enable_megaflows(struct unixctl_conn *conn,
                                 void *aux OVS_UNUSED)
 {
     atomic_store(&enable_megaflows, true);
-    udpif_flush();
+    udpif_flush_all_datapaths();
     unixctl_command_reply(conn, "megaflows enabled");
 }
