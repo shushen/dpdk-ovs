@@ -38,6 +38,7 @@
 #include <rte_memzone.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
+#include "jobs.h"
 #include "kni.h"
 #include "init_drivers.h"
 #include "flow.h"
@@ -135,6 +136,7 @@ init(int argc, char *argv[])
 	if (retval != 0)
 		rte_exit(EXIT_FAILURE, "Cannot create needed mbuf pools\n");
 
+	jobs_init();
 	flow_table_init();
 	datapath_init();
 	vport_init();

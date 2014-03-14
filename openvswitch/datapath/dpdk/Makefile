@@ -53,7 +53,8 @@ APP = ovs_dpdk
 # all source are stored in SRCS-y
 SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c \
           vport-memnic.c \
-          stats.c ofpbuf_helper.c veth.c vhost.c vhost-net-cdev.c virtio-net.c
+          stats.c ofpbuf_helper.c veth.c vhost.c vhost-net-cdev.c virtio-net.c \
+          jobs.c
 
 INC := $(wildcard *.h)
 

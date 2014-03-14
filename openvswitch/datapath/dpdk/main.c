@@ -40,6 +40,7 @@
 #include <rte_string_fns.h>
 #include <rte_config.h>
 
+#include "jobs.h"
 #include "kni.h"
 #include "veth.h"
 #include "args.h"
@@ -323,7 +324,7 @@ measure_cpu_frequency(void)
  * Prints out some configuration details for the thread and then begins
  * performing packet RX and TX.
  */
-static int
+static void
 lcore_main(void *arg __rte_unused)
 {
 	unsigned i = 0;
@@ -378,7 +379,7 @@ lcore_main(void *arg __rte_unused)
 			do_port_switching(portid_map[i]);
 	}
 
-	return 0;
+	return;
 }
 
 
@@ -404,10 +405,14 @@ MAIN(int argc, char *argv[])
 	}
 	RTE_LOG(INFO, APP, "nb_cfg_params = %d\n", nb_cfg_params);
 
-	rte_eal_mp_remote_launch(lcore_main, NULL, CALL_MASTER);
-	RTE_LCORE_FOREACH_SLAVE(i) {
-		if (rte_eal_wait_lcore(i) < 0)
-			return -1;
+	RTE_LCORE_FOREACH(i) {
+		jobs_add_to_lcore(lcore_main, NULL, i);
 	}
+
+	jobs_launch_slaves_all();
+	while (1) {
+		jobs_run_master_lcore();
+	}
+	jobs_stop_slaves_all();
 	return 0;
 }
