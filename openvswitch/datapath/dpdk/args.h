@@ -40,7 +40,6 @@
 
 #define PARAM_CONFIG "config"
 #define PARAM_STATS "stats"
-#define PARAM_VSWITCHD "vswitchd"
 #define VHOST_CHAR_DEV_NAME "vhost_dev_basename"
 #define VHOST_CHAR_DEV_IDX "vhost_dev_index"
 #define VHOST_RETRY_COUNT "vhost_retry_count"
@@ -63,7 +62,6 @@ int parse_config(const char *q_arg);
 
 /* global var for number of clients - extern in header */
 unsigned stats_display_interval; /* in seconds, set to 0 to disable update */
-unsigned vswitchd_core;
 unsigned client_switching_core;
 struct port_info port_cfg;
 

@@ -97,8 +97,6 @@ usage(void)
 	    " -v NUM_VETH: number of host kni (veth) ports to use\n"
 	    " -m NUM_MEMNIC: number of MEMNIC ports to use\n"
 		" -h NUM_VHOST: number of vhost (devices) ports to use\n"
-		" --vswitchd COREMASK\n"
-		"   CPU ID of the core used to display statistics and communicate with the vswitch daemon\n"
 		" --config (port,queue,lcore)[,(port,queue,lcore]\n"
 		"   Each port/queue/core group specifies the CPU ID of the core that will handle\n"
 		"   ingress traffic for the	specified queue on the specified port\n"
@@ -263,7 +261,6 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 	static struct option lgopts[] = {
 			{PARAM_STATS, 1, 0, 0},
 			{PARAM_CONFIG, 1, 0, 0},
-			{PARAM_VSWITCHD, 1, 0, 0},
 			{PARAM_CSC, 1, 0, 0},
 			{VHOST_CHAR_DEV_NAME, 1, 0, 0},
 			{VHOST_CHAR_DEV_IDX, 1, 0, 0},
@@ -325,8 +322,6 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				}
 				if (strncmp(lgopts[option_index].name, PARAM_STATS, 5) == 0) {
 					stats_display_interval = atoi(optarg);
-				} else if (strncmp(lgopts[option_index].name, PARAM_VSWITCHD, 8) == 0) {
-					vswitchd_core = atoi(optarg);
 				} else if (strncmp(lgopts[option_index].name, PARAM_CSC, 16) == 0) {
 					client_switching_core = atoi(optarg);
 				} else if (strncmp(lgopts[option_index].name, VHOST_CHAR_DEV_NAME, 18) == 0) {

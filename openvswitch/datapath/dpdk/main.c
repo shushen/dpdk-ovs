@@ -350,7 +350,7 @@ configure_lcore(unsigned lcore_id)
 	/* vswitchd core is used for print_stat and
 	 * receive_from_vswitchd. It has to be the master lcore
 	 * in order to reconfigure jobs */
-	if (lcore_id == vswitchd_core) {
+	if (lcore_id == rte_get_master_lcore()) {
 		ret = jobs_add_to_lcore(do_vswitchd, NULL, lcore_id);
 		if (ret < 0)
 			rte_panic("Could not add vswitchd core job to "
