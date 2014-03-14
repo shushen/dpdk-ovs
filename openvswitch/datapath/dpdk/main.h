@@ -47,5 +47,6 @@
 #endif
 
 int MAIN(int argc, char **argv);
+void configure_lcore(unsigned lcore_id);
 
 #endif /* _MAIN_H_ */

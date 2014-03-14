@@ -157,8 +157,8 @@ stats_display(void)
 	printf("\n");
 }
 
-static inline void
-do_vswitchd(void)
+static void
+do_vswitchd(__rte_unused void *arg)
 {
 	static uint64_t last_stats_display_tsc = 0;
 	static uint64_t next_tsc = 0;
@@ -167,7 +167,7 @@ do_vswitchd(void)
 	/* handle any packets from vswitchd */
 	handle_request_from_vswitchd();
 
-	/* 
+	/*
 	 * curr_tsc is accessed by all cores but is updated here for each loop
 	 * which causes cacheline contention. By setting a defined update
 	 * period for curr_tsc of 1us this contention is removed.
@@ -194,7 +194,7 @@ static inline void __attribute__((always_inline))
 do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
 {
 	int j;
-	/* 
+	/*
 	 * Initialize array of keys to 0 to avoid overhead of
 	 * loading the full key in to cache at once later.
 	 */
@@ -218,8 +218,8 @@ do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
 	}
 }
 
-static inline void __attribute__((always_inline))
-do_client_switching(void)
+static void
+do_client_switching(__rte_unused void *arg)
 {
 	static unsigned client = CLIENT0;
 	static unsigned kni_vportid = KNI0;
@@ -268,7 +268,7 @@ do_client_switching(void)
 		do_switch_packets(vhost_vportid, bufs, rx_count);
 
 		/* move to next vhost port */
-		if (++vhost_vportid == (unsigned)VHOST0 + num_vhost) { 
+		if (++vhost_vportid == (unsigned)VHOST0 + num_vhost) {
 			vhost_vportid = VHOST0;
 		}
 	}
@@ -287,9 +287,10 @@ do_client_switching(void)
 	flush_vhost_devs();
 }
 
-static inline void __attribute__((always_inline))
-do_port_switching(unsigned vportid)
+static void
+do_port_switching(void *arg)
 {
+	unsigned vportid = (unsigned)((uintptr_t) arg);
 	int rx_count = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE];
 
@@ -300,6 +301,20 @@ do_port_switching(unsigned vportid)
 	flush_ports();
 	flush_vhost_devs();
 	flush_nic_tx_ring(vportid);
+}
+
+/*
+ * This to to ensure that a vhost device can be safely removed.
+ * If the core has set the flag below then memory associated
+ * with the device can be unmapped.
+ */
+static void
+do_dev_flag_handling(void *arg) {
+	const unsigned id = (unsigned)((uintptr_t) arg);
+
+	if (unlikely(dev_removal_flag[id] == REQUEST_DEV_REMOVAL)) {
+		dev_removal_flag[id] = ACK_DEV_REMOVAL;
+	}
 }
 
 /* Get CPU frequency */
@@ -320,68 +335,87 @@ measure_cpu_frequency(void)
 	cpu_freq *= 1000000;
 }
 
-/* Main function used by the processing threads.
- * Prints out some configuration details for the thread and then begins
- * performing packet RX and TX.
+/*
+ * Assigns jobs to an lcore
  */
-static void
-lcore_main(void *arg __rte_unused)
+void
+configure_lcore(unsigned lcore_id)
 {
-	unsigned i = 0;
-	const unsigned id = rte_lcore_id();
-	unsigned nr_vswitchd = 0;
-	unsigned nr_client_switching = 0;
-	unsigned nr_port_switching = 0;
-	unsigned portid_map[MAX_PHYPORTS] = {0};
+	int ret;
+	unsigned i;
 
-	/* vswitchd core is used for print_stat and receive_from_vswitchd */
-	if (id == vswitchd_core) {
-		RTE_LOG(INFO, APP, "Print stat core is %d.\n", id);
+	/* clear existing job table */
+	jobs_clear_lcore(lcore_id);
 
-		/* Measuring CPU frequency */
-		measure_cpu_frequency();
-		RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n", cpu_freq / 1000000);
-
-		/* Set the curr_tsc update period. */
-		tsc_update_period = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * TSC_RES_US;
-		nr_vswitchd = RUN_ON_THIS_THREAD;
-	}
-	/* client_switching_core is used process packets from client rings
-	 * or fifos
-	 */
-	if (id == client_switching_core) {
-		RTE_LOG(INFO, APP, "Client switching core is %d.\n", id);
-		nr_client_switching = RUN_ON_THIS_THREAD;
+	/* vswitchd core is used for print_stat and
+	 * receive_from_vswitchd. It has to be the master lcore
+	 * in order to reconfigure jobs */
+	if (lcore_id == vswitchd_core) {
+		ret = jobs_add_to_lcore(do_vswitchd, NULL, lcore_id);
+		if (ret < 0)
+			rte_panic("Could not add vswitchd core job to "
+			          "core %d\n", lcore_id);
+		RTE_LOG(INFO, APP, "Core %d handles vswitchd core\n",
+		        lcore_id);
 	}
 
+	/* client_switching_core is used process packets from client
+	 * rings or fifos */
+	if (lcore_id == client_switching_core) {
+		ret = jobs_add_to_lcore(do_client_switching, NULL, lcore_id);
+		if (ret < 0)
+			rte_panic("Could not add client switching job to "
+			          "core %d\n", lcore_id);
+		RTE_LOG(INFO, APP, "Core %d handles client switching\n",
+		        lcore_id);
+	}
+
+	/* port switching cores */
 	for (i = 0; i < nb_cfg_params; i++) {
-		if (id == cfg_params[i].lcore_id) {
-			RTE_LOG(INFO, APP, "Port core is %d.\n", id);
-			portid_map[nr_port_switching++] = cfg_params[i].port_id;
+		if (lcore_id == cfg_params[i].lcore_id) {
+			ret = jobs_add_to_lcore(do_port_switching,
+			                        (void *) (uintptr_t)
+			                        cfg_params[i].port_id,
+			                        lcore_id);
+			if (ret < 0)
+				rte_panic("Could not add port switching job to "
+				          "core %d\n", lcore_id);
+			RTE_LOG(INFO, APP, "Core %d handles port %d\n",
+			        lcore_id, cfg_params[i].port_id);
 		}
 	}
 
-	for (;;) {
-		/*
-		 * This to to ensure that a vhost device can be safely removed.
-		 * If the core has set the flag below then memory associated
-		 * with the device can be unmapped.
-		 */
-		if (unlikely(dev_removal_flag[id] == REQUEST_DEV_REMOVAL)) {
-			dev_removal_flag[id] = ACK_DEV_REMOVAL;
-		}
-
-		if (nr_vswitchd)
-			do_vswitchd();
-		if (nr_client_switching)
-			do_client_switching();
-		for (i = 0; i < nr_port_switching; i++)
-			do_port_switching(portid_map[i]);
-	}
-
-	return;
+	ret = jobs_add_to_lcore(do_dev_flag_handling,
+				(void *) (uintptr_t) lcore_id,
+				lcore_id);
+	if (ret < 0)
+		rte_panic("Could not add dev flag handling job to "
+			  "core %d\n", lcore_id);
+	RTE_LOG(INFO, APP, "Core %d handles dev flag handling\n",
+		lcore_id);
 }
 
+/*
+ * Assigns jobs to all lcores
+ */
+static inline void __attribute__((always_inline))
+configure_lcores_all(void)
+{
+	unsigned lcore_id;
+
+	RTE_LCORE_FOREACH(lcore_id) {
+		configure_lcore(lcore_id);
+	}
+}
+
+static inline void __attribute__((always_inline))
+master_lcore_loop(void)
+{
+	for (;;)
+		jobs_run_master_lcore();
+
+	/* TODO: Check for switch exit */
+}
 
 int
 MAIN(int argc, char *argv[])
@@ -392,6 +426,13 @@ MAIN(int argc, char *argv[])
 		RTE_LOG(INFO, APP, "Process init failed.\n");
 		return -1;
 	}
+
+	/* Measuring CPU frequency */
+	measure_cpu_frequency();
+	RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n", cpu_freq / 1000000);
+
+	/* Set the curr_tsc update period. */
+	tsc_update_period = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * TSC_RES_US;
 
 	RTE_LOG(INFO, APP, "Finished Process Init.\n");
 
@@ -405,14 +446,11 @@ MAIN(int argc, char *argv[])
 	}
 	RTE_LOG(INFO, APP, "nb_cfg_params = %d\n", nb_cfg_params);
 
-	RTE_LCORE_FOREACH(i) {
-		jobs_add_to_lcore(lcore_main, NULL, i);
-	}
+	configure_lcores_all();
 
 	jobs_launch_slaves_all();
-	while (1) {
-		jobs_run_master_lcore();
-	}
+	master_lcore_loop();
 	jobs_stop_slaves_all();
+
 	return 0;
 }
