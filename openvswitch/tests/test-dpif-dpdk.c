@@ -420,7 +420,7 @@ test_dpif_dpdk_port_dump_start(struct dpif *dpif_p)
 {
 	int result = -1;
 	struct dpif_dpdk_port_state *state;
-	void **statep = &state;
+	void **statep = (void **)&state;
 
 	result = dpif_p->dpif_class->port_dump_start(dpif_p, statep);
 	assert(result == 0);
@@ -436,7 +436,7 @@ test_dpif_dpdk_port_dump_next(struct dpif *dpif_p)
 	struct dpif_port dpif_port;
 	struct dpif_port *dpif_port_p = &dpif_port;
 	struct dpif_dpdk_port_state *state;
-	void **statep = &state;
+	void **statep = (void **)&state;
 	char port_name[DPDK_PORT_MAX_STRING_LEN] = "random_port";
 
 	/* dump is a state machine, and hence relies on dump_start to get things
