@@ -209,7 +209,7 @@ netdev_dpdk_phy_dealloc(struct netdev *netdev)
 
 /* Set the configuration of 'netdev' to 'args' */
 static int
-netdev_dpdk_phy_set_config(struct netdev* netdev, struct smap *args)
+netdev_dpdk_phy_set_config(struct netdev* netdev, const struct smap *args)
 {
     struct netdev_dpdk_phyport *port = NETDEV_DPDK_PHYPORT_CAST(netdev);
     const char *name;
