@@ -135,9 +135,35 @@ AT_CLEANUP
  ])
 
 ##############################################################################
+
+m4_define([OVDK_CHECK_JOBS],
+[AT_BANNER([job subsystem unit tests - dpdk datapath])
+AT_SETUP([initialize job subsystem])
+AT_CHECK([sudo -E $srcdir/test-datapath -c 1 -n 4 -- jobs_init], [0], [ignore], [])
+AT_CLEANUP
+
+AT_SETUP([add jobs to lcores])
+AT_CHECK([sudo -E $srcdir/test-datapath -c 0xffff -n 4 -- jobs_add_to_lcore], [0], [ignore], [])
+AT_CLEANUP
+
+AT_SETUP([clear jobs from lcores])
+AT_CHECK([sudo -E $srcdir/test-datapath -c 0xffff -n 4 -- jobs_clear_lcore], [0], [ignore], [])
+AT_CLEANUP
+
+AT_SETUP([launch jobs on master lcore])
+AT_CHECK([sudo -E $srcdir/test-datapath -c 1 -n 4 -- jobs_launch_master], [0], [ignore], [])
+AT_CLEANUP
+
+AT_SETUP([launch jobs on slave lcore])
+AT_CHECK([sudo -E $srcdir/test-datapath -c 3 -n 4 -- jobs_launch_slave], [0], [ignore], [])
+AT_CLEANUP
+ ])
+
+##############################################################################
 # Execute Macros
 ##############################################################################
 
 OVDK_CHECK_ACTION_EXECUTE([])
 OVDK_CHECK_FLOW_TABLE([])
 OVDK_CHECK_STATS([])
+OVDK_CHECK_JOBS([])

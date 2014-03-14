@@ -46,6 +46,7 @@
 #include "flow.h"
 #include "vport.h"
 #include "ut.h"
+#include "jobs.h"
 
 #include <assert.h>
 
@@ -815,6 +816,159 @@ test_stats_vswitch_clear(int argc, char *argv[])
 	assert(stats_vswitch_tx_drop_get() == 0);
 }
 
+static void
+test_jobs_init(int argc, char *argv[])
+{
+	unsigned int i;
+
+	/* this test has to be executed on the master lcore */
+	assert(rte_lcore_id() == rte_get_master_lcore());
+
+	jobs_init();
+	RTE_LCORE_FOREACH(i) {
+		assert(joblist_refs[i] != NULL);
+		assert(joblist_refs[i]->nb_jobs == 0);
+		assert(joblist_refs[i]->online == 0);
+	}
+	assert(MAXJOBS_PER_LCORE > 0);
+}
+
+static void
+test_jobs_add_to_lcore(int argc, char *argv[])
+{
+	unsigned int i, j;
+	int ret;
+
+	/* this test has to be executed on the master lcore */
+	assert(rte_lcore_id() == rte_get_master_lcore());
+
+	jobs_init();
+	RTE_LCORE_FOREACH(i) {
+		assert(joblist_refs[i]->nb_jobs == 0);
+
+		/* check if joblist can be filled up completely
+		 * (function pointer is just random here but not NULL) */
+		for (j = 0; j < MAXJOBS_PER_LCORE; ++j) {
+			ret = jobs_add_to_lcore((lcore_job_t *)(uintptr_t)(j + i + 57),
+			                        (void *)(uintptr_t)(i * j),
+			                        i);
+			assert(ret >= 0);
+			assert(joblist_refs[i]->nb_jobs == (j + 1));
+		}
+
+		/* check if joblist is full now */
+		ret = jobs_add_to_lcore((lcore_job_t *)(uintptr_t) 437, NULL, i);
+		assert(ret < 0);
+	}
+
+	RTE_LCORE_FOREACH(i) {
+		/* check if list fillup happened correctly */
+		assert(joblist_refs[i]->nb_jobs == MAXJOBS_PER_LCORE);
+		for (j = 0; j < MAXJOBS_PER_LCORE; ++j) {
+			assert(joblist_refs[i]->jobs[j].func == (lcore_job_t *)(uintptr_t)(j + i) + 57);
+			assert(joblist_refs[i]->jobs[j].arg  == (void *)(uintptr_t)(j * i));
+		}
+	}
+}
+
+static void
+test_jobs_clear_lcore(int argc, char *argv[])
+{
+	unsigned int i, j;
+	int ret;
+
+	/* this test has to be executed on the master lcore */
+	assert(rte_lcore_id() == rte_get_master_lcore());
+
+	jobs_init();
+	RTE_LCORE_FOREACH(i) {
+		/* add some jobs so that we have something to clear */
+		jobs_add_to_lcore((lcore_job_t *) 715, NULL, i);
+		jobs_add_to_lcore((lcore_job_t *) 386, NULL, i);
+		jobs_add_to_lcore((lcore_job_t *) 942, NULL, i);
+	}
+
+	RTE_LCORE_FOREACH(i) {
+		assert(joblist_refs[i]->nb_jobs != 0);
+		jobs_clear_lcore(i);
+		assert(joblist_refs[i]->nb_jobs == 0);
+	}
+}
+
+/* Test Job: Increments a test variable. In order to avoid arithmetic
+ *           overflows, this test job increments a test variable until
+ *           4096 is reached */
+static void
+_test_jobs_inc4096(void *argp)
+{
+	unsigned int *testvar = argp;
+
+	if (*testvar < 4096)
+		++*testvar;
+}
+
+static void
+test_jobs_launch_master(int argc, char *argv[])
+{
+	volatile unsigned int testvar0 = 0;
+	volatile unsigned int testvar1 = 0;
+	unsigned int i;
+
+	/* this test has to be executed on the master lcore */
+	assert(rte_lcore_id() == rte_get_master_lcore());
+	/* this test has to add three jobs */
+	assert(MAXJOBS_PER_LCORE >= 3);
+
+	jobs_init();
+	jobs_add_to_lcore(_test_jobs_inc4096, (void *) &testvar0, rte_lcore_id());
+	jobs_add_to_lcore(_test_jobs_inc4096, (void *) &testvar0, rte_lcore_id());
+	jobs_add_to_lcore(_test_jobs_inc4096, (void *) &testvar1, rte_lcore_id());
+
+	for (i = 0; i < 657; ++i)
+		jobs_run_master_lcore();
+
+	assert(testvar0 == 438);
+	assert(testvar1 == 219);
+}
+
+static void
+test_jobs_launch_slave(int argc, char *argv[])
+{
+	volatile unsigned int testvar0 = 0;
+	volatile unsigned int testvar1 = 0;
+	enum rte_lcore_state_t slave_state;
+	unsigned int slave_id;
+	int ret;
+
+	/* this test has to be executed on the master lcore */
+	assert(rte_lcore_id() == rte_get_master_lcore());
+	/* this test has to add two jobs */
+	assert(MAXJOBS_PER_LCORE >= 2);
+	/* we need at least one slave for this test */
+	slave_id = rte_get_next_lcore(rte_lcore_id(), true, true);
+	assert(slave_id < RTE_MAX_LCORE);
+
+	jobs_init();
+	jobs_add_to_lcore(_test_jobs_inc4096, (void *) &testvar0, slave_id);
+	jobs_add_to_lcore(_test_jobs_inc4096, (void *) &testvar1, slave_id);
+
+	ret = jobs_launch_slave_lcore(slave_id);
+	assert(ret >= 0);
+	slave_state = rte_eal_get_lcore_state(slave_id);
+	assert(slave_state == RUNNING);
+
+	/* wait for a while */
+	sleep(5);
+
+	ret = jobs_stop_slave_lcore(slave_id);
+	assert(ret == 0);
+	slave_state = rte_eal_get_lcore_state(slave_id);
+	assert(slave_state != RUNNING);
+
+	assert(testvar0 != 0);
+	assert(testvar1 != 0);
+}
+
 static const struct command commands[] = {
 	{"action_execute_output", 0, 0, test_action_execute_output},
 	{"action_execute_output__invalid_params", 0, 0, test_action_execute_output__invalid_params},
@@ -844,6 +998,12 @@ static const struct command commands[] = {
 	{"stats_vswitch_increment", 0, 0, test_stats_vswitch_increment},
 	{"stats_vswitch_get", 0, 0, test_stats_vswitch_get},
 	{"stats_vswitch_clear", 0, 0, test_stats_vswitch_clear},
+
+	{"jobs_init", 0, 0, test_jobs_init},
+	{"jobs_add_to_lcore", 0, 0, test_jobs_add_to_lcore},
+	{"jobs_clear_lcore", 0, 0, test_jobs_clear_lcore},
+	{"jobs_launch_master", 0, 0, test_jobs_launch_master},
+	{"jobs_launch_slave", 0, 0, test_jobs_launch_slave},
 
 	{NULL, 0, 0, NULL},
 };

@@ -303,6 +303,7 @@ noinst_PROGRAMS += tests/test-datapath
 tests_test_datapath_SOURCES = tests/test-datapath-dpdk.c
 tests_test_datapath_SOURCES += tests/ut.c
 tests_test_datapath_SOURCES += tests/dpdk-vport-stub.c
+tests_test_datapath_SOURCES += datapath/dpdk/jobs.c
 tests_test_datapath_SOURCES += datapath/dpdk/action.c
 tests_test_datapath_SOURCES += datapath/dpdk/datapath.c
 tests_test_datapath_SOURCES += datapath/dpdk/flow.c
