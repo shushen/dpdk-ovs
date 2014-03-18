@@ -1,4 +1,4 @@
-# v0.10 - TBD
+# v0.10 - March 2014
 
     - Added support for "Port Management" - the real management of devices in the
       datapath via the dpif (and utilities such as `ovs-vsctl`)
