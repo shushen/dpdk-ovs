@@ -38,46 +38,73 @@ mkdir -p /usr/local/etc/openvswitch/
 rm -f /tmp/conf.db
 ```
 
+Configure some environment variables
+
+```bash
+cd openvswitch
+export OPENVSWITCH_DIR=$(pwd)
+```
+
 Initialise the Open vSwitch database server:
 
 ```bash
-./ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
-./ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
+./ovsdb/ovsdb-tool create /usr/local/etc/openvswitch/conf.db \
+  $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
+./ovsdb/ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
+  --remote=db:Open_vSwitch,Open_vSwitch,manager_options &
 ```
 
 Add a bridge to the switch:
 
 ```bash
-./ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
+./utilities/ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
 ```
 
 Add ports to the bridge:
 
 ```bash
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_16 -- set Interface ovs_dpdk_16
-  type=dpdk ofport_request=16
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_17 -- set Interface ovs_dpdk_17
-  type=dpdk ofport_request=17
+./utilities/ovs-vsctl --no-wait add-port br0 port16 -- set Interface port16 \
+  type=dpdkphy ofport_request=16 option:port=1
+./utilities/ovs-vsctl --no-wait add-port br0 port17 -- set Interface port17 \
+  type=dpdkphy ofport_request=17 option:port=2
 ```
 
 Confirm the ports have been successfully added:
 
 ```bash
-./ovs-vsctl show
+./utilities/ovs-vsctl show
+```
+
+You should see something like this:
+
+```bash
+00000000-0000-0000-0000-000000000000
+    Bridge "br0"
+        Port "br0"
+            Interface "br0"
+                type: internal
+        Port "port16"
+            Interface "port16"
+                type: dpdkphy
+                options: {port="1"}
+        Port "port17"
+            Interface "port17"
+                type: dpdkphy
+                options: {port="2"}
 ```
 
 Start `ovs_dpdk`:
 
 ```bash
-./ovs_dpdk -c 0x0F -n 4 --proc-type primary --base-virtaddr=<virt_addr>
-  -- -p 0x03 -n 1 --stats=5 --vswitchd=0 --client_switching_core=1
-  --config="(0,0,2),(1,0,3)
+./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
+  --base-virtaddr=<virt_addr> -- -p 0x03 -n 2 --stats=5 --vswitchd=0 \
+  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 Start the Open vSwitch daemon:
 
 ```bash
-./ovs-vswitchd -c 0x100 --proc-type=secondary --
+./vswitchd/ovs-vswitchd -c 0x100 --proc-type=secondary -- \
   --pidfile=/tmp/vswitchd.pid
 ```
 
@@ -88,14 +115,14 @@ ______
 Delete the default flow entries from the bridge:
 
 ```bash
-./ovs-ofctl del-flows br0
+./utilities/ovs-ofctl del-flows br0
 ```
 
 Add flow entries to switch packets from `Port0` (16) to `Port1` (17):
 
 ```bash
-./ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,
-  nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,\
+nw_src=1.1.1.1,nw_dst=6.6.6.2,idle_timeout=0,action=output:17
 ```
 
 ______

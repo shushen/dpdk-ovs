@@ -41,6 +41,7 @@ ______
 **Note:** Hugepages are required for both the guest and the vswitch application. Ideally there should be enough hugepages on a single socket to maximise performance. For example, to run a guest with 2GB of memory and running the vswitch with 2GB of memory there should be 8x1GB hugepages allocated (4 on each socket).
 
 ## Prerequisites
+
 There are 4 extra requirements in order to use Userspace Vhost devices in Intel® DPDK
 vSwitch.
 
@@ -93,32 +94,39 @@ mkdir -p /usr/local/etc/openvswitch/
 rm -f /tmp/conf.db
 ```
 
+Configure some environment variables
+
+```bash
+cd openvswitch
+export OPENVSWITCH_DIR=$(pwd)
+```
+
 Initialise the Open vSwitch database server:
 
 ```bash
-./ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
-./ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
+./ovsdb/ovsdb-tool create /usr/local/etc/openvswitch/conf.db \
+  $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
+./ovsdb/ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock \
+  --remote=db:Open_vSwitch,Open_vSwitch,manager_options &
 ```
 
 Add a bridge to the switch:
 
 ```bash
-./ovs-vsctl --no-wait add-br br0 -- set Bridge br0
-  datapath_type=dpdk
+./utilities/ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
 ```
 
 Add ports to the bridge:
 
 ```bash
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_16 -- set Interface ovs_dpdk_16
-type=dpdk ofport_request=16
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_17 -- set Interface ovs_dpdk_17
-type=dpdk ofport_request=17
-  ./ovs-vsctl --no-wait add-port br0 ovs_dpdk_80 -- set Interface ovs_dpdk_80
-  type=dpdk ofport_request=80
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_81 -- set Interface ovs_dpdk_81
-type=dpdk ofport_request=81
-
+./utilities/ovs-vsctl --no-wait add-port br0 port16 -- set Interface port16 \
+  type=dpdkphy ofport_request=16 option:port=1
+./utilities/ovs-vsctl --no-wait add-port br0 port17 -- set Interface port17 \
+  type=dpdkphy ofport_request=17 option:port=2
+./utilities/ovs-vsctl --no-wait add-port br0 port80 -- set Interface port80 \
+  type=dpdkvhost ofport_request=80
+./utilities/ovs-vsctl --no-wait add-port br0 port81 -- set Interface port81 \
+  type=dpdkvhost ofport_request=81
 ```
 
 Confirm the ports have been successfully added:
@@ -127,23 +135,48 @@ Confirm the ports have been successfully added:
 ./ovs-vsctl show
 ```
 
+You should see something like this:
+
+```bash
+00000000-0000-0000-0000-000000000000
+    Bridge "br0"
+        Port "br0"
+            Interface "br0"
+                type: internal
+        Port "port16"
+            Interface "port16"
+                type: dpdkphy
+                options: {port="1"}
+        Port "port17"
+            Interface "port17"
+                type: dpdkphy
+                options: {port="2"}
+        Port "port80"
+            Interface "port80"
+                type: dpdkvhost
+        Port "port81"
+            Interface "port81"
+                type: dpdkvhost
+```
+
+Start `ovs_dpdk`:
+
 Start `ovs_dpdk`:
 
 ```bash
-./ovs_dpdk -c 0x0F -n 4 --proc-type primary --socket-mem 2048,2048 
--- -p 0x03 -n 2 -h 2 --stats=<stats_update_interval> --vswitchd=0
---client_switching_core=1 --config="(0,0,2),(1,0,3)
+./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
+  --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- -p 0x03 -n 2 -h 2 \
+  --stats=5 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
-**Note:** `--socket-mem` option ensures that the DPDK app doesn't use all hugepage memory on the system.
+Note the additional `--socket-mem` option. This ensures the DPDK app does not use all available hugepage memory on the system.
 
 Start the Open vSwitch daemon:
 
 ```bash
-./ovs-vswitchd -c 0x100 --proc-type=secondary --
+./vswitchd/ovs-vswitchd -c 0x100 --proc-type=secondary -- \
   --pidfile=/tmp/vswitchd.pid
 ```
-
 ______
 
 ## Flow Table Setup

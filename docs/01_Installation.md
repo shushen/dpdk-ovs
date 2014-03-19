@@ -57,10 +57,10 @@ Before compiling, extract the source files for Intel® DPDK, Intel® DPDK vSwitc
 ```bash
 mkdir ~/ovs_dpdk
 cd ~/ovs_dpdk
-mkdir DPDK
 mkdir ovdk
-tar -xvzf <dpdk_release_pkg>.tar.gz -C DPDK
+unzip <dpdk_release_pkg>.tar.gz
 tar -xvzg <dpdk_vswitch_release_pkg>.tar.gz  -C ovdk
+mv <dpdk_extract_dir> DPDK
 ```
 
 If you intend to test OpenFlow compliance with OFTest, you should also extract this now.
@@ -102,7 +102,7 @@ Three different components are necessary to run Intel® DPDK vSwitch: Intel® DP
 Each of these commands should be run from the top-level directory in which you previously extracted all dependencies, i.e.:
 
 ```bash
-cd ~/ovs_dpdk
+cd ~/ovs_dpdk               # directory containing DPDK and DPDK vSwitch
 ```
 
 #### DPDK
@@ -110,7 +110,7 @@ cd ~/ovs_dpdk
 Refer to the [Intel® DPDK Getting Started Guide][intel-dpdkgsg] for a relevant make target, e.g.:
 
 ```bash
-cd DPDK  # directory where you extracted DPDK and DPDK vSwitch
+cd DPDK                     # DPDK sub-directory
 export RTE_SDK=$(pwd)
 export RTE_TARGET="x86_64-ivshmem-linuxapp-gcc"
 make install T="$RTE_TARGET"
@@ -122,7 +122,7 @@ cd -
 #### Open vSwitch
 
 ```bash
-cd ovdk/openvswitch
+cd ovdk/openvswitch         # DPDK vSwitch sub-directory
 ./boot.sh
 ./configure RTE_SDK=$(RTE_SDK) --disable-ssl
 make
@@ -171,7 +171,7 @@ default_hugepagesz=2M hugepagesz=2M hugepages=2048
 
 Following this, it will be necessary to reboot your device. Please do so before continuing.
 
-**Note:** Intel® DPDK vSwitch requires hugepages in order to run. If your device does not support these, Intel® DPDK vSwitch will be unable to execute. You can check support using the [Intel® ARK Tool][intel-ark]
+Please note that Intel® DPDK vSwitch requires hugepages in order to run. If your device does not support these, Intel® DPDK vSwitch will be unable to execute. You can check support using the [Intel® ARK Tool][intel-ark]
 
 ### Create Required Directories
 
