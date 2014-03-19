@@ -72,6 +72,7 @@ enum vport_type {
 	VPORT_TYPE_KNI,
 	VPORT_TYPE_VETH,
 	VPORT_TYPE_VHOST,
+	VPORT_TYPE_MEMNIC,
 };
 
 struct vport_phy {
@@ -100,6 +101,11 @@ struct vport_vhost {
 	uint8_t index;
 };
 
+struct vport_memnic {
+	struct memnic_area *ptr;
+	int up, down;
+};
+
 #define VPORT_INFO_NAMESZ	(32)
 
 struct vport_info {
@@ -112,6 +118,7 @@ struct vport_info {
 		struct vport_kni kni;
 		struct vport_veth veth;
 		struct vport_vhost vhost;
+		struct vport_memnic memnic;
 	};
 };
 

@@ -224,6 +224,7 @@ do_client_switching(void)
 	static unsigned kni_vportid = KNI0;
 	static unsigned veth_vportid = VETH0;
 	static unsigned vhost_vportid = VHOST0;
+	static unsigned memnic_vportid = MEMNIC0;
 	int rx_count = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE];
 
@@ -269,6 +270,15 @@ do_client_switching(void)
 		if (++vhost_vportid == (unsigned)VHOST0 + num_vhost) { 
 			vhost_vportid = VHOST0;
 		}
+	}
+
+	/* MEMNIC */
+	if (num_memnics > 0) {
+		rx_count = receive_from_vport(memnic_vportid, &bufs[0]);
+		do_switch_packets(memnic_vportid, bufs, rx_count);
+
+		if (++memnic_vportid == (unsigned)MEMNIC0 + num_memnics)
+			memnic_vportid = MEMNIC0;
 	}
 
 	flush_clients();

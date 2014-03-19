@@ -47,11 +47,13 @@
 #define MAX_PHYPORTS           16
 #define MAX_CLIENTS            16
 #define MAX_VHOST_PORTS        64
+#define MAX_MEMNICS            16
 #define PKT_BURST_SIZE         32u
 #define CLIENT0                0
 #define CLIENT1                1
 #define PHYPORT0               0x10
 #define KNI0                   0x20
+#define MEMNIC0                0x30
 #define VETH0                  0x40
 #define VHOST0                 0x50
 #define CLIENT_MASK            0x00

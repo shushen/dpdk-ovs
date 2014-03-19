@@ -95,6 +95,7 @@ usage(void)
 	    " -n NUM_CLIENTS: number of client processes to use\n"
 	    " -k NUM_KNI: number of kni ports to use\n"
 	    " -v NUM_VETH: number of host kni (veth) ports to use\n"
+	    " -m NUM_MEMNIC: number of MEMNIC ports to use\n"
 		" -h NUM_VHOST: number of vhost (devices) ports to use\n"
 		" --vswitchd COREMASK\n"
 		"   CPU ID of the core used to display statistics and communicate with the vswitch daemon\n"
@@ -275,7 +276,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 	/* Initialize counters to "not used" */
 	num_clients = num_kni = num_veth = num_vhost = 0;
 
-	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:h:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:h:m:", lgopts,
 		&option_index)) != EOF) {
 		switch (opt) {
 			case 'p':  /* Physical ports */
@@ -315,6 +316,14 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 					return -1;
 				}
 				num_vhost = (uint8_t)temp;
+				break;
+			case 'm':  /* MEMNIC ports */
+				temp = parse_num_clients(optarg);
+				if (temp <= 0) {
+					usage();
+					return -1;
+				}
+				num_memnics = (uint8_t)temp;
 				break;
 			case 0:
 				if (!strcmp(lgopts[option_index].name, PARAM_CONFIG)) {
@@ -389,6 +398,12 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 
 	if (num_vhost > MAX_VHOST_PORTS) {
 		printf ("Number of vhost ports is invalid\n");
+		usage();
+		return -1;
+	}
+
+	if (num_memnics > MAX_MEMNICS) {
+		printf ("Number of MEMNIC ports is invalid\n");
 		usage();
 		return -1;
 	}

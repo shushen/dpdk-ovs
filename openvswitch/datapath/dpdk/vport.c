@@ -49,6 +49,7 @@
 #include "kni.h"
 #include "veth.h"
 #include "virtio-net.h"
+#include "vport-memnic.h"
 
 #include "flow.h"
 
@@ -745,6 +746,16 @@ vport_init(void)
 		vport_disable(VHOST0 + i);
 		vport_set_name(VHOST0 + i, "vHost Port %2u", i);
 	}
+	/* vport for MEMNIC */
+	for (i = 0; i < num_memnics; i++) {
+		vports[MEMNIC0 + i].type = VPORT_TYPE_MEMNIC;
+		vport_disable(MEMNIC0 + i);
+		vport_set_name(MEMNIC0 + i, "MEMNIC    %2u", i);
+		if (init_memnic_port(&vports[MEMNIC0 + i].memnic, MEMNIC0 + i) != 0) {
+			rte_exit(EXIT_FAILURE,
+				"Cannot initialize MEMNIC %u\n", i);
+		}
+	}
 
 	/* now initialise the physical ports we will use */
 	for (i = 0; i < ports->num_phy_ports; i++) {
@@ -894,6 +905,12 @@ send_to_vhost(uint32_t vportid, struct rte_mbuf *buf)
 	return 0;
 }
 
+static int
+send_to_memnic(uint8_t vportid, struct rte_mbuf *buf)
+{
+	return memnic_tx(&vports[vportid].memnic, vportid, buf);
+}
+
 int
 send_to_vport(uint32_t vportid, struct rte_mbuf *buf)
 {
@@ -914,6 +931,8 @@ send_to_vport(uint32_t vportid, struct rte_mbuf *buf)
 		return send_to_veth(vportid, buf);
 	case VPORT_TYPE_VHOST:
 		return send_to_vhost(vportid, buf);
+	case VPORT_TYPE_MEMNIC:
+		return send_to_memnic(vportid, buf);
 	case VPORT_TYPE_VSWITCHD:
 		/* DPDK vSwitch cannot handle it now, ignore */
 		break;
@@ -1027,6 +1046,12 @@ receive_from_vhost(uint32_t vportid, struct rte_mbuf **bufs)
 	return rx_count;
 }
 
+static inline uint16_t
+receive_from_memnic(uint32_t vportid, struct rte_mbuf **bufs)
+{
+	return memnic_rx(&vports[vportid].memnic, vportid, bufs);
+}
+
 inline uint16_t
 receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs)
 {
@@ -1047,6 +1072,8 @@ receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs)
 		return receive_from_veth(vportid, bufs);
 	case VPORT_TYPE_VHOST:
 		return receive_from_vhost(vportid, bufs);
+	case VPORT_TYPE_MEMNIC:
+		return receive_from_memnic(vportid, bufs);
 	default:
 		RTE_LOG(WARNING, APP,
 			"receiving from unknown vport %u type %u\n",

@@ -1,8 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
- *   All rights reserved.
+ *   Copyright(c) 2013-2014 NEC All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -14,9 +13,6 @@
  *       notice, this list of conditions and the following disclaimer in
  *       the documentation and/or other materials provided with the
  *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
  *
  *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
  *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
@@ -32,23 +28,11 @@
  *
  */
 
+#ifndef __VPORT_MEMNIC_H__
+#define __VPORT_MEMNIC_H__
 
-#ifndef _INIT_H_
-#define _INIT_H_
+extern int init_memnic_port(struct vport_memnic *memnic, unsigned vportid);
+extern int memnic_tx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf *buf);
+extern uint16_t memnic_rx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf **bufs);
 
-/* The mbuf pool for packet rx */
-struct rte_mempool *pktmbuf_pool;
-uint32_t num_clients;
-uint32_t num_kni;
-uint32_t num_veth;
-uint32_t num_vhost;
-uint32_t num_memnics;
-unsigned num_sockets;
-
-unsigned stats_display_interval;
-unsigned vswitchd_core;
-unsigned client_switching_core;
-
-int init(int argc, char *argv[]);
-
-#endif /* ifndef _INIT_H_ */
+#endif /* __VPORT_MEMNIC_H__ */
