@@ -112,7 +112,7 @@ uint32_t burst_tx_retry_num = BURST_TX_RETRIES;
 /*
  * Core mapping to access per-core caches using rte_lcore_id() function.
  */
-static unsigned lcore_map[RTE_MAX_LCORE] = {0};
+static unsigned lcore_map[RTE_MAX_LCORE] __rte_cache_aligned;
 
 static const struct rte_eth_rxconf rx_conf_default = {
 		.rx_thresh = {
@@ -773,9 +773,12 @@ vport_init(void)
 
 	/* initialise lcore mapping by querying DPDK is a core was enabled from the
 	 * command line */
-	for (i = 0; i < RTE_MAX_LCORE; i++)
+	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		if (rte_lcore_is_enabled(i))
 			lcore_map[i] = core_count++;
+		else
+			lcore_map[i] = 0;
+	}
 
 	/* initialise the client queues/rings for inter process comms */
 	init_shm_rings();
@@ -1135,12 +1138,13 @@ flush_nic_tx_ring(unsigned vportid)
 inline void
 flush_ports(void)
 {
-	uint32_t portid = 0;
+	uint8_t portid = 0;
+	uint8_t num_ports = ports->num_phy_ports;
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_port_cache = NULL;
 
 	/* iterate over all port caches for this core */
-	for (portid = 0; portid < ports->num_phy_ports; portid++) {
+	for (portid = 0; portid < num_ports; portid++) {
 		per_port_cache = &port_mbuf_cache[lcore_id][portid];
 		if (per_port_cache->count)
 			flush_phy_port_cache(portid + PHYPORT0);
@@ -1193,12 +1197,13 @@ flush_phy_port_cache(uint32_t vportid)
 inline void
 flush_clients(void)
 {
-	uint32_t clientid = 0;
+	uint8_t clientid = 0;
+	uint8_t local_num_clients = num_clients;
 	unsigned lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_client_cache = NULL;
 
 	/* iterate over all client caches for this core */
-	for (clientid = 0; clientid < num_clients; clientid++) {
+	for (clientid = 0; clientid < local_num_clients; clientid++) {
 		per_client_cache = &client_mbuf_cache[lcore_id][clientid];
 		if (per_client_cache->count)
 			flush_client_port_cache(clientid + CLIENT1);
@@ -1251,11 +1256,12 @@ void
 flush_vhost_devs(void)
 {
 	uint32_t vhostid = 0;
+	uint32_t local_num_vhost = num_vhost;
 	uint8_t lcore_id = rte_lcore_id();
 	struct local_mbuf_cache *per_vhost_cache = NULL;
 
 	/* iterate over all vhost caches for this core */
-	for (vhostid = 0; vhostid < num_vhost; vhostid++) {
+	for (vhostid = 0; vhostid < local_num_vhost; vhostid++) {
 		per_vhost_cache = &vhost_mbuf_cache[lcore_id][vhostid];
 		/* only flush when we have exceeded our deadline */
 		if (per_vhost_cache->count) {
