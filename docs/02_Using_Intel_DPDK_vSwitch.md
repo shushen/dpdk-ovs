@@ -28,16 +28,18 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
   If zero, statistics are not displayed. If nonzero, it represents the interval in seconds at which statistics are updated onscreen
 * `--client_switching_core`
   CPU ID of the core on which the main switching loop will run
-* `-n NUM`
-  The number of supported clients
 * `-p PORTMASK`
   Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID, that is, for a portmask of 0x3, ports 0 and 1 are configured
+* `-n NUM`
+  Number of client devices to configure
 * `-k NUM`
   Number of KNI devices to configure
 * `-h NUM`
   Number of Userspace-vHost devices to configure
 * `-v NUM`
   Number of vEth devices to configure
+* `-m NUM`
+  Number of MEMNIC devices to configure
 * `--vswitchd`
   CPU ID of the core used to display statistics and communicate with the vswitch daemon
 * `--config (port,queue,lcore)[,(port,queue,lcore]`

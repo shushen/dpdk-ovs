@@ -110,7 +110,6 @@ Intel® DPDK vSwitch currently provides four methods of communicating from guest-
 **Suggested use case:** Virtual Appliance running standard Virtio drivers.
 
 * Similar performance to standard Virtio
-
 * Option when a vSwitch is required in conjunction with Linux or non-Linux guest OS (e.g. Windows\*, VxWorks\*, ..)
 
 #### IVSHMEM
@@ -128,6 +127,15 @@ Intel® DPDK vSwitch currently provides four methods of communicating from guest-
 
 * Option when applications are not trusted and highest small packet throughput required.
 * Option when applications either do or do not need the Linux network stack.
+* Single memcpy between guest and switch provides security.
+* Single memcpy for guest to guest provides security.
+* Option when using a modified QEMU version is not possible.
+
+#### MEMNIC
+
+**Suggested use cases:** Virtual Appliance running Linux with a Legacy Sockets based application.
+
+* Option when a vSwitch is required in conjunction with Linux or non-Linux guest OS (e.g. Windows\*, VxWorks\*, ..)
 * Single memcpy between guest and switch provides security.
 * Single memcpy for guest to guest provides security.
 * Option when using a modified QEMU version is not possible.
