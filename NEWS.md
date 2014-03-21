@@ -1,3 +1,8 @@
+# v0.11 - TBD
+    - Added support for memnic, which uses IVSHMEM for communication between
+      guest and host. The IVSHMEM that is used is separate from the DPDK
+      hugepage
+
 # v0.10 - March 2014
 
     - Added support for "Port Management" - the real management of devices in the
