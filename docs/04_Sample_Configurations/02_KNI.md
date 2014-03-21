@@ -145,13 +145,13 @@ Delete the default flow entries from the bridge:
 ./utilities/ovs-ofctl del-flows br0
 ```
 
-Add flow entries to switch packets from `Port0` (16) to `KNI0` (32) on the ingress path, and from `KNI1` (33) to `Port1` (17) on the egress path:
+Add flow entries to switch packets from `port16` (Phy 0) to `port32` (KNI 0) on the ingress path, and from `port33` (KNI 1) to `port17` (Phy 1) on the egress path:
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,\
-nw_src=1.1.1.1,nw_dst=6.6.6.2,idle_timeout=0,action=output:32
-./utilities/ovs-ofctl add-flow br0 in_port=33,dl_type=0x0800,\
-nw_src=1.1.1.1,nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,\
+nw_dst=6.6.6.2,idle_timeout=0,action=output:32
+./utilities/ovs-ofctl add-flow br0 in_port=33,dl_type=0x0800,nw_src=1.1.1.1,\
+nw_dst=6.6.6.2,idle_timeout=0,action=output:17
 ```
 
 ______
@@ -173,11 +173,11 @@ cp -aL <DPDK_DIR>/* /tmp/qemu_share/DPDK
 
 ### Create IVSHMEM metadata
 
-Run the IVSHMEM manager utility to create the metadata needed to be used with QEMU. In this example ports `KNI0` and `KNI1` are going to be shared over a metadata file named `vm_1`.
+Run the IVSHMEM manager utility to create the metadata needed to be used with QEMU. In this example `port32` and `port33` are going to be shared over a metadata file named `vm_1`.
 
 ```bash
 ./ovs-ivshm-mngr/build/app/ovs-ivshm-mngr -c 0x1 --proc-type=secondary --\
-  vm_1:KNI0,KNI1
+  vm_1:port32,port33
 ```
 
 Among other information the utility will print out to `STDOUT` the exact IVSHMEM command line to be used when launching QEMU. Add this to the other QEMU arguments.
@@ -191,10 +191,10 @@ APP: QEMU cmdline for metadata 'vm_1': -device ivshmem,size=64M,shm=fd:/dev/huge
 Start QEMU, for example:
 
 ```bash
-./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4\
-  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 8192M -smp 2\
-  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid\
-  -drive file=fat:rw:/tmp/qemu_share,snapshot=off\
+./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4 \
+  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 8192M -smp 2 \
+  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid \
+  -drive file=fat:rw:/tmp/qemu_share,snapshot=off \
   -monitor unix:/tmp/vm1monitor,server,nowait \
   -device ivshmem,size=64M,shm=fd:/dev/hugepages/rtemap_0:0x0:0x200000:\
 /dev/hugepages/rtemap_1:0xa00000:0x3200000:\
@@ -233,8 +233,6 @@ make install T=x86_64-ivshmem-linuxapp-gcc
 ### Build `kni_client` App
 
 ``` bash
-export RTE_SDK=/root/kni/DPDK
-export RTE_TARGET=x86_64-ivshmem-linuxapp-gcc
 cd /root/kni
 cd kni_client
 make clean
@@ -262,25 +260,27 @@ dmesg
 [ 2734.409240] KNI: ######## DPDK kni module loaded ########
 ```
 
-It is important to see the "IVSHMEM metadata found" message in the kernel log. If "IVSHMEM metadata NOT found" message is seen instead or if no IVSHMEM message is printed, uninstall all targets, re-apply the patch, and re-install again. An attempt to bring up a virtual interface without the IVSHMEM metadata being found will lead to a kernel panic on the guest.
+It is important to see the `IVSHMEM metadata found` message in the kernel log. If `IVSHMEM metadata NOT found` message is seen instead or if no IVSHMEM message is printed, uninstall all targets, re-apply the patch, and re-install again. An attempt to bring up a virtual interface without the IVSHMEM metadata being found will lead to a kernel panic on the guest.
 
 ### Execute `kni_client` App
 
-The application accepts a port name parameter, which it uses to lookup the rings for the corresponding client. The port name has to match exactly with the one shared through the IVSHMEM manager utility. Having copied the application to the guest, and carrying out the setup steps described previously, run the `kni_client` application:
+Having completed the above, run the `kni_client` application:
 
 ```bash
-./build/kni_client -c 0x1 -n 4 -- -p KNI0 -p KNI1 &
+./build/kni_client -c 0x1 -n 4 -- -p port32 -p port33 &
 ```
+
+The application accepts a port name parameter, which it uses to lookup the rings for the corresponding client. The port name has to match exactly with the one shared through the IVSHMEM manager utility.
 
 ### Configure Network Interfaces
 
 Bring up virtual interfaces:
 
 ```bash
-ifconfig vEth_KNI0 hw ether 00:4B:4E:49:30:00
-ifconfig vEth_KNI1 hw ether 00:4B:4E:49:30:01
-ifconfig vEth_KNI0 2.2.2.1/24 up
-ifconfig vEth_KNI1 3.3.3.1/24 up
+ifconfig vEth_port32 hw ether 00:4B:4E:49:30:00
+ifconfig vEth_port33 hw ether 00:4B:4E:49:30:01
+ifconfig vEth_port32 2.2.2.1/24 up
+ifconfig vEth_port33 3.3.3.1/24 up
 ```
 
 Turn on IP forwarding:
@@ -293,13 +293,13 @@ Turn off reverse path filtering:
 
 ```bash
 sysctl -w net.ipv4.conf.all.rp_filter=0
-sysctl -w net.ipv4.conf.vEth_KNI0.rp_filter=0
+sysctl -w net.ipv4.conf.vEth_port32.rp_filter=0
 ```
 
 Add a default gateway:
 
 ```bash
-route add default gw 3.3.3.2 vEth_KNI1
+route add default gw 3.3.3.2 vEth_port33
 ```
 
 Add an ARP entry to the default gateway:

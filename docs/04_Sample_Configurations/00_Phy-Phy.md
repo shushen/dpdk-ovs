@@ -118,11 +118,11 @@ Delete the default flow entries from the bridge:
 ./utilities/ovs-ofctl del-flows br0
 ```
 
-Add flow entries to switch packets from `Port0` (16) to `Port1` (17):
+Add flow entries to switch packets from `port16` (Phy 0) to `port17` (Phy 1):
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,\
-nw_src=1.1.1.1,nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,\
+nw_dst=6.6.6.2,idle_timeout=0,action=output:17
 ```
 
 ______
