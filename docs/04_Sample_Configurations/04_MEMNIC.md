@@ -132,6 +132,15 @@ ______
 
 ## Guest Setup
 
+### Apply set_mac_address support to `memnic` code
+
+At the moment MEMNIC virtual interfaces do not support MAC address setting once they have been created. The MAC addresses are set randomly at creation time. Apply the following patch to MEMNIC code in order to enable set_mac_address support.
+
+```bash
+cd $MEMNIC_DIR
+patch -N -p1 < memnic_set_mac_address.patch
+```
+
 ### Copy Files
 
 Copy files to the VM making sure the `-L` flag is used within `cp` to follow the symlinks.
@@ -141,7 +150,7 @@ rm -rf /tmp/qemu_share
 mkdir -p /tmp/qemu_share
 chmod 777 /tmp/qemu_share
 mkdir -p /tmp/qemu_share/memnic
-cp -a <MEMNIC_DIR>/* /tmp/qemu_share/DPDK
+cp -a $MEMNIC_DIR/* /tmp/qemu_share/DPDK
 ```
 
 ### Create VM

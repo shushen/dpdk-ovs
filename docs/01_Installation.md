@@ -48,6 +48,20 @@ OFTest is a test framework designed to "exercise a candidate OpenFlow switch (th
 
 OFTest requires a number of additional utilities to be installed prior to use - refer to the *Pre-requisites* section of the [Project Floodlight Getting Started Guide][oft-gsg]
 
+### MEMNIC (Optional)
+
+MEMNIC is a memory copy-based virtual network interface which can be used for network communication between host and guest. MEMNIC uses the standard unmodified IVSHMEM (Inter VM Shared Memory in QEMU) mechanism to share packets between host and guests applications. You can find information, including download links, for MEMNIC on the [MEMNIC dpdk.org page][memnic-dpdk-org].
+
+Clone the MEMNIC repo and checkout tag v1.0
+
+```bash
+git clone http://dpdk.org/git/memnic $MEMNIC_DIR
+cd $MEMNIC_DIR
+git checkout v1.0
+```
+
+Note: Only MEMNIC v1.0 has been validated. Using a different code base may cause undesired behaviours.
+
 ______
 
 ## Extract
@@ -243,3 +257,4 @@ ______
 [intel-dpdkgsg]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/intel-dpdk-getting-started-guide.html
 [intel-ark]: http://ark.intel.com/
 [oft-gsg]: http://docs.projectfloodlight.org/display/OFTest/Longer+Start
+[memnic-dpdk-org]: http://dpdk.org/browse/memnic
