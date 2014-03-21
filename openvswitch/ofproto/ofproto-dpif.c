@@ -1661,10 +1661,10 @@ get_features(struct ofproto *ofproto_ OVS_UNUSED,
                 OFPUTIL_A_SET_DL_DST |
                 OFPUTIL_A_SET_NW_SRC |
                 OFPUTIL_A_SET_NW_DST |
-                OFPUTIL_A_SET_NW_TOS |
+                /* OFPUTIL_A_SET_NW_TOS | Action not yet supported */
                 OFPUTIL_A_SET_TP_SRC |
-                OFPUTIL_A_SET_TP_DST |
-                OFPUTIL_A_ENQUEUE);
+                OFPUTIL_A_SET_TP_DST);
+                /* OFPUTIL_A_ENQUEUE); Action not yet supported */
 }
 
 static void

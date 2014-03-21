@@ -37,113 +37,102 @@
 #include <rte_memzone.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
-#include <rte_ivshmem.h>
 
 #include "init_drivers.h"
 #include "args.h"
 #include "init.h"
 #include "main.h"
 #include "kni.h"
+#include "vport.h"
 
 #define OBJNAMSIZ 32
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
-/* Template used to create QEMU's command line files */
-#define QEMU_CMD_FILE "/tmp/.ivshmem_qemu_cmdline_kni"
-#define KNI_IVSHMEM_METADATA "kni_ovs_ivshmem_metadata"
+#define OVS_KNI_QUEUE_TX	"kni_port_%u_tx"
+#define OVS_KNI_QUEUE_RX 	"kni_port_%u_rx"
+#define OVS_KNI_QUEUE_ALLOC	"kni_port_%u_alloc"
+#define OVS_KNI_QUEUE_FREE	"kni_port_%u_free"
+#define OVS_KNI_QUEUE_REQ	"kni_port_%u_req"
+#define OVS_KNI_QUEUE_RESP	"kni_port_%u_resp"
+#define OVS_KNI_QUEUE_SYNC	"kni_port_%u_sync"
+
+#define FAIL_ON_MEMZONE_NULL(mz) \
+	do { \
+		if ((mz) == NULL) \
+		{ rte_exit(EXIT_FAILURE, "FIFO initialisation failed.\n"); } \
+	}while(0)
 
 static void kni_fifo_init(struct rte_kni_fifo *fifo, unsigned size);
-static int create_kni_fifos(uint8_t kni_port_id);
-
-static void
-save_ivshmem_cmdline_to_file(const char *cmdline)
-{
-    FILE *file;
-    char path[PATH_MAX];
-
-    rte_snprintf(path, sizeof(path), QEMU_CMD_FILE);
-
-    file = fopen(path, "w");
-    if (file == NULL)
-        rte_exit(EXIT_FAILURE, "Cannot create QEMU cmdline for KNI ports\n");
-
-    RTE_LOG(INFO, APP, "QEMU cmdline for KNI ports: %s \n", cmdline);
-    fprintf(file, "%s\n", cmdline);
-    fclose(file);
-}
+static int create_kni_fifos(struct rte_kni *kni_dev,
+		struct vport_kni_fifo_names *fifo_names, uint8_t kni_port_id);
 
 /**
  * Create memzones and fifos for a KNI port.
  */
 static int
-create_kni_fifos(uint8_t kni_port_id)
+create_kni_fifos(struct rte_kni *kni_dev,
+		struct vport_kni_fifo_names *fifo_names, uint8_t kni_port_id)
 {
 	const struct rte_memzone *mz = NULL;
 	char obj_name[OBJNAMSIZ];
-	rte_kni_list[kni_port_id].pktmbuf_pool = pktmbuf_pool;
-
-	if (kni_port_id >= MAX_KNI_PORTS) {
-		RTE_LOG(ERR, APP, "Port id %u greater than MAX_KNI_PORTS %u",
-		        kni_port_id, MAX_KNI_PORTS);
-		return -EINVAL;
-	}
+	kni_dev->pktmbuf_pool = pktmbuf_pool;
 
 	/* TX RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%u_tx", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_TX, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].tx_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].tx_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->tx_q = mz->addr;
+	kni_fifo_init(kni_dev->tx_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->tx, sizeof(fifo_names->tx), "%s", mz->name);
 
 	/* RX RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%u_rx", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_RX, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].rx_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].rx_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->rx_q = mz->addr;
+	kni_fifo_init(kni_dev->rx_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->rx, sizeof(fifo_names->rx), "%s", mz->name);
 
 	/* ALLOC RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%u_alloc", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_ALLOC, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].alloc_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].alloc_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->alloc_q = mz->addr;
+	kni_fifo_init(kni_dev->alloc_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->alloc, sizeof(fifo_names->alloc), "%s", mz->name);
 
 	/* FREE RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%u_free", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_FREE, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].free_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].free_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->free_q = mz->addr;
+	kni_fifo_init(kni_dev->free_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->free, sizeof(fifo_names->free), "%s", mz->name);
 
 	/* Request RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%d_req", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_REQ, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].req_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].req_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->req_q = mz->addr;
+	kni_fifo_init(kni_dev->req_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->req, sizeof(fifo_names->req), "%s", mz->name);
 
 	/* Response RING */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%d_resp", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_RESP, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].resp_q = mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].resp_q, KNI_FIFO_COUNT_MAX);
+	kni_dev->resp_q = mz->addr;
+	kni_fifo_init(kni_dev->resp_q, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->resp, sizeof(fifo_names->resp), "%s", mz->name);
 
 	/* Req/Resp sync mem area */
-	rte_snprintf(obj_name, OBJNAMSIZ, "kni_port_%d_sync", kni_port_id);
+	rte_snprintf(obj_name, OBJNAMSIZ, OVS_KNI_QUEUE_SYNC, kni_port_id);
 	mz = rte_memzone_reserve(obj_name, KNI_FIFO_SIZE, SOCKET_ID_ANY, 0);
 	FAIL_ON_MEMZONE_NULL(mz);
-	rte_ivshmem_metadata_add_memzone(mz, KNI_IVSHMEM_METADATA);
-	rte_kni_list[kni_port_id].sync_addr= mz->addr;
-	kni_fifo_init(rte_kni_list[kni_port_id].sync_addr, KNI_FIFO_COUNT_MAX);
+	kni_dev->sync_addr= mz->addr;
+	kni_fifo_init(kni_dev->sync_addr, KNI_FIFO_COUNT_MAX);
+	rte_snprintf(fifo_names->sync, sizeof(fifo_names->sync), "%s", mz->name);
 
 	return 0;
 }
@@ -169,33 +158,17 @@ rte_spinlock_t rte_kni_locks[MAX_KNI_PORTS];
 void
 init_kni(void)
 {
-	uint8_t i = 0;
-	char cmdline[PATH_MAX];
+	uint8_t port_id = 0;
+	struct vport_kni_fifo_names kni_names;
 
-	/* Nothing to do if no KNI ports were specified */
-	if (num_kni == 0)
-	    return;
-
-	/* Create IVSHMEM config file for this client */
-	if (rte_ivshmem_metadata_create(KNI_IVSHMEM_METADATA) < 0) {
-		RTE_LOG(ERR, APP, "Cannot create kni ivshmem config '%s'\n",
-				KNI_IVSHMEM_METADATA);
-		return;
-	}
+	memset(rte_kni_list, 0, sizeof(rte_kni_list));
 
 	/* Create the rte_kni fifos for each KNI port */
-	for (i = 0; i < num_kni; i++) {
-		RTE_LOG(INFO, APP, "Initialising KNI %d\n", i);
-		create_kni_fifos(i);
-		rte_spinlock_init(&rte_kni_locks[i]);
+	for (port_id = 0; port_id < num_kni; port_id++) {
+		RTE_LOG(INFO, APP, "Initialising KNI port '%s'\n",
+				vport_get_name(KNI0 + port_id));
+		create_kni_fifos(&rte_kni_list[port_id], &kni_names, port_id);
+		vport_set_kni_fifo_names(KNI0 + port_id, &kni_names);
+		rte_spinlock_init(&rte_kni_locks[port_id]);
 	}
-
-	/* share the mbuf mempool*/
-	rte_ivshmem_metadata_add_mempool(pktmbuf_pool, KNI_IVSHMEM_METADATA);
-
-	/* Generate QEMU's command line */
-	rte_ivshmem_metadata_cmdline_generate(cmdline, sizeof(cmdline),
-			KNI_IVSHMEM_METADATA);
-
-	save_ivshmem_cmdline_to_file(cmdline);
 }

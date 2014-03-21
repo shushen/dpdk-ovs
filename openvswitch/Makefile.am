@@ -10,7 +10,7 @@ AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
 SUBDIRS = datapath
 if HAVE_DPDK
-SUBDIRS += . datapath/dpdk
+SUBDIRS += . datapath/dpdk datapath/dpdk/fd_link
 endif
 
 if HAVE_DPDK
@@ -22,16 +22,16 @@ dpdk_dir=$(RTE_SDK)
 dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
 dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
 
-dpdk_libs=$(dpdk_lib_dir)/libethdev.a \
-      $(dpdk_lib_dir)/librte_cmdline.a \
-      $(dpdk_lib_dir)/librte_hash.a \
-      $(dpdk_lib_dir)/librte_lpm.a \
+dpdk_libs=\
       $(dpdk_lib_dir)/librte_mbuf.a \
-      $(dpdk_lib_dir)/librte_mempool.a \
-      $(dpdk_lib_dir)/librte_ring.a \
       $(dpdk_lib_dir)/librte_eal.a \
       $(dpdk_lib_dir)/librte_pmd_ring.a \
       $(dpdk_lib_dir)/libethdev.a \
+      $(dpdk_lib_dir)/librte_cmdline.a \
+      $(dpdk_lib_dir)/librte_hash.a \
+      $(dpdk_lib_dir)/librte_lpm.a \
+      $(dpdk_lib_dir)/librte_mempool.a \
+      $(dpdk_lib_dir)/librte_ring.a \
       $(dpdk_lib_dir)/librte_malloc.a \
       $(dpdk_lib_dir)/librte_ivshmem.a 
 endif
@@ -52,6 +52,11 @@ AM_CPPFLAGS += -DNDEBUG
 AM_CFLAGS += -fomit-frame-pointer
 else
 AM_LDFLAGS = -export-dynamic -lpthread
+endif
+
+# Disable GCC flag that produces compilation warnings in DPDK
+if HAVE_DPDK
+AM_CFLAGS += -Wno-bad-function-cast
 endif
 
 # PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo

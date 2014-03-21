@@ -56,12 +56,12 @@ APP = ovs_dpdk
 
 # all source are stored in SRCS-y
 SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c \
-          stats.c ofpbuf_helper.c veth.c
+          stats.c ofpbuf_helper.c veth.c vhost.c vhost-net-cdev.c virtio-net.c
 
 INC := $(wildcard *.h)
 
 CFLAGS += -O3
-CFLAGS += -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+CFLAGS += -lpthread -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
 CFLAGS += -Wall -Werror \
 -Wclobbered \
 -Wempty-body \
@@ -74,6 +74,7 @@ CFLAGS += -Wall -Werror \
 -Wuninitialized \
 -Wunused-parameter \
 -Wunused-but-set-parameter
+CFLAGS += -D_FILE_OFFSET_BITS=64
 # All extra arguments above are part of -Wextra.
 # See http://stackoverflow.com/q/1538943
 # There's a known bug in gcc4.6 that makes -Wmissing-field-initializers flag
@@ -81,7 +82,7 @@ CFLAGS += -Wall -Werror \
 
 # fix dpdk link order, add to LDLIBS which is processed by dpdk's
 # macros.
-LDLIBS += -L$(OVS_DIR)/lib  -lopenvswitch -lrt
+LDLIBS += -L$(OVS_DIR)/lib  -lopenvswitch -lrt -lfuse
 
 # for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
 # and so the next line can be removed in those cases.

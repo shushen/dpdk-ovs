@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2013 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -42,54 +42,30 @@
 #include <rte_memzone.h>
 #include <rte_string_fns.h>
 #include <rte_kni.h>
+#include <rte_config.h>
 #include <exec-env/rte_kni_common.h>
 
-#define KNI_FIFO_COUNT_MAX   1024
+#include <ovs-vport.h>
+#include "kni-types.h"
+
 #define RTE_LOGTYPE_APP      RTE_LOGTYPE_USER1
-#define PKTMBUF_POOL_NAME    "MP_MProc_pktmbuf_pool"
-#define BASE_10              10
-#define BASE_16              16
 #define QUEUE_NAME_SIZE      32
 #define MBUF_OVERHEAD        (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
 #define RX_MBUF_DATA_SIZE    2048
 #define MBUF_SIZE            (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
 
-/* This must match the value defined in the ovs_dpdk app */
-#define MAX_KNI_PORTS        16
-
-/**
- * KNI context
- */
-struct rte_kni {
-	char name[RTE_KNI_NAMESIZE];        /**< KNI interface name */
-	uint16_t group_id;                  /**< Group ID of KNI devices */
-	struct rte_mempool *pktmbuf_pool;   /**< pkt mbuf mempool */
-	unsigned mbuf_size;                 /**< mbuf size */
-
-	struct rte_kni_fifo *tx_q;          /**< TX queue */
-	struct rte_kni_fifo *rx_q;          /**< RX queue */
-	struct rte_kni_fifo *alloc_q;       /**< Allocated mbufs queue */
-	struct rte_kni_fifo *free_q;        /**< To be freed mbufs queue */
-
-	/* For request & response */
-	struct rte_kni_fifo *req_q;         /**< Request queue */
-	struct rte_kni_fifo *resp_q;        /**< Response queue */
-	void * sync_addr;                   /**< Req/Resp Mem address */
-
-	struct rte_kni_ops ops;             /**< operations for request */
-	uint8_t in_use : 1;                 /**< kni creation flag */
-};
+/* list of port names used by the client */
+static char *port_names[MAX_KNI_PORTS];
+/* Number of enabled ports */
+static unsigned ports_n = 0;
 
 static struct rte_kni kni_list[MAX_KNI_PORTS];
-/* Mask of enabled ports */
-static uint32_t ports_mask = 0;
-static volatile int kni_fd = -1;
+static int kni_fd = 0;
 
 /* Function Prototypes */
 static int
-create_kni_device(uint8_t port_id);
-static const struct rte_memzone *
-kni_memzone_lookup(const char *queue_string, uint8_t port_id);
+create_kni_device(struct rte_kni *kni_dev, const char *port_name,
+		const unsigned kni_group_id);
 static int
 kni_change_mtu(uint8_t port_id, unsigned new_mtu);
 static int
@@ -105,8 +81,7 @@ static struct rte_kni_ops kni_ops = {
  * ndo_set_mtu function for the driver.
  */
 int
-kni_change_mtu(uint8_t __attribute__((unused))port_id,
-               unsigned __attribute__((unused))new_mtu)
+kni_change_mtu(uint8_t port_id __rte_unused, unsigned new_mtu __rte_unused)
 {
 	RTE_LOG(INFO, KNI, "Changing MTU is not supported\n");
 	return -EINVAL;
@@ -117,8 +92,8 @@ kni_change_mtu(uint8_t __attribute__((unused))port_id,
  * no real net device to configure.
  */
 int
-kni_config_network_interface(uint8_t __attribute__((unused))port_id,
-                             uint8_t __attribute__((unused))if_up)
+kni_config_network_interface(uint8_t port_id __rte_unused,
+                             uint8_t if_up __rte_unused)
 {
 	return 0;
 }
@@ -129,21 +104,8 @@ kni_config_network_interface(uint8_t __attribute__((unused))port_id,
 static void
 usage(const char *progname)
 {
-	printf("\nUsage: %s [EAL args] -- -p <port_mask>\n", progname);
-}
-
-/* Convert string to unsigned number. 0 is returned if error occurs */
-static uint32_t
-parse_unsigned(const char *portmask)
-{
-	char *end = NULL;
-	unsigned long num;
-
-	num = strtoul(portmask, &end, BASE_16);
-	if ((portmask[0] == '\0') || (end == NULL) || (*end != '\0'))
-		return 0;
-
-	return (uint32_t)num;
+	printf("\nUsage: %s [EAL args] -- -p <port_name> [-p <port_name>...]\n",
+			progname);
 }
 
 /*
@@ -155,16 +117,22 @@ parse_app_args(int argc, char *argv[])
 	int option_index = 0, opt = 0;
 	char **argvopt = argv;
 	const char *progname = NULL;
-	static struct option lgopts[] = {
-		{NULL, 0, 0, 0 }
-	};
+
 	progname = argv[0];
 
-	while ((opt = getopt_long(argc, argvopt, "p:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "p:", NULL,
 		&option_index)) != EOF){
 		switch (opt){
 			case 'p':
-				ports_mask = parse_unsigned(optarg);
+				if (ports_n == MAX_KNI_PORTS) {
+					RTE_LOG(ERR, APP, "Too many KNI ports have been requested\n");
+					return -1;
+				}
+
+				if (ovs_vport_is_vport_name_valid(optarg) < 0)
+					return -1;
+
+				port_names[ports_n++] = optarg;
 				break;
 			default:
 				usage(progname);
@@ -175,116 +143,100 @@ parse_app_args(int argc, char *argv[])
 	return 0;
 }
 
-/* Take the memzone name and attach port_id to perform
- * a lookup.
- */
-const struct rte_memzone *
-kni_memzone_lookup(const char *queue_string, uint8_t port_id)
-{
-
-	const struct rte_memzone *mz = NULL;
-	char q_name[QUEUE_NAME_SIZE];
-
-	rte_snprintf(q_name, QUEUE_NAME_SIZE, queue_string, port_id);
-	RTE_LOG(INFO, KNI, "Looking for memzone %s\n", q_name);
-	mz = rte_memzone_lookup(q_name);
-	if (mz == NULL) {
-		rte_exit(EXIT_FAILURE, "Memzone lookup of %s failed\n", q_name);
-	}
-	printf("queue name: %s\n", q_name);
-	printf("memzone %s - length: %"PRIu64", hugepage size: %"PRIu64"\n",
-			mz->name, mz->len, mz->hugepage_sz);
-	return mz;
-
-}
-
 /* Fill the dev_info struct and call the ioctl so the
  * kni device is created
  */
 int
-create_kni_device(uint8_t port_id)
+create_kni_device(struct rte_kni *kni_dev, const char *port_name,
+		const unsigned kni_group_id)
 {
 	const struct rte_memzone *mz = NULL;
 	struct rte_kni_device_info dev_info;
 
-	if (kni_list[port_id].in_use != 0) {
-		RTE_LOG(ERR, KNI, "Port %d has been used\n", port_id);
+	if (kni_dev->in_use != 0) {
+		RTE_LOG(ERR, KNI, "Port '%s' has been used\n", port_name);
 		return -1;
 	}
-	/* Check FD and open once */
-	if (kni_fd < 0) {
-		kni_fd = open("/dev/" KNI_DEVICE, O_RDWR);
-		if (kni_fd < 0) {
-			RTE_LOG(ERR, KNI, "Can not open /dev/%s\n", KNI_DEVICE);
-			return -1;
-		}
-	}
 
-	dev_info.group_id = port_id;
+	dev_info.group_id = kni_group_id;
 
-	rte_snprintf(dev_info.name, RTE_KNI_NAMESIZE, "vEth%u", port_id);
+	rte_snprintf(dev_info.name, RTE_KNI_NAMESIZE, "vEth_%s", port_name);
 
 	/* We store the guest virtual address in our kni structure and
 	 * write the physical address (I/O mem address not RAM address)
 	 * into the dev struct to be sent to the driver
 	 */
 
-	/* TX RING */
-	mz = kni_memzone_lookup("kni_port_%u_tx", port_id);
-	kni_list[port_id].tx_q = mz->addr;
+	/* TX fifo */
+	mz = ovs_vport_kni_lookup_tx_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->tx_q = mz->addr;
 	dev_info.tx_phys = mz->ioremap_addr;
 
-	/* RX RING */
-	mz = kni_memzone_lookup("kni_port_%u_rx", port_id);
-	kni_list[port_id].rx_q = mz->addr;
+	/* RX fifo */
+	mz = ovs_vport_kni_lookup_rx_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->rx_q = mz->addr;
 	dev_info.rx_phys = mz->ioremap_addr;
 
-	/* ALLOC RING */
-	mz = kni_memzone_lookup("kni_port_%u_alloc", port_id);
-	kni_list[port_id].alloc_q = mz->addr;
+	/* ALLOC fifo */
+	mz = ovs_vport_kni_lookup_alloc_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->alloc_q = mz->addr;
 	dev_info.alloc_phys = mz->ioremap_addr;
 
-	/* FREE RING */
-	mz = kni_memzone_lookup("kni_port_%u_free", port_id);
-	kni_list[port_id].free_q = mz->addr;
+	/* FREE fifo */
+	mz = ovs_vport_kni_lookup_free_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->free_q = mz->addr;
 	dev_info.free_phys = mz->ioremap_addr;
 
-	/* Request RING */
-	mz = kni_memzone_lookup("kni_port_%u_req", port_id);
-	kni_list[port_id].req_q = mz->addr;
+	/* REQUEST fifo */
+	mz = ovs_vport_kni_lookup_req_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->req_q = mz->addr;
 	dev_info.req_phys = mz->ioremap_addr;
 
-	/* Response RING */
-	mz = kni_memzone_lookup("kni_port_%u_resp", port_id);
-	kni_list[port_id].resp_q = mz->addr;
+	/* RESPONSE fifo */
+	mz = ovs_vport_kni_lookup_resp_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->resp_q = mz->addr;
 	dev_info.resp_phys = mz->ioremap_addr;
 
-	/* Req/Resp sync mem area */
-	mz = kni_memzone_lookup("kni_port_%u_sync", port_id);
-	kni_list[port_id].sync_addr = mz->addr;
+	/* SYNC fifo */
+	mz = ovs_vport_kni_lookup_sync_fifo(port_name);
+	if (mz == NULL)
+		return -1;
+	kni_dev->sync_addr = mz->addr;
 	dev_info.sync_va = mz->addr;
 	dev_info.sync_phys = mz->ioremap_addr;
 
-	mz = rte_memzone_lookup(PKTMBUF_POOL_NAME);
-	if (mz == NULL) {
-		rte_exit(EXIT_FAILURE, "Memzone lookup of %s failed\n", PKTMBUF_POOL_NAME);
-	}
+	mz = ovs_vport_guest_lookup_packet_mempools_memzone();
+	if (mz == NULL)
+		return -1;
+
 	dev_info.mbuf_va = mz->addr;
 	dev_info.mbuf_phys = mz->ioremap_addr;
 
-	kni_list[port_id].mbuf_size = MBUF_SIZE;
+	kni_dev->mbuf_size = MBUF_SIZE;
 	/* Configure the buffer size which will be checked in kernel module */
-	dev_info.mbuf_size = kni_list[port_id].mbuf_size;
+	dev_info.mbuf_size = kni_dev->mbuf_size;
 	dev_info.mempool_size = mz->len;
 
-	memcpy(&kni_list[port_id].ops, &kni_ops, sizeof(struct rte_kni_ops));
+	memcpy(&kni_dev->ops, &kni_ops, sizeof(struct rte_kni_ops));
 
 	if (ioctl(kni_fd, RTE_KNI_IOCTL_CREATE, &dev_info) < 0) {
 		RTE_LOG(ERR, KNI, "ioctl call on /dev/%s failed", KNI_DEVICE);
 		return -1;
 	}
 
-	kni_list[port_id].in_use = 1;
+	kni_dev->in_use = 1;
 	return 0;
 }
 
@@ -298,6 +250,7 @@ main(int argc, char *argv[])
 {
 	int retval = 0;
 	uint8_t port = 0;
+	char *port_name;
 
 	if ((retval = rte_eal_init(argc, argv)) < 0) {
 		RTE_LOG(INFO, APP, "EAL init failed.\n");
@@ -311,30 +264,36 @@ main(int argc, char *argv[])
 
 	memset(kni_list, 0, sizeof(struct rte_kni) * MAX_KNI_PORTS);
 
-	/* Initialise the devices for each port*/
-	for (port = 0; port < MAX_KNI_PORTS; port++) {
-		/* Skip ports that are not enabled */
-		if ((ports_mask & (1 << port)) == 0) {
-			RTE_LOG(INFO, KNI, "skipping port %d\n", port);
-			continue;
-		}
-		RTE_LOG(INFO, KNI, "Attaching queues for port %d\n", port);
-		create_kni_device(port);
-		RTE_LOG(INFO, APP, "Finished Process Init.\n");
-		RTE_LOG(INFO, APP, "KNI queues ready.\n");
+	/* Open KNI or exit */
+	kni_fd = open("/dev/" KNI_DEVICE, O_RDWR);
+	if (kni_fd < 0) {
+		RTE_LOG(ERR, KNI, "Can not open /dev/%s\n", KNI_DEVICE);
+		return -1;
 	}
-	printf("[Press Ctrl-C to quit ...]\n");
+
+	/* Lookup for vports struct */
+	if (ovs_vport_lookup_vport_info() == NULL)
+		return -1;
+
+	/* Initialise the devices for each port*/
+	for (port = 0; port < ports_n; port++) {
+		port_name = port_names[port];
+		RTE_LOG(INFO, KNI, "Attaching queues for port '%s'\n", port_name);
+		if (create_kni_device(&kni_list[port], port_name, port) < 0)
+			return -1;
+	}
+
+	RTE_LOG(INFO, KNI, "\nKNI client handling packets \n");
+	RTE_LOG(INFO, KNI, "[Press Ctrl-C to quit ...]\n");
 
 	for (;;) {
-		for (port = 0; port < MAX_KNI_PORTS; port++) {
-			if ((ports_mask & (1 << port)) != 0) {
-				/* Sleep to reduce processor load. As long as we respond
-				 * before rtnetlink times out we will still be able to ifup
-				 * and change mtu
-				 */
-				sleep(1);
-				rte_kni_handle_request(&kni_list[port]);
-			}
+		for (port = 0; port < ports_n; port++) {
+			/* Sleep to reduce processor load. As long as we respond
+			 * before rtnetlink times out we will still be able to ifup
+			 * and change mtu
+			 */
+			sleep(1);
+			rte_kni_handle_request(&kni_list[port]);
 		}
 	}
 

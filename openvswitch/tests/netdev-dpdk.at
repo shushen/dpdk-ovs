@@ -1,0 +1,10 @@
+m4_define([CHECK_DPIF_DPDK],
+
+[AT_BANNER([Test netdev-dpdk.c ])
+
+AT_SETUP([Test netdev_dpdk_change_seq])
+AT_CHECK([sudo -E $srcdir/test-netdev-dpdk --netdev_dpdk_test_change_seq], [0], [ignore], [])
+AT_CLEANUP
+
+])
+CHECK_DPIF_DPDK([])

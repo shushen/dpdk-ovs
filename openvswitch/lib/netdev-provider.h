@@ -661,7 +661,11 @@ int netdev_unregister_provider(const char *type);
 extern const struct netdev_class netdev_linux_class;
 extern const struct netdev_class netdev_internal_class;
 extern const struct netdev_class netdev_tap_class;
-extern const struct netdev_class netdev_dpdk_class;
+extern const struct netdev_class netdev_dpdk_client_class;
+extern const struct netdev_class netdev_dpdk_kni_class;
+extern const struct netdev_class netdev_dpdk_phy_class;
+extern const struct netdev_class netdev_dpdk_veth_class;
+extern const struct netdev_class netdev_dpdk_vhost_class;
 extern const struct netdev_class netdev_dpdk_internal_class;
 #if defined(__FreeBSD__) || defined(__NetBSD__)
 extern const struct netdev_class netdev_bsd_class;

@@ -23,12 +23,27 @@
 
 #include "ofpbuf.h"
 #include "dpif.h"
+#include "common.h"
 
-#define DPIF_DPDK_FLOW_FAMILY	0xF
-#define DPIF_DPDK_PACKET_FAMILY	0x1F
+#define DPIF_DPDK_VPORT_FAMILY     0xE
+#define DPIF_DPDK_FLOW_FAMILY      0xF
+#define DPIF_DPDK_PACKET_FAMILY    0x1F
+
+#define DPDK_PORT_MAX_STRING_LEN   32
+
+struct dpif_dpdk_vport_stats {
+	uint64_t rx;        /* Rx packet count */
+	uint64_t tx;        /* Tx packet count */
+	uint64_t rx_bytes;  /* Rx packet count */
+	uint64_t tx_bytes;  /* Tx bytes count */
+	uint64_t rx_drop;   /* Rx dropped packet count */
+	uint64_t tx_drop;   /* Tx dropped packet count */
+	uint64_t rx_error;  /* Rx error packet count */
+	uint64_t tx_error;  /* Tx error packet count */
+};
 
 struct dpif_dpdk_flow_key {
-	odp_port_t in_port; 
+	odp_port_t in_port;
 	struct ether_addr ether_dst;
 	struct ether_addr ether_src;
 	uint16_t ether_type;
@@ -52,12 +67,26 @@ struct dpif_dpdk_flow_stats {
 };
 
 struct dpif_dpdk_upcall {
-    uint8_t cmd;
-    struct dpif_dpdk_flow_key key;
+	uint8_t cmd;
+	struct dpif_dpdk_flow_key key;
 };
 
 /* TODO: same value as VPORTS increase if required */
-#define MAX_ACTIONS	(48)
+/* Increasing this value to the same as MAX_VPORTS
+ * introduces packet corruption
+ */
+#define MAX_ACTIONS    (48)
+
+enum dpif_dpdk_vport_type {
+	VPORT_TYPE_DISABLED = 0,
+	VPORT_TYPE_VSWITCHD,
+	VPORT_TYPE_BRIDGE,
+	VPORT_TYPE_PHY,
+	VPORT_TYPE_CLIENT,
+	VPORT_TYPE_KNI,
+	VPORT_TYPE_VETH,
+	VPORT_TYPE_VHOST
+};
 
 enum dpif_dpdk_action_type {
 	ACTION_NULL,     /* Empty action */
@@ -93,6 +122,18 @@ struct dpif_dpdk_action {
 	} data;
 };
 
+/* A 'vport managment' message between vswitchd <-> datapath. */
+struct dpif_dpdk_vport_message {
+	uint32_t id;              /* Thread ID of sending thread */
+	uint8_t cmd;              /* Command to execute on vport. */
+	uint32_t flags;           /* Additional flags, if any, or null. */
+	uint32_t port_no;         /* Number of the vport. */
+	char port_name[DPDK_PORT_MAX_STRING_LEN];    /* Name of the vport. */
+	enum dpif_dpdk_vport_type type;      /* Type of the vport */
+	char reserved[16];           /* Padding - currently reserved for future use */
+	struct dpif_dpdk_vport_stats stats;  /* Current statistics for the given vport. */
+};
+
 struct dpif_dpdk_flow_message {
 	uint32_t id;
 	uint8_t cmd;
@@ -107,12 +148,20 @@ struct dpif_dpdk_packet_message {
 	struct dpif_dpdk_action actions[MAX_ACTIONS];
 };
 
+/* A message between vswitchd <-> datapath. */
 struct dpif_dpdk_message {
-	int16_t type;
-	union {
+	int16_t type;        /* Message type, if a request, or return code */
+	union {              /* Actual message */
+		struct dpif_dpdk_vport_message vport_msg;
 		struct dpif_dpdk_flow_message flow_msg;
 		struct dpif_dpdk_packet_message packet_msg;
 	};
+};
+
+/* Semantic wrapping of a vport_message as a state struct. This is used in
+ * by the state machine found in the DPIF's 'dump' command. */
+struct dpif_dpdk_port_state {
+	struct dpif_dpdk_vport_message vport;
 };
 
 struct dpif_dpdk_flow_state {
@@ -121,5 +170,7 @@ struct dpif_dpdk_flow_state {
 	struct ofpbuf actions_buf;
 	struct ofpbuf key_buf;
 };
+
+int dpif_dpdk_port_get_stats(const char *name, struct dpif_dpdk_vport_stats *stats);
 
 #endif /* dpif-dpdk.h */

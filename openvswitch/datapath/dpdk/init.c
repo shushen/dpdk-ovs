@@ -32,7 +32,6 @@
  *
  */
 
-
 #include <string.h>
 #include <rte_string_fns.h>
 #include <rte_malloc.h>
@@ -58,16 +57,14 @@
 #define MBUFS_PER_PORT    3072
 #define MBUFS_PER_KNI     3072
 #define MBUFS_PER_VETH    3072
+#define MBUFS_PER_VHOST   3072
 #define MBUFS_PER_DAEMON  2048
 
-#define PKTMBUF_POOL_NAME "MProc_pktmbuf_pool"
-
-#define MBUF_CACHE_SIZE 32
+#define MBUF_CACHE_SIZE 128
 #define MBUF_OVERHEAD (sizeof(struct rte_mbuf) + RTE_PKTMBUF_HEADROOM)
-#define RX_MBUF_DATA_SIZE 2048
-#define MBUF_SIZE (RX_MBUF_DATA_SIZE + MBUF_OVERHEAD)
-
-
+#define MAX_PACKET_SIZE 1520
+#define MBUF_SIZE (MAX_PACKET_SIZE + MBUF_OVERHEAD + \
+		RTE_MAX(sizeof(struct dpdk_message),sizeof(struct dpdk_upcall)))
 
 /**
  * Initialise the mbuf pool
@@ -76,10 +73,15 @@ static int
 init_mbuf_pools(void)
 {
 	const unsigned num_mbufs = (num_clients * MBUFS_PER_CLIENT)
-			+ (port_cfg.num_ports * MBUFS_PER_PORT)
+			+ (port_cfg.num_phy_ports * MBUFS_PER_PORT)
 			+ (num_kni * MBUFS_PER_KNI)
 			+ (num_veth * MBUFS_PER_VETH)
+			+ (num_vhost * MBUFS_PER_VHOST)
 			+ MBUFS_PER_DAEMON;
+
+	/* make sure the upcall does not the exceed mbuf headroom */
+	if (sizeof(struct dpdk_upcall) >= RTE_PKTMBUF_HEADROOM)
+		rte_panic("Upcall exceed mbuf headroom\n");
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
 	 * seems faster to use a cache instead */
@@ -101,6 +103,7 @@ int
 init(int argc, char *argv[])
 {
 	int retval;
+	unsigned lcore;
 	uint8_t total_ports = 0;
 
 	/* init EAL, parsing EAL args */
@@ -134,7 +137,13 @@ init(int argc, char *argv[])
 	datapath_init();
 	vport_init();
 	stats_init();
+	if (num_vhost)
+		vhost_init();
 
+	/* Set flags on each core for safe vhost device removal. */
+	RTE_LCORE_FOREACH(lcore) {
+		dev_removal_flag[lcore] = ACK_DEV_REMOVAL;
+	}
 	return 0;
 }
 

@@ -38,9 +38,10 @@
 
 /* The mbuf pool for packet rx */
 struct rte_mempool *pktmbuf_pool;
-uint8_t num_clients;
-uint8_t num_kni;
-uint8_t num_veth;
+uint32_t num_clients;
+uint32_t num_kni;
+uint32_t num_veth;
+uint32_t num_vhost;
 unsigned num_sockets;
 
 unsigned stats_display_interval;

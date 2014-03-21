@@ -16,7 +16,7 @@
  * Contributions after 2012-01-13 are licensed under the terms of the
  * GNU GPL, version 2 or (at your option) any later version.
  *
- * Copyright 2012-2013 Intel Corporation All Rights Reserved.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  */
 #include "hw.h"
 #include "pc.h"

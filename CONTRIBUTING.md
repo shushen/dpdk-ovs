@@ -63,8 +63,9 @@ should be in the following format:
 The subject, minus the ``[PATCH <n>/<m>]`` prefix, becomes the first line of
 the commit's change log message.
 
-If you are using Git, then ``git format-patch`` or ``git send-email`` takes
-care of most of the mechanics described below for you.
+To prepare a patch, it must be saved with ``git commit``. All patches must be 
+generated with ``git send-email``. This will take care of most of the mechanics
+described below for you.
 
 ### Description
 

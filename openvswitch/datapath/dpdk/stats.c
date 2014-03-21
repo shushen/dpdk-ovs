@@ -248,6 +248,18 @@ inline uint64_t stats_vport_overrun_get(unsigned vportid)
 	return overrun;
 }
 
+inline struct port_stats stats_vport_get(unsigned vportid)
+{
+       struct port_stats stats = {0};
+
+       stats.rx = stats_vport_rx_get(vportid);
+       stats.tx = stats_vport_tx_get(vportid);
+       stats.rx_drop = stats_vport_rx_drop_get(vportid);
+       stats.tx_drop = stats_vport_tx_drop_get(vportid);
+
+       return stats;
+}
+
 inline uint64_t stats_vswitch_rx_drop_get(void)
 {
 	uint64_t rx_drop;

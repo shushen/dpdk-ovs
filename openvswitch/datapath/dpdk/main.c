@@ -66,6 +66,9 @@
 static const char *get_printable_mac_addr(uint8_t port);
 static void stats_display(void);
 
+#define TSC_RES_US 1 /* Resolution in usecs for global update of curr_tsc. */
+static uint64_t tsc_update_period; /* Time between updating global curr_tsc. */
+
 /*
  * Returns MAC address for port in a string
  */
@@ -122,7 +125,7 @@ stats_display(void)
 
 	printf("Physical Ports\n");
 	printf("-----\n");
-	for (i = 0; i < ports->num_ports; i++)
+	for (i = 0; i < ports->num_phy_ports; i++)
 		printf("Port %u: '%s'\t", ports->id[i],
 				get_printable_mac_addr(ports->id[i]));
 	printf("\n\n");
@@ -132,10 +135,10 @@ stats_display(void)
 		     "Interface       rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 		     "-------------   ------------  ------------  ------------  ------------\n");
 	for (i = 0; i < MAX_VPORTS; i++) {
-		const char *name = vport_name(i);
-		if (*name == 0)
+		const char *name = vport_get_name(i);
+		if (name == NULL || *name == 0)
 			continue;
-		printf("%-12s ", name);
+		printf("%-*.*s ", 13, 13, name);
 		printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 		       stats_vport_rx_get(i),
 		       stats_vport_rx_drop_get(i),
@@ -157,12 +160,24 @@ static inline void
 do_vswitchd(void)
 {
 	static uint64_t last_stats_display_tsc = 0;
+	static uint64_t next_tsc = 0;
+	uint64_t curr_tsc_local;
 
 	/* handle any packets from vswitchd */
 	handle_request_from_vswitchd();
 
+	/* 
+	 * curr_tsc is accessed by all cores but is updated here for each loop
+	 * which causes cacheline contention. By setting a defined update
+	 * period for curr_tsc of 1us this contention is removed.
+	 */
+	curr_tsc_local = rte_rdtsc();
+	if (curr_tsc_local >= next_tsc) {
+		curr_tsc = curr_tsc_local;
+		next_tsc = curr_tsc_local + tsc_update_period;
+	}
+
 	/* display stats every 'stats' sec */
-	curr_tsc = rte_rdtsc();
 	if ((curr_tsc - last_stats_display_tsc) / cpu_freq >= stats_display_interval
 	              && stats_display_interval != 0)
 	{
@@ -171,14 +186,18 @@ do_vswitchd(void)
 	}
 	flush_clients();
 	flush_ports();
-
+	flush_vhost_devs();
 }
 
 static inline void __attribute__((always_inline))
 do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
 {
 	int j;
-	struct flow_key key;
+	/* 
+	 * Initialize array of keys to 0 to avoid overhead of
+	 * loading the full key in to cache at once later.
+	 */
+	struct flow_key key[PKT_BURST_SIZE] = {{0}};
 
 	/* Prefetch first packets */
 	for (j = 0; j < PREFETCH_OFFSET && j < rx_count; j++)
@@ -186,15 +205,15 @@ do_switch_packets(unsigned vportid, struct rte_mbuf **bufs, int rx_count)
 
 	/* Prefetch new packets and forward already prefetched packets */
 	for (j = 0; j < (rx_count - PREFETCH_OFFSET); j++) {
-		flow_key_extract(bufs[j], vportid, &key);
+		flow_key_extract(bufs[j], vportid, &key[j]);
 		rte_prefetch0(rte_pktmbuf_mtod(bufs[j + PREFETCH_OFFSET], void *));
-		switch_packet(bufs[j], &key);
+		switch_packet(bufs[j], &key[j]);
 	}
 
 	/* Forward remaining prefetched packets */
 	for (; j < rx_count; j++) {
-		flow_key_extract(bufs[j], vportid, &key);
-		switch_packet(bufs[j], &key);
+		flow_key_extract(bufs[j], vportid, &key[j]);
+		switch_packet(bufs[j], &key[j]);
 	}
 }
 
@@ -204,6 +223,7 @@ do_client_switching(void)
 	static unsigned client = CLIENT1;
 	static unsigned kni_vportid = KNI0;
 	static unsigned veth_vportid = VETH0;
+	static unsigned vhost_vportid = VHOST0;
 	int rx_count = 0;
 	struct rte_mbuf *bufs[PKT_BURST_SIZE];
 
@@ -240,8 +260,20 @@ do_client_switching(void)
 		}
 	}
 
+	/* Vhost Devices */
+	if (num_vhost) {
+		rx_count = receive_from_vport(vhost_vportid, &bufs[0]);
+		do_switch_packets(vhost_vportid, bufs, rx_count);
+
+		/* move to next vhost port */
+		if (++vhost_vportid == (unsigned)VHOST0 + num_vhost) { 
+			vhost_vportid = VHOST0;
+		}
+	}
+
 	flush_clients();
 	flush_ports();
+	flush_vhost_devs();
 }
 
 static inline void __attribute__((always_inline))
@@ -255,6 +287,7 @@ do_port_switching(unsigned vportid)
 
 	flush_clients();
 	flush_ports();
+	flush_vhost_devs();
 	flush_nic_tx_ring(vportid);
 }
 
@@ -297,6 +330,9 @@ lcore_main(void *arg __rte_unused)
 		/* Measuring CPU frequency */
 		measure_cpu_frequency();
 		RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n", cpu_freq / 1000000);
+
+		/* Set the curr_tsc update period. */
+		tsc_update_period = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * TSC_RES_US;
 		nr_vswitchd = RUN_ON_THIS_THREAD;
 	}
 	/* client_switching_core is used process packets from client rings
@@ -315,6 +351,15 @@ lcore_main(void *arg __rte_unused)
 	}
 
 	for (;;) {
+		/*
+		 * This to to ensure that a vhost device can be safely removed.
+		 * If the core has set the flag below then memory associated
+		 * with the device can be unmapped.
+		 */
+		if (unlikely(dev_removal_flag[id] == REQUEST_DEV_REMOVAL)) {
+			dev_removal_flag[id] = ACK_DEV_REMOVAL;
+		}
+
 		if (nr_vswitchd)
 			do_vswitchd();
 		if (nr_client_switching)

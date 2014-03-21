@@ -58,36 +58,24 @@
 #include <string.h>
 #include <assert.h>
 
-void
-test_dpif_dpdk_get_stats(struct dpif *dpif_p);
-void
-test_dpif_dpdk_port_add(struct dpif *dpif_p);
+void test_dpif_dpdk_get_stats(struct dpif *dpif_p);
+void test_dpif_dpdk_port_add(struct dpif *dpif_p);
 void test_dpif_dpdk_port_del(struct dpif *dpif_p);
 void test_dpif_dpdk_port_query_by_number(struct dpif *dpif_p);
 void test_dpif_dpdk_port_query_by_name(struct dpif *dpif_p);
 void test_dpif_dpdk_get_max_ports(struct dpif *dpif_p);
 void test_dpif_dpdk_port_dump_start(struct dpif *dpif_p);
 void test_dpif_dpdk_port_dump_next(struct dpif *dpif_p);
-void
-test_dpif_dpdk_port_dump_done(struct dpif *dpif_p);
-void
-test_dpif_dpdk_port_poll(struct dpif *dpif_p);
-void
-test_dpif_dpdk_port_poll_wait(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_put(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_get(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_del(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_flush(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_dump_start(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_dump_next(struct dpif *dpif_p);
-void
-test_dpif_dpdk_flow_dump_done(struct dpif *dpif_p);
+void test_dpif_dpdk_port_dump_done(struct dpif *dpif_p);
+void test_dpif_dpdk_port_poll(struct dpif *dpif_p);
+void test_dpif_dpdk_port_poll_wait(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_put(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_get(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_del(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_flush(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_dump_start(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_dump_next(struct dpif *dpif_p);
+void test_dpif_dpdk_flow_dump_done(struct dpif *dpif_p);
 
 int
 main(int argc, char *argv[])
@@ -98,7 +86,8 @@ main(int argc, char *argv[])
 	int c = 0;
 
 	rte_eal_init(argc, argv);
-	init_test_rings();
+	/* Init all rings and a fake mempool with 20 mbufs */
+	init_test_rings(20);
 
 	dpif_create_and_open("br0", "dpdk", dpifp);
 
@@ -225,114 +214,258 @@ test_dpif_dpdk_get_stats(struct dpif *dpif_p)
 void
 test_dpif_dpdk_port_add(struct dpif *dpif_p)
 {
+	struct dpif_dpdk_message reply;
 	int result = -1;
 	struct netdev netdev;
+	struct netdev_class netdev_class;
 	odp_port_t port_no = -1;
 
+	/* Null in-parameter checks */
 	result = dpif_p->dpif_class->port_add(dpif_p, NULL, &port_no);
 	assert(result == EINVAL);
 	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, NULL);
 	assert(result == EINVAL);
 
-	netdev.name = "nonexistant_port";
+	/* Invalid netdev type */
+
+	/* No need to enqueue a reply - we won't get that far */
+
+	netdev.name = "invalid_port_example";
+	netdev.netdev_class = &netdev_class;
+	netdev_class.type = "doesnotexist";
+
 	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
 	assert(result == ENODEV);
 
-	netdev.name = "ovs_dpdk_17";
+	/* Invalid vhost port name*/
+
+	/* No need to enqueue a reply - we won't get that far */
+
+	netdev.name = "an_extremely_long_port_name";
+	netdev.netdev_class = &netdev_class;
+	netdev_class.type = "dpdkvhost";
+
 	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
+	assert(result == EINVAL);
+
+	/* Bridge ports handled correctly */
+	/* Create a fake reply to put on the reply ring. We don't use
+	 * this, but transact will hang until a reply is received so
+	 * there has to be something to dequeue.
+	 */
+	create_dpdk_port_add_reply(&reply, 0, 0);
+	result = enqueue_reply_on_reply_ring(reply);
 	assert(result == 0);
-	assert(port_no == 17);
 
 	netdev.name = "br0";
+	netdev.netdev_class = &netdev_class;
+	netdev_class.type = "internal";
+
 	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
 	assert(result == 0);
 	assert(port_no == 0);
+
+	/* Non-bridge ports handled correctly */
+	create_dpdk_port_add_reply(&reply, 32, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	netdev.name = "kni_example";
+	netdev.netdev_class = &netdev_class;
+	netdev_class.type = "dpdkkni";
+
+	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
+	assert(result == 0);
+	/* this number (32) is returned by the stubbed dpif for all kni devs */
+	assert(port_no == 32);
+
+	/* Port number not set on error in datapath */
+	port_no = -1;
+
+	create_dpdk_port_add_reply(&reply, 16, ENODEV);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	netdev.name = "kni_example";
+	netdev.netdev_class = &netdev_class;
+	netdev_class.type = "dpdkkni";
+
+	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
+	assert(result == ENODEV);
+	assert(port_no == -1);
+
 	printf(" %s\n", __FUNCTION__);
 }
 
-void test_dpif_dpdk_port_del(struct dpif *dpif_p)
+void
+test_dpif_dpdk_port_del(struct dpif *dpif_p)
 {
-
+	struct dpif_dpdk_message reply;
 	int result = -1;
 	odp_port_t port_no = -1;
+
+	/* Error codes passed back from datapath */
+	/* build fake reply */
+	create_dpdk_port_del_reply(&reply, ENODEV);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
 	result = dpif_p->dpif_class->port_del(dpif_p, port_no);
-	assert(result == 0);
-	printf(" %s\n", __FUNCTION__);
-}
-
-void test_dpif_dpdk_port_query_by_number(struct dpif *dpif_p)
-{
-	int result = -1;
-	odp_port_t port_no = -1;
-	struct dpif_port dpif_port;
-	result = dpif_p->dpif_class->port_query_by_number(dpif_p, port_no, &dpif_port);
-	assert(result == 0);
-	printf(" %s\n", __FUNCTION__);
-}
-
-void test_dpif_dpdk_port_query_by_name(struct dpif *dpif_p)
-{
-	int result = -1;
-	struct dpif_port dpif_port;
-
-	result = dpif_p->dpif_class->port_query_by_name(dpif_p, NULL,
-	                                                &dpif_port);
-	assert(result == EINVAL);
-
-	result = dpif_p->dpif_class->port_query_by_name(dpif_p, "ovs_dpdk_18",
-	                                                NULL);
-	assert(result == 0);
-
-	result = dpif_p->dpif_class->port_query_by_name(dpif_p, "nonexistant_port",
-	                                                &dpif_port);
 	assert(result == ENODEV);
 
-	result = dpif_p->dpif_class->port_query_by_name(dpif_p, "ovs_dpdk_18",
-	                                                &dpif_port);
+	/* normal operation */
+	/* build fake reply */
+	create_dpdk_port_del_reply(&reply, 0);
+	result = enqueue_reply_on_reply_ring(reply);
 	assert(result == 0);
-	assert(strncmp(dpif_port.type, "dpdk", 4) == 0);
-	assert(dpif_port.port_no == 18);
-	assert(strncmp(dpif_port.name, "ovs_dpdk_18", 11) == 0);
 
-	result = dpif_p->dpif_class->port_query_by_name(dpif_p, "br0",
-	                                                &dpif_port);
+	result = dpif_p->dpif_class->port_del(dpif_p, port_no);
 	assert(result == 0);
-	assert(strncmp(dpif_port.type, "internal", 8) == 0);
-	assert(dpif_port.port_no == 0);
-	assert(strncmp(dpif_port.name, "br0", 3) == 0);
+
 	printf(" %s\n", __FUNCTION__);
 }
 
-void test_dpif_dpdk_get_max_ports(struct dpif *dpif_p)
+void
+test_dpif_dpdk_port_query_by_number(struct dpif *dpif_p)
+{
+	struct dpif_dpdk_message reply;
+	int result = -1;
+	struct dpif_port dpif_port;
+	char port_name[DPDK_PORT_MAX_STRING_LEN] = "random_port";
+
+	/* Error codes passed back from datapath */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 0, NULL, VPORT_TYPE_KNI, ENODEV);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_number(dpif_p, 1, NULL);
+	assert(result == ENODEV);
+
+	/* NULL port type from datapath generates EINVAL */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 0, NULL, VPORT_TYPE_DISABLED, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_number(dpif_p, 1, NULL);
+	assert(result == EINVAL);
+
+	/* normal operation */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 1, port_name, VPORT_TYPE_KNI, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_number(dpif_p, 1, &dpif_port);
+	assert(result == 0);
+	assert(strcmp(dpif_port.name, port_name) == 0);
+	assert(dpif_port.port_no == 1);
+
+	printf(" %s\n", __FUNCTION__);
+}
+
+void
+test_dpif_dpdk_port_query_by_name(struct dpif *dpif_p)
+{
+	struct dpif_dpdk_message reply;
+	int result = -1;
+	struct dpif_port dpif_port;
+	char port_name[DPDK_PORT_MAX_STRING_LEN] = "random_port";;
+
+	/* Error codes passed back from datapath */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 0, port_name, VPORT_TYPE_KNI, ENODEV);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_name(dpif_p, port_name, NULL);
+	assert(result == ENODEV);
+
+	/* NULL port type from datapath generates EINVAL */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 0, port_name, VPORT_TYPE_DISABLED, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_name(dpif_p, port_name, NULL);
+	assert(result == EINVAL);
+
+	/* normal operation */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 1, port_name, VPORT_TYPE_KNI, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_query_by_name(dpif_p, port_name, &dpif_port);
+	assert(result == 0);
+	assert(strcmp(dpif_port.name, port_name) == 0);
+	assert(dpif_port.port_no == 1);
+
+	printf(" %s\n", __FUNCTION__);
+}
+
+void
+test_dpif_dpdk_get_max_ports(struct dpif *dpif_p)
 {
 	int result = -1;
 	result = dpif_p->dpif_class->get_max_ports(dpif_p);
 	assert(result == MAX_VPORTS);
+
 	printf(" %s\n", __FUNCTION__);
 }
 
-void test_dpif_dpdk_port_dump_start(struct dpif *dpif_p)
+void
+test_dpif_dpdk_port_dump_start(struct dpif *dpif_p)
 {
 	int result = -1;
-	void **statep = NULL;
-	/* note: statep is null here, but port dump start doesn't
-	 * use it so it doesn't matter
-	 */
+	struct dpif_dpdk_port_state *state;
+	void **statep = (void **)&state;
+
 	result = dpif_p->dpif_class->port_dump_start(dpif_p, statep);
 	assert(result == 0);
+
 	printf(" %s\n", __FUNCTION__);
 }
 
-void test_dpif_dpdk_port_dump_next(struct dpif *dpif_p)
+void
+test_dpif_dpdk_port_dump_next(struct dpif *dpif_p)
 {
+	struct dpif_dpdk_message reply;
 	int result = -1;
-	struct dpif_port *dpif_port_p = NULL;
-	void **statep = NULL;
-	/* note: state is null here, but port dump next doesn't
-	 * use it so it doesn't matter
-	 */
-	result = dpif_p->dpif_class->port_dump_next(dpif_p, statep, dpif_port_p);
+	struct dpif_port dpif_port;
+	struct dpif_port *dpif_port_p = &dpif_port;
+	struct dpif_dpdk_port_state *state;
+	void **statep = (void **)&state;
+	char port_name[DPDK_PORT_MAX_STRING_LEN] = "random_port";
+
+	/* dump is a state machine, and hence relies on dump_start to get things
+	 * rolling. Might as well use that function here to set things up */
+	result = dpif_p->dpif_class->port_dump_start(dpif_p, statep);
+	assert(result == 0);
+
+	/* Error codes passed back from datapath */
+	/* build fake reply - the reply from dump is similar to that of the 'query'
+	 * (ostensibly enough), hence just use that */
+	create_dpdk_port_query_reply(&reply, 0, port_name, VPORT_TYPE_KNI, EOF);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_dump_next(dpif_p, state, dpif_port_p);
 	assert(result == EOF);
+	/* normal operation */
+	/* build fake reply */
+	create_dpdk_port_query_reply(&reply, 0, port_name, VPORT_TYPE_KNI, 0);
+	result = enqueue_reply_on_reply_ring(reply);
+	assert(result == 0);
+
+	result = dpif_p->dpif_class->port_dump_next(dpif_p, state, dpif_port_p);
+	assert(result == 0);
+	assert(strcmp(dpif_port_p->name, port_name) == 0);
+	assert(dpif_port_p->port_no == 0);
+
+	free(state);
+
 	printf(" %s\n", __FUNCTION__);
 }
 
@@ -478,7 +611,6 @@ test_dpif_dpdk_flow_dump_start(struct dpif *dpif_p)
 	assert(state->flow.cmd == OVS_FLOW_CMD_GET);
 	assert(state->flow.flags == NLM_F_DUMP);
 	printf(" %s\n", __FUNCTION__);
-
 }
 
 void

@@ -37,23 +37,30 @@
 #include <rte_ring.h>
 #include <rte_cycles.h>
 
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/ioctl.h>
 
+#include "vport.h"
 #include "datapath.h"
+#include "ovdk_datapath_messages.h"
 #include "action.h"
 #include "stats.h"
 #include "init.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
-#define NO_FLAGS            0
-#define SOCKET0             0
-#define PKT_BURST_SIZE      32u
-#define VSWITCHD_RINGSIZE   2048
+#define NO_FLAGS               0
+#define SOCKET0                0
+#define PKT_BURST_SIZE         32u
+#define VSWITCHD_RINGSIZE      2048
+#define VSWITCHD_ALLOC_THRESHOLD   (VSWITCHD_RINGSIZE/4)
 #define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
 #define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
 #define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
+#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
+#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
+
 /* Flow messages flags bits */
 #define FLAG_ROOT              0x100
 #define FLAG_MATCH             0x200
@@ -65,32 +72,12 @@
 #define FLAG_CREATE            0x400
 #define FLAG_APPEND            0x800
 
+#define VPORT_CMD_FAMILY       0xE
 #define FLOW_CMD_FAMILY        0xF
 #define PACKET_CMD_FAMILY      0x1F
 
 #define DPIF_SOCKNAME "\0dpif-dpdk"
 
-struct dpdk_flow_message {
-	uint32_t id;
-	uint8_t cmd;
-	uint32_t flags;
-	struct flow_key key;
-	struct flow_stats stats;
-	struct action actions[MAX_ACTIONS];
-	bool clear;
-};
-
-struct dpdk_packet_message {
-	struct action actions[MAX_ACTIONS];
-};
-
-struct dpdk_message {
-	int16_t type;
-	union {
-		struct dpdk_flow_message flow_msg;
-		struct dpdk_packet_message packet_msg;
-	};
-};
 /* ring to send packets to vswitchd */
 static struct rte_ring *vswitchd_packet_ring = NULL;
 /* ring to receive messages from vswitchd */
@@ -98,9 +85,15 @@ static struct rte_ring *vswitchd_message_ring = NULL;
 /* ring to send reply messages to vswitchd */
 static struct rte_ring *vswitchd_reply_ring = NULL;
 
+/* Holds packets to be freed */
+static struct rte_ring *vswitchd_free_ring = NULL;
+/* Holds newly allocated packets */
+static struct rte_ring *vswitchd_alloc_ring = NULL;
+
 static void send_reply_to_vswitchd(struct dpdk_message *reply);
 
 static void handle_vswitchd_cmd(struct rte_mbuf *mbuf);
+static void handle_vport_cmd(struct dpdk_vport_message *request);
 static void handle_flow_cmd(struct dpdk_flow_message *request);
 static void handle_packet_cmd(struct dpdk_packet_message *request,
                               struct rte_mbuf *pkt);
@@ -145,7 +138,8 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 	mbuf_ptr = rte_pktmbuf_prepend(mbuf, sizeof(*info));
 
 	if (unlikely(mbuf_ptr == NULL)) {
-		printf("Cannot prepend upcall info\n");
+		RTE_LOG(ERR, APP, "Error : Cannot prepend upcall info "
+		        ": %s : %d", __FUNCTION__, __LINE__);
 		rte_pktmbuf_free(mbuf);
 		stats_vswitch_tx_drop_increment(INC_BY_1);
 		stats_vport_tx_drop_increment(VSWITCHD, INC_BY_1);
@@ -186,15 +180,13 @@ send_packet_to_vswitchd(struct rte_mbuf *mbuf, struct dpdk_upcall *info)
 void
 handle_request_from_vswitchd(void)
 {
-	int j = 0;
-	uint16_t dq_pkt = PKT_BURST_SIZE;
-	struct rte_mbuf *buf[PKT_BURST_SIZE] = {0};
+	uint16_t j = 0;
+	uint16_t dq_pkt = 0;
+	struct rte_mbuf *buf[PKT_BURST_SIZE];
 
 	/* Attempt to dequeue maximum available number of mbufs from ring */
-	while (dq_pkt > 0 &&
-	       unlikely(rte_ring_mc_dequeue_bulk(
-	       vswitchd_message_ring, (void **)buf, dq_pkt) != 0))
-		dq_pkt = (uint16_t)RTE_MIN(rte_ring_count(vswitchd_message_ring), PKT_BURST_SIZE);
+	dq_pkt = rte_ring_sc_dequeue_burst(vswitchd_message_ring, (void**) buf,
+			PKT_BURST_SIZE);
 
 	/* Update number of packets transmitted by daemon */
 	stats_vport_rx_increment(VSWITCHD, dq_pkt);
@@ -202,10 +194,27 @@ handle_request_from_vswitchd(void)
 	for (j = 0; j < dq_pkt; j++) {
 		handle_vswitchd_cmd(buf[j]);
 	}
+
+	/* Free any packets from the vswitch daemon */
+	dq_pkt = rte_ring_sc_dequeue_burst(vswitchd_free_ring, (void**)buf,
+			PKT_BURST_SIZE);
+	for (j = 0; j < dq_pkt; j++)
+	    rte_pktmbuf_free(buf[j]);
+
+	/* Allocate mbufs for the vswitch daemon to use in case the alloc ring
+	 * count is too low */
+	while (rte_ring_count(vswitchd_alloc_ring) < VSWITCHD_ALLOC_THRESHOLD) {
+		for (j = 0; j < PKT_BURST_SIZE; j++) {
+			if ((buf[j] = rte_pktmbuf_alloc(pktmbuf_pool)) == NULL)
+				break;
+		}
+		if (j)
+			rte_ring_sp_enqueue_bulk(vswitchd_alloc_ring, (void**) buf, j);
+	}
 }
 
 /*
- * Send a reply message to the vswitchd
+ * Send a reply message to vswitchd.
  */
 static void
 send_reply_to_vswitchd(struct dpdk_message *reply)
@@ -246,7 +255,7 @@ send_reply_to_vswitchd(struct dpdk_message *reply)
 }
 
 /*
- * Send message to vswitchd indicating message type is not known
+ * Send message to vswitchd indicating message type is not known.
  */
 static void
 handle_unknown_cmd(void)
@@ -259,9 +268,196 @@ handle_unknown_cmd(void)
 }
 
 /*
+ * Attempt to add a new vport, and send result to vswitchd.
+ *
+ * This handles a request from the datapath to add a new port. The request can
+ * contain a port number, a port name, or both. If a port number is not
+ * available, the datapath attempts to get a free port within the port type's
+ * range.
+ *
+ * 0 is returned to the daemon and the 'request->port_no' field updated if the
+ * port number - generated or given - is available. If a port is not
+ * available - because it's in use or non-existent - 'EBUSY' or 'ENODEV' is
+ * returned respectively.
+ */
+static void
+vport_cmd_new(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+	uint32_t port_no;
+	char *port_name;
+	uint8_t port_type;
+
+	port_type = request->type;
+	port_name = request->port_name;
+	port_no = request->port_no;
+
+	/* Calculate vportid for a given Physical port index */
+	if (port_type == VPORT_TYPE_PHY)
+		port_no = port_no + PHYPORT0;
+
+	/* Haven't requested a given port_number or one supplied is invalid, so get
+	 * one in range */
+	if (!vport_exists(port_no) || !vport_id_is_valid(port_no, port_type))
+		port_no = vport_next_available_index(port_type);
+
+	/* Bridge ports do not exist on the datapath - we should not
+	 * add one to the datapaths list of ports
+	 */
+	if (vport_exists(port_no) && port_type != VPORT_TYPE_BRIDGE) {
+		if (!vport_is_enabled(port_no)) {
+			vport_enable(port_no);
+
+			/* Haven't requested a given port_name, so use default one */
+			if (port_name == NULL)
+				port_name = vport_get_name(port_no);
+			else
+				vport_set_name(port_no, port_name);
+
+			/* We don't need to "set type", as the port's position in the 'vport_info'
+			 * array implicitly defines the type. This will change if the structure
+			 * of this array changes. */
+
+			/* Populate 'reply' */
+			request->port_no = port_no;
+			strncpy(request->port_name, port_name, MAX_VPORT_NAME_SIZE);
+			reply.type = 0;
+		} else {
+			reply.type = EBUSY;
+		}
+	} else {
+		reply.type = ENODEV;
+	}
+
+	reply.vport_msg = *request;
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Attempt to delete single vport, and send result to vswitchd.
+ *
+ * This handles a request from the datapath to delete an exists port.
+ *
+ * Returns 0 to the datapath is port is deleted, else 'ENODEV' if device
+ * did not exist or was not enabled.
+ */
+static void
+vport_cmd_del(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+	uint16_t port_no = request->port_no;
+
+	if (vport_exists(port_no) && vport_is_enabled(port_no)) {
+		vport_disable(port_no);
+		reply.type = 0;
+	} else {
+		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+	}
+
+	reply.vport_msg = *request;
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Get current stats for a single vport, and send result to vswitchd.
+ */
+static void
+vport_cmd_get(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+	uint32_t port_no = request->port_no;
+
+	/* Correct 'port_no' value may not be included as part of 'request';
+	 * identify vport number associated with vport name. This is used by
+	 * the dpif's 'query_by_name' function. */
+	if (port_no == UINT32_MAX)
+		request->port_no = port_no = vport_name_to_portid(request->port_name);
+
+	if (vport_exists(port_no) && vport_is_enabled(port_no)) {
+		request->stats = stats_vport_get(request->port_no);
+		request->type = vport_get_type(request->port_no);
+
+		strncpy(request->port_name, vport_get_name(request->port_no),
+		        MAX_VPORT_NAME_SIZE);
+		reply.type = 0;
+	} else {
+		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+	}
+
+	reply.vport_msg = *request;
+
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Dump the next in-use vport.
+ *
+ * This handles the "dump ports" command, which is a request for information
+ * on all existing ports in the datapath. This function is used within a
+ * state machine at a higher level (i.e. vswitchd)
+ */
+static void
+vport_cmd_dump(struct dpdk_vport_message *request)
+{
+	struct dpdk_message reply = {0};
+
+	if (request->port_no == UINT32_MAX)  /* "Entry case" for state machine */
+		request->port_no = 1;
+	else
+		request->port_no += 1;
+
+	/* Skip all ports without the 'enabled' flag. This particular approach is
+	 * necessary due to the current design of the datapath. Ports are currently
+	 * declared and initialised at startup, rather than being allocated and
+	 * initialised "on the fly". We need to check for 'vport_is_enabled' rather
+	 * than 'vport_exists', to prevent vswitchd seeing ports that have not been
+	 * explicitly added via 'ovs-vsctl'. If this were not done the vswitchd
+	 * would spot the "alien" ports and try to remove them, causing issues. */
+	for ( ; request->port_no < MAX_VPORTS && !vport_is_enabled(request->port_no)\
+		      ; request->port_no++)
+		;
+
+	if (request->port_no < MAX_VPORTS) {
+		request->stats = stats_vport_get(request->port_no);
+		request->type = vport_get_type(request->port_no);
+		reply.type = 0;
+	} else {
+		reply.type = EOF;  /* "Exit case" for state machine */
+	}
+
+	reply.vport_msg = *request;
+
+	send_reply_to_vswitchd(&reply);
+}
+
+/*
+ * Parse 'vport message' from vswitchd and send to appropriate handler.
+ */
+static void
+handle_vport_cmd(struct dpdk_vport_message *request)
+{
+	switch (request->cmd) {
+		case VPORT_CMD_NEW:
+			vport_cmd_new(request);
+			break;
+		case VPORT_CMD_DEL:
+			vport_cmd_del(request);
+			break;
+		case VPORT_CMD_GET:
+			if (request->flags & FLAG_DUMP)
+				vport_cmd_dump(request);
+			else
+				vport_cmd_get(request);
+			break;
+		default:
+			handle_unknown_cmd();
+	}
+}
+
+/*
  * Add or modify flow table entry.
  *
- * When modifying, the stats can be optionally cleared
+ * When modifying, the stats can be optionally cleared.
  */
 static void
 flow_cmd_new(struct dpdk_flow_message *request)
@@ -301,7 +497,7 @@ flow_cmd_new(struct dpdk_flow_message *request)
 /*
  * Delete single flow or all flows.
  *
- * When request->key is empty delete all flows
+ * When request->key is empty delete all flows.
  */
 static void
 flow_cmd_del(struct dpdk_flow_message *request)
@@ -331,7 +527,7 @@ flow_cmd_del(struct dpdk_flow_message *request)
 }
 
 /*
- * Return flow entry to vswitchd if it exists
+ * Return flow entry to vswitchd if it exists.
  */
 static void
 flow_cmd_get(struct dpdk_flow_message *request)
@@ -393,7 +589,7 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 }
 
 /*
- * Handle flow commands
+ * Parse 'flow message' from vswitchd and send to appropriate handler.
  */
 static void
 handle_flow_cmd(struct dpdk_flow_message *request)
@@ -417,7 +613,7 @@ handle_flow_cmd(struct dpdk_flow_message *request)
 }
 
 /*
- * Handle packet commands
+ * Parse 'packet message' from vswitchd and send to appropriate handler.
  */
 static void
 handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
@@ -426,7 +622,7 @@ handle_packet_cmd(struct dpdk_packet_message *request, struct rte_mbuf *pkt)
 }
 
 /*
- * Parse message from vswitchd and send to appropriate handler
+ * Parse message from vswitchd and send to appropriate handler.
  */
 static void
 handle_vswitchd_cmd(struct rte_mbuf *mbuf)
@@ -436,6 +632,10 @@ handle_vswitchd_cmd(struct rte_mbuf *mbuf)
 	request = rte_pktmbuf_mtod(mbuf, struct dpdk_message *);
 
 	switch (request->type) {
+	case VPORT_CMD_FAMILY:
+		handle_vport_cmd(&request->vport_msg);
+		rte_pktmbuf_free(mbuf);
+		break;
 	case FLOW_CMD_FAMILY:
 		handle_flow_cmd(&request->flow_msg);
 		rte_pktmbuf_free(mbuf);
@@ -472,6 +672,18 @@ datapath_init(void)
 			         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
 	if (vswitchd_message_ring == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot create message ring for vswitchd");
+
+	vswitchd_free_ring = rte_ring_create(VSWITCHD_FREE_RING_NAME,
+	         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_free_ring == NULL)
+			rte_exit(EXIT_FAILURE, "Cannot create free ring for vswitchd");
+
+	vswitchd_alloc_ring = rte_ring_create(VSWITCHD_ALLOC_RING_NAME,
+	         VSWITCHD_RINGSIZE, SOCKET0, NO_FLAGS);
+
+	if (vswitchd_alloc_ring == NULL)
+			rte_exit(EXIT_FAILURE, "Cannot create alloc ring for vswitchd");
 
 	dpif_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (dpif_socket < 0)

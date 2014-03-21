@@ -106,7 +106,11 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_tap_class);
         netdev_vport_tunnel_register();
 #elif DPDK_DATAPATH
-        netdev_register_provider(&netdev_dpdk_class);
+        netdev_register_provider(&netdev_dpdk_client_class);
+        netdev_register_provider(&netdev_dpdk_kni_class);
+        netdev_register_provider(&netdev_dpdk_phy_class);
+        netdev_register_provider(&netdev_dpdk_veth_class);
+        netdev_register_provider(&netdev_dpdk_vhost_class);
         netdev_register_provider(&netdev_dpdk_internal_class);
 #endif
 

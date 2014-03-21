@@ -1,4 +1,19 @@
-# v0.9 - January 2014
+# v0.10 - TBD
+
+    - Added support for "Port Management" - the real management of devices in the
+      datapath via the dpif (and utilities such as `ovs-vsctl`)
+    - Added support for arbitrary port names, i.e. port names with names other
+      than `ovs_dpdk_xx`.
+    - Added top level Makefile
+    - Added new IVSHMEM utility application to manage port sharing with guests
+      - Added more flexibility to what is being shared with each guest through command line
+      - Separated DPDK IVSHMEM code from Open vSwitch datapath
+    - Added new public API to cleanly open up internal vport.c features with external clients
+      - Added support to both ovs_client and kni_client applications
+    - Added new userspace vhost device type based on the DPDK sample application.
+    - Bug fixes
+
+ # v0.9 - January 2014
 
     - Upgraded the base version of Open vSwitch from 1.5 to 2.0.0
     - Updated to use DPDK 1.6.0
@@ -9,6 +24,11 @@
       - Added support for Guest applications running as DPDK primary processes
       - NOTE: this update removes compatibility with DPDK 1.5.2
     - Performance Improvements
+    - Support for set actions:
+        - Added set ethernet support
+        - Added set IPv4 support
+        - Added set UDP support
+        - Added set TCP support
     - Bug fixes
 
 # v0.8 - December 2013
