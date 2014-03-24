@@ -43,6 +43,7 @@
 #include <rte_memory.h>
 #include <rte_memzone.h>
 
+#define rpl_strnlen strnlen
 #define PKTMBUF_POOL_NAME	"MProc_pktmbuf_pool"
 #define MZ_VPORT_INFO		"OVS_vport_info"
 #define MAX_VPORTS			256

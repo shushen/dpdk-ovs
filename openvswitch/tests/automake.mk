@@ -311,6 +311,14 @@ tests_test_datapath_SOURCES += datapath/dpdk/veth.c
 tests_test_datapath_CFLAGS = -iquote ./datapath/dpdk
 tests_test_datapath_LDADD = lib/libopenvswitch.a $(dpdk_libs)
 
+# ovs-vport tests
+noinst_PROGRAMS += tests/test-ovs-vport
+tests_test_ovs_vport_SOURCES = tests/test-ovs-vport.c
+tests_test_ovs_vport_SOURCES += datapath/dpdk/ut.c
+tests_test_ovs_vport_SOURCES += datapath/dpdk/libvport/ovs-vport.c
+tests_test_ovs_vport_CFLAGS = -iquote ./datapath/dpdk
+tests_test_ovs_vport_CFLAGS += -iquote ./datapath/dpdk/libvport
+tests_test_ovs_vport_LDADD = $(dpdk_libs)
 
 # idltest schema and IDL
 OVSIDL_BUILT += tests/idltest.c tests/idltest.h tests/idltest.ovsidl

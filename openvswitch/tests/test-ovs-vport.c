@@ -35,10 +35,11 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#include <rte_config.h>
 #include <rte_eal.h>
 #include <rte_string_fns.h>
-#include <ovs-vport.h>
-#include <vport-types.h>
+#include "ovs-vport.h"
+#include "vport-types.h"
 
 #include "ut.h"
 

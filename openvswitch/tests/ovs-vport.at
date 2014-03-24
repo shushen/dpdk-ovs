@@ -6,23 +6,23 @@ m4_define([OVDK_CHECK_LIBVPORT],
 [AT_BANNER([libvport/ovs-vport unit tests - dpdk datapath])
 
 AT_SETUP([check vports are valid])
-AT_CHECK([sudo -E $srcdir/dpdk/test-ovs-vport -c 1 -n 4 -- valid_vport], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-ovs-vport -c 1 -n 4 -- valid_vport], [0], [ignore], [])
 AT_CLEANUP
 
 AT_SETUP([check client rings are found])
-AT_CHECK([sudo -E $srcdir/dpdk/test-ovs-vport -c 1 -n 4 -- vport_client_lookup], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-ovs-vport -c 1 -n 4 -- vport_client_lookup], [0], [ignore], [])
 AT_CLEANUP
 
 AT_SETUP([check kni fifos are found])
-AT_CHECK([sudo -E $srcdir/dpdk/test-ovs-vport -c 1 -n 4 -- vport_kni_lookup], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-ovs-vport -c 1 -n 4 -- vport_kni_lookup], [0], [ignore], [])
 AT_CLEANUP
 
 AT_SETUP([check packet mempool is found])
-AT_CHECK([sudo -E $srcdir/dpdk/test-ovs-vport -c 1 -n 4 -- lookup_packet_mempool], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-ovs-vport -c 1 -n 4 -- lookup_packet_mempool], [0], [ignore], [])
 AT_CLEANUP
 
 AT_SETUP([check port names are valid])
-AT_CHECK([sudo -E $srcdir/dpdk/test-ovs-vport -c 1 -n 4 -- is_vport_name_valid], [0], [ignore], [])
+AT_CHECK([sudo -E $srcdir/test-ovs-vport -c 1 -n 4 -- is_vport_name_valid], [0], [ignore], [])
 AT_CLEANUP
 
 ])
