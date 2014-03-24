@@ -4,6 +4,9 @@ bin_PROGRAMS += \
 	utilities/ovs-dpctl \
 	utilities/ovs-ofctl \
 	utilities/ovs-vsctl
+if HAVE_DPDK
+bin_PROGRAMS += utilities/ovs-ivshm-mngr
+endif
 bin_SCRIPTS += utilities/ovs-pki
 if HAVE_PYTHON
 bin_SCRIPTS += \
@@ -137,6 +140,12 @@ utilities_ovs_benchmark_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 include utilities/bugtool/automake.mk
 
+# Build IVSHM manager.
 if HAVE_DPDK
-SUBDIRS += utilities/ovs-ivshm-mngr
+utilities_ovs_ivshm_mngr_SOURCES = utilities/ovs-ivshm-mngr.c
+utilities_ovs_ivshm_mngr_SOURCES += datapath/dpdk/libvport/ovs-vport.c
+utilities_ovs_ivshm_mngr_CFLAGS = -iquote ./datapath/dpdk
+utilities_ovs_ivshm_mngr_CFLAGS += -iquote ./datapath/dpdk/libvport
+utilities_ovs_ivshm_mngr_CFLAGS += $(AM_CFLAGS)
+utilities_ovs_ivshm_mngr_LDADD = $(dpdk_libs)
 endif

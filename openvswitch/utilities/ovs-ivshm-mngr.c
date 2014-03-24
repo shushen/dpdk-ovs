@@ -37,6 +37,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <rte_config.h>
 #include <rte_eal.h>
 #include <rte_config.h>
 #include <rte_common.h>
@@ -46,8 +47,9 @@
 #include <rte_memzone.h>
 #include <rte_mempool.h>
 
-#include <ovs-vport.h>
+#include "ovs-vport.h"
 
+#define rpl_strnlen strnlen
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define OVS_IVSHMEM_MNGR_METADATA_DELIM ":"
 #define OVS_IVSHMEM_MNGR_PORTS_DELIM ","

@@ -169,8 +169,7 @@ cp -aL <DPDK_DIR>/* /tmp/qemu_share/DPDK
 Run the IVSHMEM manager utility to create the metadata needed to be used with QEMU. In this example `port1` is going to be shared over a metadata file named `vm_1`.
 
 ```bash
-./ovs-ivshm-mngr/build/app/ovs-ivshm-mngr -c 0x1 --proc-type=secondary -- \
-  vm_1:port1
+./utilities/ovs-ivshm-mngr -c 0x1 --proc-type=secondary -- vm_1:port1
 ```
 
 Among other information the utility will print out to `STDOUT` the exact IVSHMEM command line to be used when launching QEMU. Add this to the other QEMU arguments.
