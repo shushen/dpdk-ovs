@@ -37,7 +37,6 @@
 
 #include <rte_config.h>
 #include <rte_eal.h>
-#include <rte_string_fns.h>
 #include "ovs-vport.h"
 #include "vport-types.h"
 
@@ -50,89 +49,6 @@
 static struct vport_info *stub_vports = NULL;
 static struct rte_mempool *pktmbuf_pool;
 
-static struct rte_ring *
-create_ring(const char *name)
-{
-	struct rte_ring *r;
-
-	r = rte_ring_create(name, 32, SOCKET_ID_ANY, 0);
-	if (!r)
-		abort();
-	return r;
-}
-
-static const struct rte_memzone *
-create_memzone(const char *name)
-{
-	const struct rte_memzone *mz;
-
-	mz = rte_memzone_reserve(name, 32, SOCKET_ID_ANY, 0);
-	if (!mz)
-		abort();
-	return mz;
-}
-
-static void
-create_vport_client(struct vport_info *vport)
-{
-	struct vport_client *client;
-
-	vport->type = VPORT_TYPE_CLIENT;
-	rte_snprintf(vport->name, sizeof(vport->name), CLIENT_PORT_NAME);
-
-	client = &vport->client;
-
-	/* Create rings and store their names */
-	client->rx_q = create_ring("Client_RX");
-	rte_snprintf(client->ring_names.rx, sizeof(client->ring_names.rx),
-			"Client_RX");
-
-	client->tx_q = create_ring("Client_TX");
-	rte_snprintf(client->ring_names.tx, sizeof(client->ring_names.tx),
-			"Client_TX");
-
-	client->free_q = create_ring("Client_FREE");
-	rte_snprintf(client->ring_names.free, sizeof(client->ring_names.free),
-			"Client_FREE");
-}
-
-static void
-create_vport_kni(struct vport_info *vport)
-{
-	struct vport_kni *kni;
-
-	vport->type = VPORT_TYPE_KNI;
-	rte_snprintf(vport->name, sizeof(vport->name), KNI_PORT_NAME);
-
-	kni = &vport->kni;
-
-	/* Create memzones and store their names */
-	create_memzone("KNI_TX");
-	rte_snprintf(kni->fifo_names.tx, sizeof(kni->fifo_names.tx), "KNI_TX");
-
-	create_memzone("KNI_RX");
-	rte_snprintf(kni->fifo_names.rx, sizeof(kni->fifo_names.rx), "KNI_RX");
-
-	create_memzone("KNI_ALLOC");
-	rte_snprintf(kni->fifo_names.alloc, sizeof(kni->fifo_names.alloc),
-			"KNI_ALLOC");
-
-	create_memzone("KNI_FREE");
-	rte_snprintf(kni->fifo_names.free, sizeof(kni->fifo_names.free),
-			"KNI_FREE");
-
-	create_memzone("KNI_RESP");
-	rte_snprintf(kni->fifo_names.resp, sizeof(kni->fifo_names.resp),
-			"KNI_RESP");
-
-	create_memzone("KNI_REQ");
-	rte_snprintf(kni->fifo_names.req, sizeof(kni->fifo_names.req), "KNI_REQ");
-
-	create_memzone("KNI_SYNC");
-	rte_snprintf(kni->fifo_names.sync, sizeof(kni->fifo_names.sync),
-			"KNI_SYNC");
-}
-
 static void
 set_up_all(void)
 {
@@ -143,8 +59,8 @@ set_up_all(void)
 	assert(stub_vports_mz != NULL);
 
 	stub_vports = stub_vports_mz->addr;
-	create_vport_client(&stub_vports[0]);
-	create_vport_kni(&stub_vports[1]);
+	create_vport_client(&stub_vports[0], CLIENT_PORT_NAME);
+	create_vport_kni(&stub_vports[1], KNI_PORT_NAME);
 	assert(stub_vports_mz == ovs_vport_lookup_vport_info());
 
 	pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, 32, 16, 32, 32, NULL,
@@ -246,9 +162,9 @@ int main(int argc, char *argv[])
 	retval = rte_eal_init(argc, argv);
 	assert(retval >= 0);
 
-	/* Discard EAL args and program name */
-	argc -= (retval + 1);
-	argv += (retval + 1);
+	/* Discard EAL args */
+	argc -= retval;
+	argv += retval;
 
 	set_up_all();
 

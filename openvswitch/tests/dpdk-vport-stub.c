@@ -32,6 +32,8 @@
  *
  */
 
+#include <rte_string_fns.h>
+
 #include "vport.h"
 
 #define MAX_BUFS               100
@@ -152,4 +154,92 @@ vport_enable(unsigned vportid)
 void
 vport_disable(unsigned vportid)
 {
+}
+
+static struct rte_ring *
+create_ring(const char *name)
+{
+	struct rte_ring *r;
+
+	r = rte_ring_create(name, 32, SOCKET_ID_ANY, 0);
+	if (!r)
+		abort();
+	return r;
+}
+
+void
+create_vport_client(struct vport_info *vport, const char *port_name)
+{
+	struct vport_client *client;
+	char ring_name[RTE_RING_NAMESIZE];
+
+	vport->type = VPORT_TYPE_CLIENT;
+	rte_snprintf(vport->name, sizeof(vport->name), port_name);
+
+	client = &vport->client;
+
+	/* Create rings and store their names */
+	rte_snprintf(ring_name, sizeof(ring_name), "%sRX", port_name);
+	client->rx_q = create_ring(ring_name);
+	rte_snprintf(client->ring_names.rx, sizeof(client->ring_names.rx), ring_name);
+
+	rte_snprintf(ring_name, sizeof(ring_name), "%sTX", port_name);
+	client->tx_q = create_ring(ring_name);
+	rte_snprintf(client->ring_names.tx, sizeof(client->ring_names.tx), ring_name);
+
+	rte_snprintf(ring_name, sizeof(ring_name), "%sFREE", port_name);
+	client->free_q = create_ring(ring_name);
+	rte_snprintf(client->ring_names.free, sizeof(client->ring_names.free), ring_name);
+}
+
+static const struct rte_memzone *
+create_memzone(const char *name)
+{
+	const struct rte_memzone *mz;
+
+	mz = rte_memzone_reserve(name, 32, SOCKET_ID_ANY, 0);
+	if (!mz)
+		abort();
+	return mz;
+}
+
+void
+create_vport_kni(struct vport_info *vport, const char *port_name)
+{
+	struct vport_kni *kni;
+	char mz_name[RTE_MEMZONE_NAMESIZE];
+
+	vport->type = VPORT_TYPE_KNI;
+	rte_snprintf(vport->name, sizeof(vport->name), port_name);
+
+	kni = &vport->kni;
+
+	/* Create memzones and store their names */
+	rte_snprintf(mz_name, sizeof(mz_name), "%sTX", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.tx, sizeof(kni->fifo_names.tx), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sRX", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.rx, sizeof(kni->fifo_names.rx), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sALLOC", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.alloc, sizeof(kni->fifo_names.alloc), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sFREE", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.free, sizeof(kni->fifo_names.free), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sRESP", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.resp, sizeof(kni->fifo_names.resp), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sREQ", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.req, sizeof(kni->fifo_names.req), mz_name);
+
+	rte_snprintf(mz_name, sizeof(mz_name), "%sSYNC", port_name);
+	create_memzone(mz_name);
+	rte_snprintf(kni->fifo_names.sync, sizeof(kni->fifo_names.sync), mz_name);
 }

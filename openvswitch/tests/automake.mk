@@ -316,6 +316,7 @@ tests_test_datapath_LDADD = lib/libopenvswitch.a $(dpdk_libs)
 noinst_PROGRAMS += tests/test-ovs-vport
 tests_test_ovs_vport_SOURCES = tests/test-ovs-vport.c
 tests_test_ovs_vport_SOURCES += tests/ut.c
+tests_test_ovs_vport_SOURCES += tests/dpdk-vport-stub.c
 tests_test_ovs_vport_SOURCES += datapath/dpdk/libvport/ovs-vport.c
 tests_test_ovs_vport_CFLAGS = -iquote ./datapath/dpdk
 tests_test_ovs_vport_CFLAGS += -iquote ./datapath/dpdk/libvport
@@ -333,6 +334,7 @@ tests_test_memnic_LDADD = $(dpdk_libs)
 # used for ivshm-mngr integration tests
 noinst_PROGRAMS += tests/dummy-vports-info-mock
 tests_dummy_vports_info_mock_SOURCES = tests/dummy-vports-info-mock.c
+tests_dummy_vports_info_mock_SOURCES += tests/dpdk-vport-stub.c
 tests_dummy_vports_info_mock_SOURCES += datapath/dpdk/libvport/ovs-vport.c
 tests_dummy_vports_info_mock_CFLAGS = -iquote ./datapath/dpdk
 tests_dummy_vports_info_mock_CFLAGS += -iquote ./datapath/dpdk/libvport
