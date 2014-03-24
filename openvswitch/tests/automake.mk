@@ -301,8 +301,8 @@ tests_test_ovsdb_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
 # datapath tests
 noinst_PROGRAMS += tests/test-datapath
 tests_test_datapath_SOURCES = tests/test-datapath-dpdk.c
+tests_test_datapath_SOURCES += tests/ut.c
 tests_test_datapath_SOURCES += datapath/dpdk/dpdk-vport-stub.c
-tests_test_datapath_SOURCES += datapath/dpdk/ut.c
 tests_test_datapath_SOURCES += datapath/dpdk/action.c
 tests_test_datapath_SOURCES += datapath/dpdk/datapath.c
 tests_test_datapath_SOURCES += datapath/dpdk/flow.c
@@ -315,7 +315,7 @@ tests_test_datapath_LDADD = lib/libopenvswitch.a $(dpdk_libs)
 # ovs-vport tests
 noinst_PROGRAMS += tests/test-ovs-vport
 tests_test_ovs_vport_SOURCES = tests/test-ovs-vport.c
-tests_test_ovs_vport_SOURCES += datapath/dpdk/ut.c
+tests_test_ovs_vport_SOURCES += tests/ut.c
 tests_test_ovs_vport_SOURCES += datapath/dpdk/libvport/ovs-vport.c
 tests_test_ovs_vport_CFLAGS = -iquote ./datapath/dpdk
 tests_test_ovs_vport_CFLAGS += -iquote ./datapath/dpdk/libvport
@@ -324,7 +324,7 @@ tests_test_ovs_vport_LDADD = $(dpdk_libs)
 # memnic tests
 noinst_PROGRAMS += tests/test-memnic
 tests_test_memnic_SOURCES = tests/test-memnic.c
-tests_test_memnic_SOURCES += datapath/dpdk/ut.c
+tests_test_memnic_SOURCES += tests/ut.c
 tests_test_memnic_SOURCES += datapath/dpdk/vport-memnic.c
 tests_test_memnic_SOURCES += datapath/dpdk/stats.c
 tests_test_memnic_CFLAGS = -iquote ./datapath/dpdk
