@@ -135,21 +135,6 @@ AT_CLEANUP
  ])
 
 ##############################################################################
-# TODO: temporarily removed. To be added back again when test-memnic.c is
-#       moved to tests folder.
-#m4_define([OVDK_CHECK_STATS],
-#[AT_BANNER([MEMNIC unit tests - dpdk datapath])
-#
-#AT_SETUP([MEMNIC simple TX])
-#AT_CHECK([sudo -E $srcdir/test-datapath -c 1 -n 4 -- memnic_simple_tx], [0], [ignore], [])
-#AT_CLEANUP
-
-#AT_SETUP([MEMNIC simple RX])
-#AT_CHECK([sudo -E $srcdir/test-datapath -c 1 -n 4 -- memnic_simple_rx], [0], [ignore], [])
-#AT_CLEANUP
-# ])
-
-##############################################################################
 # Execute Macros
 ##############################################################################
 

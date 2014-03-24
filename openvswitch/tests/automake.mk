@@ -70,7 +70,8 @@ TESTSUITE_AT = \
 	tests/ovs-vport.at \
 	tests/dpif-dpdk.at \
 	tests/netdev-dpdk.at \
-	tests/dpdk-link.at
+	tests/dpdk-link.at \
+	tests/memnic.at
 TESTSUITE = $(srcdir)/tests/testsuite
 DISTCLEANFILES += tests/atconfig tests/atlocal
 
@@ -319,6 +320,15 @@ tests_test_ovs_vport_SOURCES += datapath/dpdk/libvport/ovs-vport.c
 tests_test_ovs_vport_CFLAGS = -iquote ./datapath/dpdk
 tests_test_ovs_vport_CFLAGS += -iquote ./datapath/dpdk/libvport
 tests_test_ovs_vport_LDADD = $(dpdk_libs)
+
+# memnic tests
+noinst_PROGRAMS += tests/test-memnic
+tests_test_memnic_SOURCES = tests/test-memnic.c
+tests_test_memnic_SOURCES += datapath/dpdk/ut.c
+tests_test_memnic_SOURCES += datapath/dpdk/vport-memnic.c
+tests_test_memnic_SOURCES += datapath/dpdk/stats.c
+tests_test_memnic_CFLAGS = -iquote ./datapath/dpdk
+tests_test_memnic_LDADD = $(dpdk_libs)
 
 # idltest schema and IDL
 OVSIDL_BUILT += tests/idltest.c tests/idltest.h tests/idltest.ovsidl

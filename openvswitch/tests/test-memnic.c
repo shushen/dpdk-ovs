@@ -30,15 +30,16 @@
 
 #include <stdint.h>
 
+#include <rte_config.h>
 #include <rte_mbuf.h>
 #include <rte_memcpy.h>
 
 #include <assert.h>
 
-#include "test-memnic.h"
 #include "vport.h"
 #include "vport-memnic.h"
 #include "memnic.h"
+#include "ut.h"
 
 struct rte_mempool *pktmbuf_pool;
 
@@ -131,4 +132,26 @@ void test_memnic_simple_rx(int argc, char *argv[])
 	assert(rte_pktmbuf_data_len(bufs[0]) == 8);
 	assert(rte_pktmbuf_pkt_len(bufs[0]) == 8);
 	assert(memcmp(src, rte_pktmbuf_mtod(bufs[0], void *), 8) == 0);
+}
+
+static const struct command commands[] = {
+	{"memnic_simple_tx", 0, 0, test_memnic_simple_tx},
+	{"memnic_simple_rx", 0, 0, test_memnic_simple_rx},
+	{NULL, 0, 0, NULL},
+};
+
+
+void main(int argc, char *argv[])
+{
+	/* init EAL, parsing EAL args */
+	int retval = 0;
+	retval = rte_eal_init(argc, argv);
+	assert(retval >= 0);
+
+	argc -= retval;
+	argv += retval;
+
+	run_command(argc, argv, commands);
+
+	exit(EXIT_SUCCESS);
 }
