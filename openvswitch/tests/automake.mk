@@ -297,6 +297,21 @@ tests_test_ovsdb_SOURCES = \
 EXTRA_DIST += tests/uuidfilt.pl tests/ovsdb-monitor-sort.pl
 tests_test_ovsdb_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
 
+# datapath tests
+noinst_PROGRAMS += tests/test-datapath
+tests_test_datapath_SOURCES = tests/test-datapath-dpdk.c
+tests_test_datapath_SOURCES += datapath/dpdk/dpdk-vport-stub.c
+tests_test_datapath_SOURCES += datapath/dpdk/ut.c
+tests_test_datapath_SOURCES += datapath/dpdk/action.c
+tests_test_datapath_SOURCES += datapath/dpdk/datapath.c
+tests_test_datapath_SOURCES += datapath/dpdk/flow.c
+tests_test_datapath_SOURCES += datapath/dpdk/stats.c
+tests_test_datapath_SOURCES += datapath/dpdk/ofpbuf_helper.c
+tests_test_datapath_SOURCES += datapath/dpdk/veth.c
+tests_test_datapath_CFLAGS = -iquote ./datapath/dpdk
+tests_test_datapath_LDADD = lib/libopenvswitch.a $(dpdk_libs)
+
+
 # idltest schema and IDL
 OVSIDL_BUILT += tests/idltest.c tests/idltest.h tests/idltest.ovsidl
 IDLTEST_IDL_FILES = tests/idltest.ovsschema tests/idltest.ann

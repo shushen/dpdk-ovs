@@ -37,15 +37,12 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app ut vport vport_ut
+all: app vport vport_ut
 
 distclean: clean
 
 app:
 	$(MAKE) -f Makefile.app
-
-ut:
-	$(MAKE) -f Makefile.ut
 
 vport:
 	cd libvport && $(MAKE)
@@ -53,7 +50,7 @@ vport:
 vport_ut: vport
 	$(MAKE) -f Makefile.vport_ut
 	
-check: ut
+check: vport_ut
 
 check-am:
 	$(warning "This target is not implemented")
@@ -64,13 +61,10 @@ check-local:
 check-recursive:
 	$(warning "This target is not implemented")
 
-clean: clean-app clean-ut clean-vport clean-vport_ut
+clean: clean-app clean-vport clean-vport_ut
 
 clean-app:
 	$(MAKE) -f Makefile.app clean
-
-clean-ut:
-	$(MAKE) -f Makefile.ut clean
 
 clean-vport:
 	cd libvport && $(MAKE) clean

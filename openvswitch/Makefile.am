@@ -33,6 +33,7 @@ dpdk_libs=\
       $(dpdk_lib_dir)/librte_mempool.a \
       $(dpdk_lib_dir)/librte_ring.a \
       $(dpdk_lib_dir)/librte_malloc.a \
+      $(dpdk_lib_dir)/librte_kni.a \
       $(dpdk_lib_dir)/librte_ivshmem.a 
 endif
 

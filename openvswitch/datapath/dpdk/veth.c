@@ -32,6 +32,7 @@
  *
  */
 
+#include <rte_config.h>
 #include <rte_string_fns.h>
 #include <rte_ethdev.h>
 

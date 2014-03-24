@@ -32,6 +32,7 @@
  *
  */
 
+#include <rte_config.h>
 #include <rte_fbk_hash.h>
 #include <rte_memzone.h>
 #include <rte_hash.h>

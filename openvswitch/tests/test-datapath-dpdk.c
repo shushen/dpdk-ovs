@@ -32,6 +32,7 @@
  *
  */
 
+#include <rte_config.h>
 #include <rte_mbuf.h>
 #include <rte_ip.h>
 #include <rte_ether.h>
@@ -846,9 +847,12 @@ static const struct command commands[] = {
 	{"stats_vswitch_get", 0, 0, test_stats_vswitch_get},
 	{"stats_vswitch_clear", 0, 0, test_stats_vswitch_clear},
 
+/*
+	TODO: temporarily removed. To be added back again when test-memnic.c is
+			moved to tests folder.
 	{"memnic_simple_tx", 0, 0, test_memnic_simple_tx},
 	{"memnic_simple_rx", 0, 0, test_memnic_simple_rx},
-
+*/
 	{NULL, 0, 0, NULL},
 };
 

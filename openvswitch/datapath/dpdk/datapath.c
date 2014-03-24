@@ -33,6 +33,7 @@
  */
 
 #include <stdint.h>
+#include <rte_config.h>
 #include <rte_memcpy.h>
 #include <rte_ring.h>
 #include <rte_cycles.h>

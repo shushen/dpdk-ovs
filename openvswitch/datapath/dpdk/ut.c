@@ -16,6 +16,8 @@
  */
 #include <string.h>
 
+#include <rte_config.h>
+#include <rte_log.h>
 #include <rte_mbuf.h>
 
 #include "ut.h"

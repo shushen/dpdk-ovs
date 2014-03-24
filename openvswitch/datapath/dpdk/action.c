@@ -33,6 +33,7 @@
  */
 
 #include <stdio.h>
+#include <rte_config.h>
 #include <rte_ether.h>
 #include "packets.h"
 #include "action.h"

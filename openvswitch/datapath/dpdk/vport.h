@@ -37,6 +37,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <rte_config.h>
 #include <rte_mbuf.h>
 
 #include "vport-types.h"
