@@ -42,11 +42,10 @@ include $(RTE_SDK)/mk/rte.vars.mk
 APP = ovs_client
 
 # all source are stored in SRCS-y
-SRCS-y := ovs_client.c
+SRCS-y := ovs_client.c libvport/ovs-vport.c
 
-CFLAGS += $(WERROR_FLAGS) -O3
-CFLAGS += -I$(SRCDIR)/libvport/build/include
-
-LDFLAGS += -L$(SRCDIR)/libvport/build/lib -lovs_vport
+CFLAGS += -O3
+CFLAGS += $(WERROR_FLAGS)
+CFLAGS += -I$(SRCDIR)/libvport
 
 include $(RTE_SDK)/mk/rte.extapp.mk

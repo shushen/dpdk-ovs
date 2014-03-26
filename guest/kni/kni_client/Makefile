@@ -48,12 +48,10 @@ endif
 APP = kni_client
 
 # all source are stored in SRCS-y
-SRCS-y := kni_client.c
+SRCS-y := kni_client.c libvport/ovs-vport.c
 
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
-CFLAGS += -I$(SRCDIR)/libvport/build/include
-
-LDFLAGS += -L$(SRCDIR)/libvport/build/lib -lovs_vport
+CFLAGS += -I$(SRCDIR)/libvport
 
 include $(RTE_SDK)/mk/rte.extapp.mk

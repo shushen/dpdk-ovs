@@ -143,9 +143,8 @@ include utilities/bugtool/automake.mk
 # Build IVSHM manager.
 if HAVE_DPDK
 utilities_ovs_ivshm_mngr_SOURCES = utilities/ovs-ivshm-mngr.c
-utilities_ovs_ivshm_mngr_SOURCES += datapath/dpdk/libvport/ovs-vport.c
+utilities_ovs_ivshm_mngr_SOURCES += datapath/dpdk/ovs-vport.c
 utilities_ovs_ivshm_mngr_CFLAGS = -iquote ./datapath/dpdk
-utilities_ovs_ivshm_mngr_CFLAGS += -iquote ./datapath/dpdk/libvport
 utilities_ovs_ivshm_mngr_CFLAGS += $(AM_CFLAGS)
 utilities_ovs_ivshm_mngr_LDADD = $(dpdk_libs)
 endif

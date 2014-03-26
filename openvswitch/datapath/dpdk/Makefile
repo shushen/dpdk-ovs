@@ -37,32 +37,61 @@ ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")
 endif
 
-all: app vport
+# Default target, can be overriden by command line or environment
+RTE_TARGET ?= x86_64-ivshmem-linuxapp-gcc
+
+include $(RTE_SDK)/mk/rte.vars.mk
+
+ifneq ($(CONFIG_RTE_EXEC_ENV),"linuxapp")
+$(error This application can only operate in a linuxapp environment, \
+please change the definition of the RTE_TARGET environment variable)
+endif
+
+# binary name
+APP = ovs_dpdk
+
+# all source are stored in SRCS-y
+SRCS-y := main.c init.c args.c kni.c action.c vport.c datapath.c flow.c \
+          vport-memnic.c \
+          stats.c ofpbuf_helper.c veth.c vhost.c vhost-net-cdev.c virtio-net.c
+
+INC := $(wildcard *.h)
+
+CFLAGS += -O3
+CFLAGS += -lpthread -I$(SRCDIR)/../shared -I$(OVS_DIR)/include -I$(OVS_DIR)/lib -I$(OVS_DIR)
+CFLAGS += -Wall -Werror \
+-Wclobbered \
+-Wempty-body \
+-Wignored-qualifiers \
+-Wmissing-parameter-type \
+-Wold-style-declaration \
+-Woverride-init \
+-Wsign-compare \
+-Wtype-limits \
+-Wuninitialized \
+-Wunused-parameter \
+-Wunused-but-set-parameter
+CFLAGS += -D_FILE_OFFSET_BITS=64
+# All extra arguments above are part of -Wextra.
+# See http://stackoverflow.com/q/1538943
+# There's a known bug in gcc4.6 that makes -Wmissing-field-initializers flag
+# fail with a valid struct initialization. Left it out for now.
+
+# fix dpdk link order, add to LDLIBS which is processed by dpdk's
+# macros.
+LDLIBS += -L$(OVS_DIR)/lib  -lopenvswitch -lrt -lfuse
+
+# for newer gcc, e.g. 4.4, no-strict-aliasing may not be necessary
+# and so the next line can be removed in those cases.
+#EXTRA_CFLAGS += -fno-strict-aliasing
+
+include $(RTE_SDK)/mk/rte.extapp.mk
+
+EMPTY_AUTOMAKE_TARGETS = dvi pdf ps info html tags ctags
+.PHONY: $(EMPTY_AUTOMAKE_TARGETS)
+$(EMPTY_AUTOMAKE_TARGETS):
+
+clean:
+	rm -rf $(OVS_DIR)/datapath/dpdk/build
 
 distclean: clean
-
-app:
-	$(MAKE) -f Makefile.app
-
-vport:
-	cd libvport && $(MAKE)
-
-check:
-	$(warning "This target is not implemented")
-	
-check-am:
-	$(warning "This target is not implemented")
-
-check-local:
-	$(warning "This target is not implemented")
-
-check-recursive:
-	$(warning "This target is not implemented")
-
-clean: clean-app clean-vport
-
-clean-app:
-	$(MAKE) -f Makefile.app clean
-
-clean-vport:
-	cd libvport && $(MAKE) clean
