@@ -148,8 +148,8 @@ rm -f /tmp/conf.db
 Initialise the Open vSwitch database server:
 
 ```bash
-./ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
-./ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
+./ovsdb/ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
+./ovsdb/ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
 ```
 
 ### Configure `ovs_dpdk`
@@ -157,27 +157,27 @@ Initialise the Open vSwitch database server:
 Add a bridge to the switch:
 
 ```bash
-./ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
+./utilities/ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
 ```
 
 Configure the switch to use an OpenFlow controller and disable in-band management:
 
 ```bash
-./ovs-vsctl set-controller br0 tcp:127.0.0.1:6653
-./ovs-vsctl set Bridge br0 other_config:disable-in-band=true
+./utilities/ovs-vsctl set-controller br0 tcp:127.0.0.1:6653
+./utilities/ovs-vsctl set Bridge br0 other_config:disable-in-band=true
 ```
 
 Add four vEth ports to the bridge:
 
 ```bash
-./ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=dpdk
-./ovs-vsctl add-port br0 ovs_dpdk_64 --set Interface ovs_dpdk_64 type=dpdk
+./utilities/ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=dpdk
+./utilities/ovs-vsctl add-port br0 ovs_dpdk_64 --set Interface ovs_dpdk_64 type=dpdk
   ofport_request=64
-./ovs-vsctl add-port br0 ovs_dpdk_65 --set Interface ovs_dpdk_65 type=dpdk
+./utilities/ovs-vsctl add-port br0 ovs_dpdk_65 --set Interface ovs_dpdk_65 type=dpdk
   ofport_request=65
-./ovs-vsctl add-port br0 ovs_dpdk_66 --set Interface ovs_dpdk_66 type=dpdk
+./utilities/ovs-vsctl add-port br0 ovs_dpdk_66 --set Interface ovs_dpdk_66 type=dpdk
   ofport_request=66
-./ovs-vsctl add-port br0 ovs_dpdk_67 --set Interface ovs_dpdk_67 type=dpdk
+./utilities/ovs-vsctl add-port br0 ovs_dpdk_67 --set Interface ovs_dpdk_67 type=dpdk
   ofport_request=67
 ```
 
@@ -186,26 +186,26 @@ Add four vEth ports to the bridge:
 Confirm the ports have been successfully added:
 
 ```bash
-sudo ./openvswitch/utilities/ovs-vsctl show
+./utilities/ovs-vsctl show
 ```
 
 Start `ovs_dpdk`:
 
 ```bash
-./ovs_dpdk -c 0x0f -n 4 --proc-type primary --socket-mem 2048,2048-- -p 0x03
--n 2 -v 4 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 --proc-type primary --socket-mem 2048,2048
+-- -p 0x03 -v 4 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 Finally, start `ovs-vswitchd`:
 
 ```bash
-./ovs-vswitchd -c 0x10 --proc-type=secondary
+./vswitchd/ovs-vswitchd -c 0x10 --proc-type=secondary
 ```
 
 Delete the default flows present from the bridge:
 
 ```bash
-./ovs-ofctl del-flows br0
+./utilities/ovs-ofctl del-flows br0
 ```
 
 The vport devices — which, by default, have names corresponding to vEthX —

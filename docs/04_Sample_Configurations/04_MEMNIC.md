@@ -58,41 +58,41 @@ rm -f /tmp/conf.db
 Initialise the Open vSwitch database server:
 
 ```bash
-./ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
-./ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
+./ovsdb/ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
+./ovsdb/ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
 ```
 
 Add a bridge to the switch:
 
 ```bash
-./ovs-vsctl --no-wait add-br br0 -- set Bridge br0
+./utilities/ovs-vsctl --no-wait add-br br0 -- set Bridge br0
   datapath_type=dpdk
 ```
 
 Add ports to the bridge:
 
 ```bash
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_16 -- set Interface ovs_dpdk_16
+./utilities/ovs-vsctl --no-wait add-port br0 ovs_dpdk_16 -- set Interface ovs_dpdk_16
   type=dpdk ofport_request=16
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_17 -- set Interface ovs_dpdk_17
+./utilities/ovs-vsctl --no-wait add-port br0 ovs_dpdk_17 -- set Interface ovs_dpdk_17
   type=dpdk ofport_request=17
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_48 -- set Interface ovs_dpdk_48
+./utilities/ovs-vsctl --no-wait add-port br0 ovs_dpdk_48 -- set Interface ovs_dpdk_48
   type=dpdkmemnic ofport_request=48
-./ovs-vsctl --no-wait add-port br0 ovs_dpdk_49 -- set Interface ovs_dpdk_49
+./utilities/ovs-vsctl --no-wait add-port br0 ovs_dpdk_49 -- set Interface ovs_dpdk_49
   type=dpdkmemnic ofport_request=49
 ```
 
 Confirm the ports have been successfully added:
 
 ```bash
-./ovs-vsctl show
+./utilities/ovs-vsctl show
 ```
 
 Start `ovs_dpdk`:
 
 ```bash
-./ovs_dpdk -c 0x0F -n 4 --proc-type=primary --base-virtaddr=<virt_addr>
-  -- -p 0x03 -n 2 -m 2 --stats=5 --vswitchd=0 --client_switching_core=1
+./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type=primary --base-virtaddr=<virt_addr>
+  -- -p 0x03 -m 2 --stats=5 --vswitchd=0 --client_switching_core=1
   --config="(0,0,2),(1,0,3)"
 ```
 
@@ -106,7 +106,7 @@ ovs_dpdk_48 ovs_dpdk_49
 Start the Open vSwitch daemon:
 
 ```bash
-./ovs-vswitchd -c 0x100 --proc-type=secondary -- --pidfile=/tmp/vswitchd.pid
+./vswitchd/ovs-vswitchd -c 0x100 --proc-type=secondary -- --pidfile=/tmp/vswitchd.pid
 ```
 
 ______
@@ -116,15 +116,15 @@ ______
 Delete the default flow entries from the bridge:
 
 ```bash
-./ovs-ofctl del-flows br0
+./utilities/ovs-ofctl del-flows br0
 ```
 
 Add flow entries to switch packets from `Port0` (16) to `MEMNIC0` (48) on the ingress path, and from `MEMNIC1` (49) to `Port1` (17) on the egress path:
 
 ```bash
-./ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,
+./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,
   nw_dst=6.6.6.2,idle_timeout=0,action=output:48
-./ovs-ofctl add-flow br0 in_port=49,dl_type=0x0800,nw_src=1.1.1.1,
+./utilities/ovs-ofctl add-flow br0 in_port=49,dl_type=0x0800,nw_src=1.1.1.1,
   nw_dst=6.6.6.2,idle_timeout=0,action=output:17
 ```
 

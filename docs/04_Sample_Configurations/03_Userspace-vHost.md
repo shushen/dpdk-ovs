@@ -138,7 +138,7 @@ Add ports to the bridge:
 Confirm the ports have been successfully added:
 
 ```bash
-./ovs-vsctl show
+./utilities/ovs-vsctl show
 ```
 
 You should see something like this:
@@ -169,7 +169,7 @@ Start `ovs_dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- -p 0x03 -n 2 -h 2 \
+  --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- -p 0x03 -h 2 \
   --stats=5 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 

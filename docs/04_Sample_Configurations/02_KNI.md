@@ -124,7 +124,7 @@ Start `ovs_dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> -- -p 0x03 -n 2 -k 2 --stats=5 --vswitchd=0 \
+  --base-virtaddr=<virt_addr> -- -p 0x03 -k 2 --stats=5 --vswitchd=0 \
   --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
@@ -266,7 +266,7 @@ It is important to see the `IVSHMEM metadata found` message in the kernel log. I
 Having completed the above, run the `kni_client` application:
 
 ```bash
-./build/kni_client -c 0x1 -n 4 -- -p port32 -p port33 &
+./kni_client -c 0x1 -n 4 -- -p port32 -p port33 &
 ```
 
 The application accepts a port name parameter, which it uses to lookup the rings for the corresponding client. The port name has to match exactly with the one shared through the IVSHMEM manager utility.

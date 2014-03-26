@@ -9,7 +9,7 @@ The `ovs_dpdk` application replaces the fastpath kernel switching module found i
 The `ovs_dpdk` application can be executed as follows:
 
 ```bash
-./datapath/dpdk/ovs_dpdk [eal] -- [args...]
+./datapath/dpdk/build/ovs_dpdk [eal] -- [args...]
 ```
 
 ### Args
@@ -61,7 +61,7 @@ In addition, the following parameters are available to configure the vHost devic
 An example configuration, with two physical ports, four KNI devices, and stats disabled:
 
 ```bash
-./datapath/dpdk/ovs_dpdk -c 0x0f -n 4 -- -p 0x03 -n 5 -k 4 --stats=0
+./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 -- -p 0x03 -k 4 --stats=0
   --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
@@ -80,7 +80,7 @@ There are a some points to note about the IVSHM manager utility. Firstly, it mus
 The `ovs-ivshmem-mngr` application can be executed as follows:
 
 ```bash
-./ovs-ivshmem-mngr [eal] -- [args...]
+./utilities/ovs-ivshmem-mngr [eal] -- [args...]
 ```
 
 The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. The other arguments must be a list of metadata names and port names. The metadata names are arbitrary names used to distinguish the set of Intel® DPDK objects being shared with a guest. There is a one to one relation between metadatas and guests. The port names must be the identical to those previously added to the switch. Each metadata name must be unique and followed by a comma separated list of port names. The metadata name and ports are separated by a colon (:).
@@ -102,7 +102,7 @@ In case of passing a non-valid input the IVSHM manager will fail with an error m
 ### Example Command
 
 ```bash
-./ovs-ivshmem-mngr meta:kniport0,ivshmporta
+./utilities/ovs-ivshmem-mngr meta:kniport0,ivshmporta
 ```
 
 ______
