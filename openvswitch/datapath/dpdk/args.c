@@ -155,23 +155,24 @@ parse_portmask(uint8_t max_ports, const char *portmask)
 }
 
 /**
- * Take the number of clients parameter passed to the app
- * and convert to a number to store in the num_clients variable
+ * Take a string and try to convert it to uint32_t.
+ * Return 0 if success -1 otherwise.
  */
-static uint32_t
-parse_num_clients(const char *clients)
+static int
+parse_str_to_uint32t(const char *str, uint32_t *num)
 {
 	char *end = NULL;
 	unsigned long temp;
 
-	if (clients == NULL || *clients == '\0')
+	if (str == NULL || *str == '\0')
 		return -1;
 
-	temp = strtoul(clients, &end, 10);
+	temp = strtoul(str, &end, 10);
 	if (end == NULL || *end != '\0' || temp == 0)
 		return -1;
 
-	return (uint32_t) temp;
+	*num = (uint32_t) temp;
+	return 0;
 }
 
 /*
@@ -258,7 +259,6 @@ int
 parse_app_args(uint8_t max_ports, int argc, char *argv[])
 {
 	int option_index, opt, ret;
-	uint32_t temp;
 	char **argvopt = argv;
 	static struct option lgopts[] = {
 			{PARAM_STATS, 1, 0, 0},
@@ -287,44 +287,34 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				}
 				break;
 			case 'n':  /* Client ports */
-				temp = parse_num_clients(optarg);
-				if (temp <= 0) {
+				if (parse_str_to_uint32t(optarg, &num_clients)) {
 					usage();
 					return -1;
 				}
-				num_clients = temp;
 				break;
 			case 'k':  /* KNI ports */
-				temp = parse_num_clients(optarg);
-				if (temp <= 0) {
+				if (parse_str_to_uint32t(optarg, &num_kni)) {
 					usage();
 					return -1;
 				}
-				num_kni = temp;
 				break;
 			case 'v':  /* vEth ports */
-				temp = parse_num_clients(optarg);
-				if (temp <= 0) {
+				if (parse_str_to_uint32t(optarg, &num_veth)) {
 					usage();
 					return -1;
 				}
-				num_veth = temp;
 				break;
 			case 'h':  /* vHost ports */
-				temp = parse_num_clients(optarg);
-				if (temp <= 0) {
+				if (parse_str_to_uint32t(optarg, &num_vhost)) {
 					usage();
 					return -1;
 				}
-				num_vhost = temp;
 				break;
 			case 'm':  /* MEMNIC ports */
-				temp = parse_num_clients(optarg);
-				if (temp <= 0) {
+				if (parse_str_to_uint32t(optarg, &num_memnic)) {
 					usage();
 					return -1;
 				}
-				num_memnic = (uint8_t)temp;
 				break;
 			case 0:
 				if (!strcmp(lgopts[option_index].name, PARAM_CONFIG)) {
@@ -340,36 +330,29 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				} else if (strncmp(lgopts[option_index].name, PARAM_CSC, 16) == 0) {
 					client_switching_core = atoi(optarg);
 				} else if (strncmp(lgopts[option_index].name, VHOST_CHAR_DEV_NAME, 18) == 0) {
-					 temp = us_vhost_parse_basename(optarg);
-					 if (temp < 0) {
+					 if (us_vhost_parse_basename(optarg)) {
 						 printf ("Invalid argument for character device basename\n");
 						 usage();
 						 return -1;
 					 }
 				} else if (strncmp(lgopts[option_index].name, VHOST_CHAR_DEV_IDX, 15) == 0) {
-					temp = atoi(optarg);
-					if (temp < 0) {
+					if (parse_str_to_uint32t(optarg, &dev_index)) {
 						printf("Invalid argument for character device index\n");	
 						usage();
 						return -1;
 					}
-					dev_index = temp;
 				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_COUNT, 17) == 0) {
-					temp = atoi(optarg);
-					if (temp < 0) {
+					if (parse_str_to_uint32t(optarg, &burst_tx_retry_num)) {
 						printf("Invalid argument for retry count\n");	
 						usage();
 						return -1;
 					}
-					burst_tx_retry_num = temp;
 				} else if (strncmp(lgopts[option_index].name, VHOST_RETRY_WAIT, 16) == 0) {
-					temp = atoi(optarg);
-					if (temp < 0) {
+					if (parse_str_to_uint32t(optarg, &burst_tx_delay_time)) {
 						printf("Invalid argument for retry wait time\n");	
 						usage();
 						return -1;
 					}
-					burst_tx_delay_time = temp;
 				}
 				break;
 			default:
