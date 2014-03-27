@@ -94,4 +94,7 @@ $(EMPTY_AUTOMAKE_TARGETS):
 clean:
 	rm -rf $(OVS_DIR)/datapath/dpdk/build
 
+check:
+	$(warning "This target is not implemented")
+
 distclean: clean
