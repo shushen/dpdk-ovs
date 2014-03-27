@@ -70,7 +70,6 @@ struct ovs_ivshmem_config {
 	char *metadata_name;	/* IVSHMEM metadata file name */
 	char *port_names[RTE_LIBRTE_IVSHMEM_MAX_ENTRIES];
 							/* Ports (DPDK objects) to be shared */
-	unsigned need_mempool;	/* Flag to indicate if mempool needs to be shared */
 };
 
 /* Global ivshmem config containing all metadata names and all its
@@ -317,17 +316,6 @@ ivshmem_mngr_share_vport_kni(const char *metadata_name, const char *port_name)
 				metadata_name);
 		return -1;
 	}
-
-	/* Mark this metadata as using kni to share mempool later on ensuring it
-	 * gets shared only once. Otherwise IVSHMEM api will complain */
-	for (i = 0; i < RTE_LIBRTE_IVSHMEM_MAX_METADATA_FILES; i++){
-		/* Safe ptr comparison. metadata_name reference to struct field */
-		if (ivshmem_config[i].metadata_name == metadata_name) {
-			ivshmem_config[i].need_mempool = 1;
-			break;
-		}
-	}
-
 	return 0;
 }
 
@@ -428,12 +416,11 @@ ivshmem_mngr_share_with_guests(void)
 				return -1;
 		}
 
-		/* In case a KNI port is being shared the mempool needs to be shared
-		 * too. DPDK objects can be shared only once per metadata. */
-		if (ivshmem_config[metadata_index].need_mempool) {
-			if (ivshmem_mngr_share_mempool(metadata_name) < 0)
-				return -1;
-		}
+		/* Share the mempool with the guest. mempool address space needs to be
+		 * mapped into all clients otherwise they won't be able to access to
+		 * mbufs data. */
+		if (ivshmem_mngr_share_mempool(metadata_name) < 0)
+			return -1;
 
 		/* Share the vports memzone so the clients can access to vport info */
 		if (rte_ivshmem_metadata_add_memzone(vports_mz, metadata_name) < 0)
