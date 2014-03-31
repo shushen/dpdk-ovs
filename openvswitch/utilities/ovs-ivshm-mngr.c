@@ -244,7 +244,6 @@ ivshmem_mngr_share_mempool(const char *metadata_name)
 static int
 ivshmem_mngr_share_vport_kni(const char *metadata_name, const char *port_name)
 {
-	int i = 0;
 	const struct rte_memzone *mz = NULL;
 
 	/* TX fifo */
