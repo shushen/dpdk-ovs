@@ -938,8 +938,9 @@ static int
 send_to_vhost(uint32_t vportid, struct rte_mbuf *buf)
 {
 	struct local_mbuf_cache *per_vhost_cache = NULL;
+	uint8_t lcore_id = lcore_map[rte_lcore_id()];
 
-	per_vhost_cache = &vhost_mbuf_cache[rte_lcore_id()][vportid - VHOST0];
+	per_vhost_cache = &vhost_mbuf_cache[lcore_id][vportid - VHOST0];
 	per_vhost_cache->cache[per_vhost_cache->count++] = buf;
 
 	if (unlikely(per_vhost_cache->count == LOCAL_MBUF_CACHE_SIZE))
@@ -1303,7 +1304,7 @@ flush_vhost_devs(void)
 {
 	uint32_t vhostid = 0;
 	uint32_t local_num_vhost = num_vhost;
-	uint8_t lcore_id = rte_lcore_id();
+	uint8_t lcore_id = lcore_map[rte_lcore_id()];
 	struct local_mbuf_cache *per_vhost_cache = NULL;
 
 	/* iterate over all vhost caches for this core */
@@ -1328,8 +1329,9 @@ flush_vhost_dev_port_cache(uint32_t vportid)
 	struct local_mbuf_cache *per_vhost_cache = NULL;
 	int tx_count;
 	unsigned  i;
+	uint8_t lcore_id = lcore_map[rte_lcore_id()];
 
-	per_vhost_cache = &vhost_mbuf_cache[rte_lcore_id()][vportid - VHOST0];
+	per_vhost_cache = &vhost_mbuf_cache[lcore_id][vportid - VHOST0];
 
 	dev = vports[vportid].vhost.dev;
 
