@@ -3,6 +3,7 @@
       guest and host. The IVSHMEM that is used is separate from the DPDK
       hugepage
     - Added support for multiple bridges
+    - Added job system to allow more flexibility adding tasks to cores
 
 # v0.10 - March 2014
 
@@ -23,7 +24,7 @@
 
     - Upgraded the base version of Open vSwitch from 1.5 to 2.0.0
     - Updated to use DPDK 1.6.0
-    - Added DPDK 1.6.0 IVSHMEM support. 
+    - Added DPDK 1.6.0 IVSHMEM support.
       - Added different hugepage sizes support - 2MB and 1GB hugepages
       - Added Intel(R) Atom processors support
       - Improved security and isolation between Host and Guest applications
