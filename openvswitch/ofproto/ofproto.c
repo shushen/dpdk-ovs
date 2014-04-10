@@ -2615,7 +2615,7 @@ handle_features_request(struct ofconn *ofconn, const struct ofp_header *oh)
     features.n_buffers = pktbuf_capacity();
     features.n_tables = n_tables;
     features.capabilities = (OFPUTIL_C_FLOW_STATS | OFPUTIL_C_TABLE_STATS |
-                             OFPUTIL_C_PORT_STATS | OFPUTIL_C_QUEUE_STATS);
+                             OFPUTIL_C_QUEUE_STATS);
     if (arp_match_ip) {
         features.capabilities |= OFPUTIL_C_ARP_MATCH_IP;
     }
