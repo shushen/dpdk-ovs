@@ -36,7 +36,7 @@ For `ovs_dpdk`, substitute in this command:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 --proc-type=primary -- -n 1 -p 0x3 --stats=1
-  --vswitchd=0 -client_switching_core=1 --config="(0,0,2),(1,0,3)"
+  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 Then for `ovs_client`, substitute in this command:

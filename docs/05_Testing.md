@@ -193,7 +193,7 @@ Start `ovs_dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 --proc-type primary --socket-mem 2048,2048
--- -p 0x03 -v 4 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+-- -p 0x03 -v 4 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 Finally, start `ovs-vswitchd`:

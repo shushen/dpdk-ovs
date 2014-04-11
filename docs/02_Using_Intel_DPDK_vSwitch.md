@@ -40,8 +40,6 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
   Number of vEth devices to configure
 * `-m NUM`
   Number of MEMNIC devices to configure
-* `--vswitchd`
-  CPU ID of the core used to display statistics and communicate with the vswitch daemon
 * `--config (port,queue,lcore)[,(port,queue,lcore]`
   Each port/queue/core group specifies the CPU ID of the core that will handle ingress traffic for the specified queue on the specified port
 
@@ -62,7 +60,7 @@ An example configuration, with two physical ports, four KNI devices, and stats d
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 -- -p 0x03 -k 4 --stats=0
-  --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 ______

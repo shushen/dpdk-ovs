@@ -92,8 +92,7 @@ Start `ovs_dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type=primary --base-virtaddr=<virt_addr>
-  -- -p 0x03 -m 2 --stats=5 --vswitchd=0 --client_switching_core=1
-  --config="(0,0,2),(1,0,3)"
+  -- -p 0x03 -m 2 --stats=5 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 ovs_dpdk will create shared memory in `/dev/shm`. The above example, `ovs_dpdk_48` and `ovs_dpdk_49` are created.

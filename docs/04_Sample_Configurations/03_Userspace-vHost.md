@@ -170,7 +170,7 @@ Start `ovs_dpdk`:
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
   --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- -p 0x03 -h 2 \
-  --stats=5 --vswitchd=0 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+  --stats=5 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
 Note the additional `--socket-mem` option. This ensures the DPDK app does not use all available hugepage memory on the system.

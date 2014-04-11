@@ -97,7 +97,7 @@ Start `ovs_dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> -- -p 0x03 --stats=5 --vswitchd=0 \
+  --base-virtaddr=<virt_addr> -- -p 0x03 --stats=5 \
   --client_switching_core=1 --config="(0,0,2),(1,0,3)"
 ```
 
