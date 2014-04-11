@@ -76,6 +76,10 @@ int jobs_launch_slave_lcore(unsigned lcore_id);
 void jobs_launch_slaves_all(void);
 int jobs_stop_slave_lcore(unsigned lcore_id);
 void jobs_stop_slaves_all(void);
+#define JOBS_LCORE_IS_ONLINE(lcore_id) \
+	(rte_eal_get_lcore_state((lcore_id)) == RUNNING)
+#define JOBS_LCORE_HAS_JOBS(lcore_id) \
+	(joblist_refs[(lcore_id)]->nb_jobs > 0)
 
 /**
  * Runs a single job iteration on master lcore

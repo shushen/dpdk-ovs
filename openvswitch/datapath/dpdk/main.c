@@ -385,14 +385,16 @@ configure_lcore(unsigned lcore_id)
 		}
 	}
 
-	ret = jobs_add_to_lcore(do_dev_flag_handling,
-				(void *) (uintptr_t) lcore_id,
-				lcore_id);
-	if (ret < 0)
-		rte_panic("Could not add dev flag handling job to "
-			  "core %d\n", lcore_id);
-	RTE_LOG(INFO, APP, "Core %d handles dev flag handling\n",
-		lcore_id);
+	if (JOBS_LCORE_HAS_JOBS(lcore_id)) {
+		ret = jobs_add_to_lcore(do_dev_flag_handling,
+		                        (void *) (uintptr_t) lcore_id,
+		                        lcore_id);
+		if (ret < 0)
+			rte_panic("Could not add dev flag handling job to "
+			          "core %d\n", lcore_id);
+		RTE_LOG(INFO, APP, "Core %d handles dev flag handling\n",
+		        lcore_id);
+	}
 }
 
 /*

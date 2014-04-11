@@ -54,11 +54,18 @@
 #include "virtio-net.h"
 #include "vhost-net-cdev.h"
 #include "vport.h"
+#include "jobs.h"
 
 /* Macros for printing using RTE_LOG */
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 #define RTE_LOGTYPE_VHOST_CONFIG RTE_LOGTYPE_USER2
 
+#define ASSERT_IS_MASTER_LCORE(lcore_id) \
+	do { \
+		if ((lcore_id) != rte_get_master_lcore()) \
+			rte_panic("Lcore %u is not master (%s:%u)\n", \
+			          (lcore_id), __FUNCTION__, __LINE__); \
+	} while(0)
 
 uint32_t num_devices = 0;
 
@@ -88,6 +95,14 @@ static void
 destroy_device (volatile struct virtio_net *dev)
 {
 	unsigned lcore;
+	/*
+	 * Because we need to wait for other online lcores changing their dev
+	 * removal flag, we need to ensure that those lcore are not stopped
+	 * while we are waiting.
+	 * However since lcores can only be started and stopped by the master
+	 * lcore, we just need to ensure that we run on master lcore here.
+	 */
+	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 
 	/* Remove device from ovs_dpdk port. */
 	if (vport_vhost_down((struct virtio_net*) dev) < 0) {
@@ -110,8 +125,10 @@ destroy_device (volatile struct virtio_net *dev)
 	 */
 
 	RTE_LCORE_FOREACH(lcore) {
-		while (dev_removal_flag[lcore] != ACK_DEV_REMOVAL) {
-			rte_pause();
+		if (JOBS_LCORE_IS_ONLINE(lcore)) {
+			while (dev_removal_flag[lcore] != ACK_DEV_REMOVAL) {
+				rte_pause();
+			}
 		}
 	}
 	
