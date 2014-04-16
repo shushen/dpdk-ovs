@@ -189,7 +189,7 @@ struct subfacet {
 };
 
 #define SUBFACET_DESTROY_MAX_BATCH 50
-
+#define KERNEL_FLOW_TABLE_TIMEOUT 30000
 static struct subfacet *subfacet_create(struct facet *, struct flow_miss *);
 static struct subfacet *subfacet_find(struct dpif_backer *,
                                       const struct nlattr *key, size_t key_len,
@@ -3787,7 +3787,7 @@ subfacet_max_idle(const struct dpif_backer *backer)
      * uninstallable subfacets.
      */
     enum { BUCKET_WIDTH = ROUND_UP(100, TIME_UPDATE_INTERVAL) };
-    enum { N_BUCKETS = 5000 / BUCKET_WIDTH };
+    enum { N_BUCKETS = KERNEL_FLOW_TABLE_TIMEOUT / BUCKET_WIDTH };
     int buckets[N_BUCKETS] = { 0 };
     int total, subtotal, bucket;
     struct subfacet *subfacet;
