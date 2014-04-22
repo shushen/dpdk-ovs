@@ -297,6 +297,14 @@ vport_cmd_new(struct dpdk_vport_message *request)
 	if (port_type == VPORT_TYPE_PHY)
 		port_no = port_no + PHYPORT0;
 
+	/* TODO: Possible similar work for other vport type */
+	if (port_type == VPORT_TYPE_MEMNIC && port_no == UINT32_MAX) {
+		port_no = vport_name_to_portid(port_name);
+		/* conflicting name, fall back */
+		if (vport_get_type(port_no) != VPORT_TYPE_MEMNIC)
+			port_no = UINT32_MAX;
+	}
+
 	/* Haven't requested a given port_number or one supplied is invalid, so get
 	 * one in range */
 	if (!vport_exists(port_no) || !vport_id_is_valid(port_no, port_type))
