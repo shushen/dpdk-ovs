@@ -52,17 +52,16 @@
 
 #define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
 
-int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
+int attach_memnic_port(struct vport_memnic *memnic,
+		       unsigned vportid, const char *name)
 {
 	struct memnic_area *nic;
 	struct memnic_header *hdr;
 	int fd, ret;
-	char name[64];
 	uint64_t rand;
 
-	RTE_LOG(INFO, APP, "MEMNIC initialize vport=%u\n", vportid);
+	RTE_LOG(INFO, APP, "MEMNIC initialize %s vport=%u\n", name, vportid);
 
-	sprintf(name, MEMNIC_SHM_NAME, vportid);
 	fd = shm_open(name, O_RDWR|O_CREAT, 0640);
 	if (fd == -1) {
 		RTE_LOG(WARNING, APP,
@@ -109,6 +108,10 @@ int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
 			hdr->mac_addr[4], hdr->mac_addr[5]);
 	}
 
+	/* unmap if there is an old mmap */
+	if (memnic->ptr)
+		munmap(memnic->ptr, MEMNIC_AREA_SIZE);
+
 	memnic->ptr = nic;
 	memnic->up = 0;
 	memnic->down = 0;
@@ -118,6 +121,15 @@ int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
 close_out:
 	close(fd);
 	return ret;
+}
+
+int init_memnic_port(struct vport_memnic *memnic, unsigned vportid)
+{
+	char name[64];
+
+	sprintf(name, MEMNIC_SHM_NAME, vportid);
+
+	return attach_memnic_port(memnic, vportid, name);
 }
 
 int memnic_tx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf *buf)

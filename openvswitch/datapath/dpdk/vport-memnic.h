@@ -32,6 +32,7 @@
 #define __VPORT_MEMNIC_H__
 
 extern int init_memnic_port(struct vport_memnic *memnic, unsigned vportid);
+extern int attach_memnic_port(struct vport_memnic *memnic, unsigned vportid, const char *name);
 extern int memnic_tx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf *buf);
 extern uint16_t memnic_rx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf **bufs);
 
