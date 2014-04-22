@@ -1111,6 +1111,9 @@ receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs)
 		return 0;
 	}
 
+	if (unlikely(!vport_is_enabled(vportid)))
+		return 0;
+
 	switch (vports[vportid].type) {
 	case VPORT_TYPE_PHY:
 		return receive_from_port(vportid, bufs);
