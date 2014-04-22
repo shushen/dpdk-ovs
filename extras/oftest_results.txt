@@ -202,7 +202,7 @@ counters.TxErrors ... ok
 counters.TxPktPerQueue ... ok
 counters.TxErrorPerQueue ... ok
 counters.RxPktPerPort ... FAIL
-counters.TxBytPerPort ...FAIL
+counters.TxBytPerPort ... FAIL
 counters.RxDrops ... ok
 counters.Collisions ... ok
 counters.TxDrops ... ok
