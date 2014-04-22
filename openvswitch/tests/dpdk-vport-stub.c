@@ -140,6 +140,12 @@ vport_is_enabled(unsigned vportid)
 	return 1;
 }
 
+int
+vport_attach(unsigned vportid, const char *name)
+{
+	return 0;
+}
+
 bool
 vport_exists(unsigned vportid)
 {

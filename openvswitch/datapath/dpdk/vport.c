@@ -1510,6 +1510,28 @@ vport_is_enabled(unsigned vportid)
 	return false;
 }
 
+/* Attach name */
+int vport_attach(unsigned vportid, const char *name)
+{
+	switch (vport_get_type(vportid)) {
+	case VPORT_TYPE_VSWITCHD:
+	case VPORT_TYPE_BRIDGE:
+	case VPORT_TYPE_PHY:
+	case VPORT_TYPE_CLIENT:
+	case VPORT_TYPE_KNI:
+	case VPORT_TYPE_VETH:
+	case VPORT_TYPE_VHOST:
+		break;
+	case VPORT_TYPE_MEMNIC:
+		return attach_memnic_port(&vports[vportid].memnic, vportid, name);
+	default:
+		RTE_LOG(WARNING, APP,
+			"Attaching unknown vport %u\n", vportid);
+		return -1;
+	}
+	return 0;
+}
+
 /* vhost port control functions */
 
 inline int

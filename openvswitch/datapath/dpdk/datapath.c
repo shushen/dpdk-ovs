@@ -304,22 +304,26 @@ vport_cmd_new(struct dpdk_vport_message *request)
 
 	if (vport_exists(port_no)) {
 		if (!vport_is_enabled(port_no)) {
-			vport_enable(port_no);
-
 			/* Haven't requested a given port_name, so use default one */
 			if (port_name == NULL)
 				port_name = vport_get_name(port_no);
-			else
+
+			if (vport_attach(port_no, port_name) == 0) {
+				vport_enable(port_no);
+
 				vport_set_name(port_no, port_name);
 
-			/* We don't need to "set type", as the port's position in the 'vport_info'
-			 * array implicitly defines the type. This will change if the structure
-			 * of this array changes. */
+				/* We don't need to "set type", as the port's position in the 'vport_info'
+				 * array implicitly defines the type. This will change if the structure
+				 * of this array changes. */
 
-			/* Populate 'reply' */
-			request->port_no = port_no;
-			strncpy(request->port_name, port_name, MAX_VPORT_NAME_SIZE);
-			reply.type = 0;
+				/* Populate 'reply' */
+				request->port_no = port_no;
+				strncpy(request->port_name, port_name, MAX_VPORT_NAME_SIZE);
+				reply.type = 0;
+			} else {
+				reply.type = EINVAL;
+			}
 		} else {
 			reply.type = EBUSY;
 		}

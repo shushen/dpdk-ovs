@@ -112,6 +112,8 @@ void vport_enable(unsigned vportid);
 void vport_disable(unsigned vportid);
 bool vport_is_enabled(unsigned vportid);
 
+int vport_attach(unsigned vportid, const char *name);
+
 int vport_vhost_up(struct virtio_net *dev);
 int vport_vhost_down(struct virtio_net *dev);
 void vport_set_kni_fifo_names(unsigned vportid,
