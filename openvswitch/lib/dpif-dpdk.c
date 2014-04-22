@@ -98,7 +98,6 @@ static void flow_message_del_create(struct dpif_dpdk_flow_message *request,
 static void flow_message_flush_create(struct dpif_dpdk_flow_message *request);
 static void create_action_set_datapath(struct dpif_dpdk_action *dpif_actions,
                            const struct nlattr *actions, const int actions_index);
-static int memnic_rename_shm_object(uint32_t port_no, const char *port_name);
 
 static int
 dpif_dpdk_open(const struct dpif_class *dpif_class_p, const char *name,
@@ -250,35 +249,6 @@ dpif_dpdk_ofport_type(enum dpif_dpdk_vport_type type, char *vport_type)
 };
 
 static int
-memnic_rename_shm_object(uint32_t port_no, const char *port_name)
-{
-	char old_name[PATH_MAX];
-	char new_name[PATH_MAX];
-
-	/* Remove any old shm object with the same port name. Ignore ENOENT error
-	 * (No such file or directory) meaning that the shm object didn't exist
-	 * in the first place */
-	if (shm_unlink(port_name) < 0 && errno != ENOENT) {
-		VLOG_ERR("Could not unlink previous shm object '%s'\n", port_name);
-		return -errno;
-	}
-
-	/* Calculate names of old shm (created in datapath) and new shm name
-	 * from the port name */
-	rte_snprintf(old_name, sizeof(old_name), MEMNIC_SHM_NAME_FMT, port_no);
-	rte_snprintf(new_name, sizeof(new_name), "%s/%s", SHM_DIR, port_name);
-
-	/* Do the shm object renaming */
-	if (rename(old_name, new_name) < 0) {
-		VLOG_ERR("Could not rename shm object '%s' to '%s'\n",
-				old_name, new_name);
-		return -errno;
-	}
-
-	return 0;
-}
-
-static int
 dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
                    odp_port_t *port_no)
 {
@@ -324,9 +294,6 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     error = dpif_dpdk_vport_transact(&request, &reply);
     if (!error)
         *port_no = reply.port_no;
-
-    if (!error && request.type == VPORT_TYPE_MEMNIC)
-		error = memnic_rename_shm_object(reply.port_no, netdev_get_name(netdev));
 
     return error;
 }
