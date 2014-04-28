@@ -147,7 +147,7 @@ cd -
 
 ```bash
 cd ovdk/qemu
-./configure --enable-kvm --dpdk-dir=$(RTE_SDK) --target-list=x86_64-softmmu --disable-pie
+./configure --enable-kvm --without-pixman --dpdk-dir=$(RTE_SDK) --target-list=x86_64-softmmu --disable-pie
 cd -
 ```
 
