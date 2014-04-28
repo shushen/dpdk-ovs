@@ -99,7 +99,7 @@ config-ovs:
 	cd $(OVS_DIR) && ./boot.sh && ./configure RTE_SDK=$(DPDK_DIR) --disable-ssl && cd $(ROOT_DIR)
 
 config-qemu:
-	cd $(QEMU_DIR) && ./configure --enable-kvm --without-pixman --dpdkdir=$(DPDK_DIR) --extra-cflags="-Wno-poison-system-directories" --target-list=x86_64-softmmu && cd $(ROOT_DIR)
+	cd $(QEMU_DIR) && ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --extra-cflags="-Wno-poison-system-directories" --target-list=x86_64-softmmu && cd $(ROOT_DIR)
 #End Targets for Configuration#######
 
 #Targets for Clean##################
