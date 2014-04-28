@@ -44,6 +44,7 @@ AC_SYS_LARGEFILE
 AC_SEARCH_LIBS([pow], [m])
 AC_SEARCH_LIBS([clock_gettime], [rt])
 AC_SEARCH_LIBS([timer_create], [rt])
+AC_SEARCH_LIBS([dlopen], [dl])
 AC_SEARCH_LIBS([pthread_sigmask], [pthread])
 AC_FUNC_STRERROR_R
 
