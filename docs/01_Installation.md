@@ -22,6 +22,8 @@ To compile Intel® DPDK vSwitch, you will need the following software:
 * `fuse-devel`
 * `openssl`
 * `kernel-modules-extra`
+* `pixman-devel`
+* `libfdt-devel`
 
 ______
 
