@@ -237,7 +237,11 @@ host_memory_map (struct virtio_net *dev, struct virtio_memory *mem, pid_t pid, u
 	while (NULL != (dptr = readdir(dp))) {
 		rte_snprintf (memfile, PATH_MAX, "/proc/%u/fd/%s", pid, dptr->d_name);
 		resolved_path[0] = '\0';
-		realpath(memfile, resolved_path);
+		if (realpath(memfile, resolved_path) == NULL)
+			if (errno != ENOENT) /* OK if ENOENT (file does not exist) */
+				/* Note: Code assumes correct path for ENOENT error */
+				/* but is undefined for error output (from man doc) */
+				strcpy(resolved_path, memfile);
 
 		if (strncmp(resolved_path, procmap.fname,
 			strnlen(procmap.fname, PATH_MAX)) == 0) {
