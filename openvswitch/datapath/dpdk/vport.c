@@ -334,7 +334,7 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 									res_end_idx);
 	} while (unlikely(success == 0));
 	res_cur_idx = res_base_idx;
-	LOG_DEBUG(APP, "(%"PRIu64") Current Index %d| End Index %d\n", 
+	LOG_DEBUG(APP, "(%"PRIu64") Current Index %d| End Index %d\n",
 			dev->device_fh, res_cur_idx, res_end_idx);
 
 	/* Prefetch available ring to retrieve indexes. */
@@ -362,10 +362,10 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 
 		if (mergeable && (mrg_count != 0)) {
 			desc->len = packet_len[packet_count] = rte_pktmbuf_pkt_len(buff);
-			virtio_hdr_addr[packet_count] = virtio_hdr_addr[packet_count - 1];	
+			virtio_hdr_addr[packet_count] = virtio_hdr_addr[packet_count - 1];
 		} else {
 			/* Copy virtio_hdr to packet and increment buffer address */
-			virtio_hdr_addr[packet_count] = buff_addr;	
+			virtio_hdr_addr[packet_count] = buff_addr;
 			packet_len[packet_count] = rte_pktmbuf_pkt_len(buff) + vq->vhost_hlen;
 
 			/*
@@ -384,42 +384,42 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 			}
 		}
 		if (mergeable) {
-			mrg_count++;		
-			if ((mrg_count == MAX_MRG_PKT_BURST) || ((packet_count + 1) == count)) 
+			mrg_count++;
+			if ((mrg_count == MAX_MRG_PKT_BURST) || ((packet_count + 1) == count))
 				mrg_count = 0;
 		}
 
-		virtio_buff_addr[packet_count] = buff_addr;	
+		virtio_buff_addr[packet_count] = buff_addr;
 	}
 
-	/* The used ring is updated with desc information for each packet. */	
+	/* The used ring is updated with desc information for each packet. */
 	for (packet_count = 0; packet_count < count; packet_count++) {
 		vq->used->ring[res_cur_idx & (vq->size - 1)].id = head[packet_count];
 		vq->used->ring[res_cur_idx & (vq->size - 1)].len = packet_len[packet_count];
 		res_cur_idx++;
-	}	
+	}
 
-	/* The header for each packet is copied if applicable. */	
+	/* The header for each packet is copied if applicable. */
 	for (packet_count = 0; packet_count < count; packet_count++) {
 		/* If mergeable is disabled then a header is required per buffer. */
 		if (!mergeable) {
-			rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count], 
+			rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count],
 					(const void*)&virtio_hdr, vq->vhost_hlen);
-			PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count], 
+			PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count],
 					vq->vhost_hlen, 1);
 		} else {
 			mrg_count++;
-			/* 
-			 * Merge buffer can only handle so many buffers at a time. 
+			/*
+			 * Merge buffer can only handle so many buffers at a time.
 			 * Tell the guest if this limit is reached.
 			 */
 			if ((mrg_count == MAX_MRG_PKT_BURST) || ((packet_count + 1) == count)) {
 				virtio_hdr.num_buffers = mrg_count;
-				LOG_DEBUG(APP, "(%"PRIu64") RX: Num merge buffers %d\n", 
+				LOG_DEBUG(APP, "(%"PRIu64") RX: Num merge buffers %d\n",
 						dev->device_fh, virtio_hdr.num_buffers);
-				rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count], 
+				rte_memcpy((void *)(uintptr_t)virtio_hdr_addr[packet_count],
 						(const void*)&virtio_hdr, vq->vhost_hlen);
-				PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count], 
+				PRINT_PACKET(dev, (uintptr_t)virtio_hdr_addr[packet_count],
 						vq->vhost_hlen, 1);
 				mrg_count = 0;
 			}
@@ -438,9 +438,9 @@ vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 			buff = buff->pkt.next;
 		}
 	}
-	PRINT_PACKET(dev, (uintptr_t)virtio_buff_addr[packet_count], 
+	PRINT_PACKET(dev, (uintptr_t)virtio_buff_addr[packet_count],
 			packet_offset, 0);
-		
+
 	rte_compiler_barrier();
 
 	/* Wait until it's our turn to add our buffer to the used ring. */
@@ -491,9 +491,9 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 	if (free_entries > count)
 		free_entries = count;
 
-	/* 
+	/*
 	 * Performance is better if cachelines containing descriptors are not accessed by multiple
-	 * cores. We try finish with a cacheline before passing it on. 
+	 * cores. We try finish with a cacheline before passing it on.
 	 */
 	if (likely(free_entries > DESC_PER_CACHELINE))
 		free_entries = free_entries - ((vq->last_used_idx + free_entries) % DESC_PER_CACHELINE);
@@ -509,7 +509,7 @@ vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned cou
 		mbuf = rte_pktmbuf_alloc(pktmbuf_pool);
 		if (unlikely(mbuf == NULL)) {
 			RTE_LOG(ERR, APP, "Failed to allocate memory for mbuf.\n");
-			free_entries = packet_count;	
+			free_entries = packet_count;
 			if (free_entries == 0)
 				return 0;
 			break;
@@ -1105,12 +1105,6 @@ receive_from_memnic(uint32_t vportid, struct rte_mbuf **bufs)
 inline uint16_t
 receive_from_vport(uint32_t vportid, struct rte_mbuf **bufs)
 {
-	if (unlikely(vportid >= MAX_VPORTS)) {
-		RTE_LOG(WARNING, APP,
-			"receiving from invalid vport %u\n", vportid);
-		return 0;
-	}
-
 	if (unlikely(!vport_is_enabled(vportid)))
 		return 0;
 
