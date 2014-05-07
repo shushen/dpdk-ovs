@@ -44,6 +44,7 @@
 #define SOCKET0             0
 
 #define FLOW_CMD_FAMILY        0xF
+#define VPORT_CMD_FAMILY       0xE
 #define PACKET_CMD_FAMILY      0x1F
 
 #define action_output_build(action_struct, vport)   do { \

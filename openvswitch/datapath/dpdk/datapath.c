@@ -263,7 +263,7 @@ handle_unknown_cmd(void)
 {
 	struct dpdk_message reply = {0};
 
-	reply.type = EINVAL;
+	reply.error = EINVAL;
 
 	send_reply_to_vswitchd(&reply);
 }
@@ -288,6 +288,8 @@ vport_cmd_new(struct dpdk_vport_message *request)
 	uint32_t port_no;
 	char *port_name;
 	uint8_t port_type;
+
+	reply.type = VPORT_CMD_FAMILY;
 
 	port_type = request->type;
 	port_name = request->port_name;
@@ -328,15 +330,15 @@ vport_cmd_new(struct dpdk_vport_message *request)
 				/* Populate 'reply' */
 				request->port_no = port_no;
 				strncpy(request->port_name, port_name, MAX_VPORT_NAME_SIZE);
-				reply.type = 0;
+				reply.error = 0;
 			} else {
-				reply.type = EINVAL;
+				reply.error = EINVAL;
 			}
 		} else {
-			reply.type = EBUSY;
+			reply.error = EBUSY;
 		}
 	} else {
-		reply.type = ENODEV;
+		reply.error = ENODEV;
 	}
 
 	reply.vport_msg = *request;
@@ -357,11 +359,13 @@ vport_cmd_del(struct dpdk_vport_message *request)
 	struct dpdk_message reply = {0};
 	uint16_t port_no = request->port_no;
 
+	reply.type = VPORT_CMD_FAMILY;
+
 	if (vport_exists(port_no) && vport_is_enabled(port_no)) {
 		vport_disable(port_no);
-		reply.type = 0;
+		reply.error = 0;
 	} else {
-		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+		reply.error = ENODEV;  /* from a high-level, the device doesn't exist */
 	}
 
 	reply.vport_msg = *request;
@@ -377,6 +381,8 @@ vport_cmd_get(struct dpdk_vport_message *request)
 	struct dpdk_message reply = {0};
 	uint32_t port_no = request->port_no;
 
+	reply.type = VPORT_CMD_FAMILY;
+
 	/* Correct 'port_no' value may not be included as part of 'request';
 	 * identify vport number associated with vport name. This is used by
 	 * the dpif's 'query_by_name' function. */
@@ -389,9 +395,9 @@ vport_cmd_get(struct dpdk_vport_message *request)
 
 		strncpy(request->port_name, vport_get_name(request->port_no),
 		        MAX_VPORT_NAME_SIZE);
-		reply.type = 0;
+		reply.error = 0;
 	} else {
-		reply.type = ENODEV;  /* from a high-level, the device doesn't exist */
+		reply.error = ENODEV;  /* from a high-level, the device doesn't exist */
 	}
 
 	reply.vport_msg = *request;
@@ -410,6 +416,8 @@ static void
 vport_cmd_dump(struct dpdk_vport_message *request)
 {
 	struct dpdk_message reply = {0};
+
+	reply.type = VPORT_CMD_FAMILY;
 
 	if (request->port_no == UINT32_MAX)  /* "Entry case" for state machine */
 		request->port_no = 1;
@@ -430,9 +438,9 @@ vport_cmd_dump(struct dpdk_vport_message *request)
 	if (request->port_no < MAX_VPORTS) {
 		request->stats = stats_vport_get(request->port_no);
 		request->type = vport_get_type(request->port_no);
-		reply.type = 0;
+		reply.error = 0;
 	} else {
-		reply.type = EOF;  /* "Exit case" for state machine */
+		reply.error = EOF;  /* "Exit case" for state machine */
 	}
 
 	reply.vport_msg = *request;
@@ -475,13 +483,15 @@ flow_cmd_new(struct dpdk_flow_message *request)
 	struct dpdk_message reply = {0};
 	int pos = 0;
 
+	reply.type = FLOW_CMD_FAMILY;
+
 	pos = flow_table_lookup(&request->key);
 	if (pos < 0) {
 		if (request->flags & FLAG_CREATE) {
 			flow_table_add_flow(&request->key, request->actions);
-			reply.type = 0;
+			reply.error = 0;
 		} else {
-			reply.type = ENOENT;
+			reply.error = ENOENT;
 		}
 	} else {
 		if (request->flags & FLAG_REPLACE) {
@@ -493,9 +503,9 @@ flow_cmd_new(struct dpdk_flow_message *request)
 			 */
 			flow_table_mod_flow(&request->key,
 			         request->actions, request->clear);
-			reply.type = 0;
+			reply.error = 0;
 		} else {
-			reply.type = EEXIST;
+			reply.error = EEXIST;
 		}
 	}
 
@@ -516,19 +526,21 @@ flow_cmd_del(struct dpdk_flow_message *request)
 	struct flow_key empty = {0};
 	int pos = 0;
 
+	reply.type = FLOW_CMD_FAMILY;
+
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		flow_table_del_all();
-		reply.type = 0;
+		reply.error = 0;
 	} else {
 		pos = flow_table_lookup(&request->key);
 		if (pos < 0) {
-			reply.type = ENOENT;
+			reply.error = ENOENT;
 		} else {
 			/* Retrieve flow stats*/
 			flow_table_get_flow(&request->key,
 			               NULL, &request->stats);
 			flow_table_del_flow(&request->key);
-			reply.type = 0;
+			reply.error = 0;
 		}
 	}
 
@@ -545,11 +557,13 @@ flow_cmd_get(struct dpdk_flow_message *request)
 	struct dpdk_message reply = {0};
 	int ret = 0;
 
+	reply.type = FLOW_CMD_FAMILY;
+
 	ret = flow_table_get_flow(&request->key, request->actions, &request->stats);
 	if (ret < 0) {
-		reply.type = ENOENT;
+		reply.error = ENOENT;
 	} else {
-		reply.type = 0;
+		reply.error = 0;
 	}
 
 	reply.flow_msg = *request;
@@ -573,6 +587,8 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	struct flow_key key = {0};
 	struct flow_stats stats = {0};
 
+	reply.type = FLOW_CMD_FAMILY;
+
 	if (!memcmp(&request->key, &empty, sizeof(request->key))) {
 		/*
 		 * if key is empty, it is first call of dump(), so we
@@ -588,10 +604,10 @@ flow_cmd_dump(struct dpdk_flow_message *request)
 	if (ret >= 0) {
 		request->key = key;
 		request->stats = stats;
-		reply.type = 0;
+		reply.error = 0;
 	} else {
 		/* Reached the end of the flow table */
-		reply.type = EOF;
+		reply.error = EOF;
 	}
 
 	reply.flow_msg = *request;

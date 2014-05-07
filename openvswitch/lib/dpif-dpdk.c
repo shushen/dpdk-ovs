@@ -1190,7 +1190,7 @@ dpif_dpdk_vport_transact(struct dpif_dpdk_vport_message *request,
         *reply = request_buf.vport_msg;
     }
 
-    return request_buf.type;
+    return request_buf.error;
 }
 
 /* Clears 'flow' to "empty" values. */
@@ -1236,7 +1236,7 @@ dpif_dpdk_flow_transact(struct dpif_dpdk_flow_message *request,
         *reply = request_buf.flow_msg;
     }
 
-    return request_buf.type;
+    return request_buf.error;
 }
 
 /*

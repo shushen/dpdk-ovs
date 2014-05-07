@@ -151,7 +151,8 @@ struct dpif_dpdk_packet_message {
 
 /* A message between vswitchd <-> datapath. */
 struct dpif_dpdk_message {
-	int16_t type;        /* Message type, if a request, or return code */
+	int16_t type;              /* Message type */
+	int16_t error;             /* If reply, return code */
 	union {              /* Actual message */
 		struct dpif_dpdk_vport_message vport_msg;
 		struct dpif_dpdk_flow_message flow_msg;

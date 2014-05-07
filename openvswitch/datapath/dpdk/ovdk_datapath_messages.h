@@ -67,7 +67,8 @@ struct dpdk_packet_message {
 
 /* A message between vswitchd <-> datapath. */
 struct dpdk_message {
-	int16_t type;              /* Message type, if a request, or return code */
+	int16_t type;              /* Message type */
+	int16_t error;             /* If reply, return code */
 	union {                    /* Actual message */
 		struct dpdk_vport_message vport_msg;
 		struct dpdk_flow_message flow_msg;

@@ -32,6 +32,9 @@
  *
  */
 
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <config.h>
 #include <rte_config.h>
 #include <rte_mbuf.h>
@@ -77,15 +80,18 @@ create_dpdk_port_add_reply(struct dpif_dpdk_message *reply, uint32_t port_no,
 	vport_msg.port_no = port_no;
 
 	reply->vport_msg = vport_msg;
-	reply->type = return_code;
+	reply->type = VPORT_CMD_FAMILY;
+	reply->vport_msg.id = (uint32_t)syscall(SYS_gettid);
+	reply->error = return_code;
 }
 
 void
 create_dpdk_port_del_reply(struct dpif_dpdk_message *reply, int return_code)
 {
 	memset(reply, 0, sizeof(*reply));
-
-	reply->type = return_code;
+	reply->type = VPORT_CMD_FAMILY;
+	reply->vport_msg.id = (uint32_t)syscall(SYS_gettid);
+	reply->error = return_code;
 }
 
 void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
@@ -94,6 +100,8 @@ void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
 {
 	struct dpif_dpdk_vport_message vport_msg;
 
+	reply->type = VPORT_CMD_FAMILY;
+
 	memset(reply, 0, sizeof(*reply));
 	if (port_name)
 		strncpy(vport_msg.port_name, port_name, 32);
@@ -101,7 +109,8 @@ void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
 	vport_msg.port_no = port_no;
 
 	reply->vport_msg = vport_msg;
-	reply->type = return_code;
+	reply->vport_msg.id = (uint32_t)syscall(SYS_gettid);
+	reply->error = return_code;
 }
 
 void
@@ -114,6 +123,7 @@ create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply)
 	action_null_build(&action_multiple[1]);
 
 	reply->type = FLOW_CMD_FAMILY;
+	reply->flow_msg.id = (uint32_t)syscall(SYS_gettid);
 	memcpy(reply->flow_msg.actions, action_multiple, sizeof(action_multiple));
 }
 
@@ -121,15 +131,19 @@ void
 create_dpdk_flow_put_reply(struct dpif_dpdk_message *reply)
 {
 	memset(reply, 0, sizeof(*reply));
-	reply->type = 0;
+	reply->flow_msg.id = (uint32_t)syscall(SYS_gettid);
+	reply->type = FLOW_CMD_FAMILY;
+	reply->error = 0;
 }
 
 void
 create_dpdk_flow_del_reply(struct dpif_dpdk_message *reply, uint8_t flow_exists)
 {
 	memset(reply, 0, sizeof(*reply));
+	reply->type = FLOW_CMD_FAMILY;
+	reply->flow_msg.id = (uint32_t)syscall(SYS_gettid);
 	if (flow_exists == NO_FLOW)
-		reply->type = ENOENT;
+		reply->error = ENOENT;
 }
 
 static void
