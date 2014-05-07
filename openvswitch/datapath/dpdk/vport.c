@@ -576,7 +576,7 @@ static int
 init_port(uint8_t port_num)
 {
 	/* for port configuration all features are off by default */
-	const struct rte_eth_conf port_conf = {
+	struct rte_eth_conf port_conf = {
 		.rxmode = {
 			.mq_mode = ETH_RSS
 		}
@@ -585,6 +585,12 @@ init_port(uint8_t port_num)
 	struct rte_eth_link link = {0};
 	uint16_t q = 0;
 	int retval = 0;
+
+	/* set jumbo frame if configured */
+	if (max_frame_size > 0) {
+		port_conf.rxmode.max_rx_pkt_len = max_frame_size;
+		port_conf.rxmode.jumbo_frame = 1;
+	}
 
 	printf("Port %u init ... ", (unsigned)port_num);
 	fflush(stdout);

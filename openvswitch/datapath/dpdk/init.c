@@ -81,6 +81,13 @@ init_mbuf_pools(void)
 			+ (num_vhost * MBUFS_PER_VHOST)
 			+ (num_memnic * MBUFS_PER_MEMNIC)
 			+ MBUFS_PER_DAEMON;
+	uint32_t max_packet_size = 1520;
+	uint32_t mbuf_size;
+
+	if (max_packet_size < max_frame_size)
+		max_packet_size = max_frame_size;
+	mbuf_size = max_packet_size + MBUF_OVERHEAD +
+		RTE_MAX(sizeof(struct dpdk_message), sizeof(struct dpdk_upcall));
 
 	/* make sure the upcall does not the exceed mbuf headroom */
 	if (sizeof(struct dpdk_upcall) >= RTE_PKTMBUF_HEADROOM)
@@ -88,10 +95,10 @@ init_mbuf_pools(void)
 
 	/* don't pass single-producer/single-consumer flags to mbuf create as it
 	 * seems faster to use a cache instead */
-	printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
-			PKTMBUF_POOL_NAME, num_mbufs);
+	printf("Creating mbuf pool '%s' [%u mbufs] size %u ...\n",
+			PKTMBUF_POOL_NAME, num_mbufs, mbuf_size);
 	pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, num_mbufs,
-			MBUF_SIZE, MBUF_CACHE_SIZE,
+			mbuf_size, MBUF_CACHE_SIZE,
 			sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
 			NULL, rte_pktmbuf_init, NULL, SOCKET0, NO_FLAGS );
 

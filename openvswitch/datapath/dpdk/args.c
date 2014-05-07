@@ -96,6 +96,7 @@ usage(void)
 	    " -k NUM_KNI: number of kni ports to use\n"
 	    " -v NUM_VETH: number of host kni (veth) ports to use\n"
 	    " -m NUM_MEMNIC: number of MEMNIC ports to use\n"
+	    " -J FRAME_SIZE: maximum frame size\n"
 		" -h NUM_VHOST: number of vhost (devices) ports to use\n"
 		" --config (port,queue,lcore)[,(port,queue,lcore]\n"
 		"   Each port/queue/core group specifies the CPU ID of the core that will handle\n"
@@ -274,7 +275,7 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 	/* Initialize counters to "not used" */
 	num_clients = num_kni = num_veth = num_vhost = 0;
 
-	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:h:m:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "n:p:k:v:h:m:J:", lgopts,
 		&option_index)) != EOF) {
 		switch (opt) {
 			case 'p':  /* Physical ports */
@@ -309,6 +310,12 @@ parse_app_args(uint8_t max_ports, int argc, char *argv[])
 				break;
 			case 'm':  /* MEMNIC ports */
 				if (parse_str_to_uint32t(optarg, &num_memnic)) {
+					usage();
+					return -1;
+				}
+				break;
+			case 'J':  /* Frame size */
+				if (parse_str_to_uint32t(optarg, &max_frame_size)) {
 					usage();
 					return -1;
 				}

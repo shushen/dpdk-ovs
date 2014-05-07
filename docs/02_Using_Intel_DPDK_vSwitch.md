@@ -42,6 +42,8 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
   Number of MEMNIC devices to configure
 * `--config (port,queue,lcore)[,(port,queue,lcore]`
   Each port/queue/core group specifies the CPU ID of the core that will handle ingress traffic for the specified queue on the specified port
+* `-J NUM`
+  Maximum frame size which ovs_dpdk can handle in physical port, this will enable jumbo frame of the NIC
 
 In addition, the following parameters are available to configure the vHost devices.
 
