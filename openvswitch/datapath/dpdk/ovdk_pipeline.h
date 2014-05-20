@@ -42,9 +42,6 @@
 #include "ovdk_action.h"
 #include "datapath/dpdk/ovdk_stats_types.h"
 
-/* Measured CPU frequency. Needed to translate tsk to ms. */
-uint64_t cpu_freq;
-
 void ovdk_pipeline_init(void);
 
 int ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
@@ -63,7 +60,6 @@ int ovdk_pipeline_port_in_add(uint32_t vportid, char *vport_name);
 int ovdk_pipeline_port_in_del(uint32_t vportid);
 int ovdk_pipeline_port_out_add(uint32_t vportid);
 int ovdk_pipeline_port_out_del(uint32_t vportid);
-void measure_cpu_frequency(void);
 
 int ovdk_pipeline_run(void);
 

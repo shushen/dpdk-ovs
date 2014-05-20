@@ -198,19 +198,3 @@ ovdk_pipeline_flow_set_stats(struct ovdk_flow_stats *stats OVS_UNUSED,
 {
 	return 0;
 }
-
-void
-measure_cpu_frequency() {
-	uint64_t before = 0;
-	uint64_t after = 0;
-
-	/* How TSC changed in 1 second - it is the CPU frequency */
-	before = rte_rdtsc();
-	sleep(1);
-	after = rte_rdtsc();
-	cpu_freq = after - before;
-
-	/* Round to millions */
-	cpu_freq /= 1000000;
-	cpu_freq *= 1000000;
-}

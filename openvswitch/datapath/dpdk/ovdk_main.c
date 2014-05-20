@@ -35,8 +35,9 @@
 #include <unistd.h> /*TODO sleep() */
 #include <stdbool.h>
 #include <signal.h>
-#include <rte_cycles.h>
+
 #include <rte_config.h>
+#include <rte_cycles.h>
 
 #include "rte_port_vhost.h"
 #include "ovdk_init.h"
@@ -93,9 +94,8 @@ main(int argc, char **argv)
 	/* Carry out any initialization that needs to be done for all cores */
 	ovdk_init();
 
-	measure_cpu_frequency();
 	RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n",
-						cpu_freq / 1000000);
+						rte_get_tsc_hz() / 1000000);
 
 	/* Launch per-lcore init on every lcore */
 	rte_eal_mp_remote_launch(ovdk_lcore_main_loop, NULL, CALL_MASTER);
@@ -155,7 +155,7 @@ ovdk_lcore_main_loop(__attribute__((unused)) void *arg)
 				curr_tsc = curr_tsc_local;
 				next_tsc = curr_tsc_local + tsc_update_period;
 			}
-			if ((curr_tsc -last_stats_display_tsc) / cpu_freq >= stats_interval
+			if ((curr_tsc -last_stats_display_tsc) / rte_get_tsc_hz() >= stats_interval
 			    && stats_interval != 0) {
 				ovdk_stats_display();
 				last_stats_display_tsc = curr_tsc;

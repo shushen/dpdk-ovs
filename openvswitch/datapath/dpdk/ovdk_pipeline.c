@@ -1238,22 +1238,6 @@ update_flow_stats(struct rte_mbuf *pkt, struct ovdk_flow_stats *stats,
 	return;
 }
 
-/* Get CPU frequency */
-void
-measure_cpu_frequency(void) {
-	uint64_t before = 0;
-	uint64_t after = 0;
-
-	/* How TSC changed in 1 second - it is the CPU frequency */
-	before = rte_rdtsc();
-	sleep(1);
-	after = rte_rdtsc();
-	cpu_freq = after - before;
-
-	/* Round to millions */
-	cpu_freq /= 1000000;
-	cpu_freq *= 1000000;
-}
 
 /*
  * Prepend an upcall to the mbuf using the specified 'cmd'
@@ -1297,4 +1281,3 @@ prepend_upcall(struct rte_mbuf *mbuf, uint8_t cmd)
 
 	return 0;
 }
-

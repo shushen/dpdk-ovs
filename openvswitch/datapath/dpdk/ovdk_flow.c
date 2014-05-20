@@ -37,6 +37,7 @@
 #include <rte_tcp.h>
 #include <rte_udp.h>
 #include <rte_byteorder.h>
+#include <rte_cycles.h>
 
 #include "linux/openvswitch.h"
 #include "ovdk_hash.h"
@@ -208,7 +209,7 @@ ovs_flow_used_time(uint64_t curr_tsc, uint64_t flow_tsc)
 	 * in a spurious reading for flow used time, we don't check
 	 * for overflow condition.
 	 */
-	idle_ms = (curr_tsc - flow_tsc) * 1000UL / cpu_freq;
+	idle_ms = (curr_tsc - flow_tsc) * 1000UL / rte_get_tsc_hz();
 
 	/* Return monotonic linux time */
 	clock_gettime(CLOCK_MONOTONIC, &tp);

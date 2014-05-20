@@ -69,8 +69,6 @@ void test_flow_add__failure(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void test_flow_del__default(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void test_flow_get__default(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 
-extern void measure_cpu_frequency(void);
-
 /* Helper Functions */
 
 int
@@ -364,7 +362,6 @@ main(int argc, char *argv[])
 	time_alarm(30);
 
 	rte_eal_init(argc, argv);
-	measure_cpu_frequency();
 	ovdk_mempools_init();
 	ovdk_datapath_init();
 	ovdk_stats_init();
