@@ -105,6 +105,7 @@ struct vport_vhost {
 struct vport_memnic {
 	struct memnic_area *ptr;
 	int up, down;
+	uint32_t framesz;
 };
 
 #define VPORT_INFO_NAMESZ	(32)

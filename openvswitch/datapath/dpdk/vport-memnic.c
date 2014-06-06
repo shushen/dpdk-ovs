@@ -92,8 +92,10 @@ int attach_memnic_port(struct vport_memnic *memnic,
 		/* set MAGIC and VERSION */
 		hdr->magic = MEMNIC_MAGIC;
 		hdr->version = MEMNIC_VERSION;
-		/* no extra features */
-		hdr->features = 0;
+
+		/* provide variable frame size feature */
+		hdr->features = MEMNIC_FEAT_ALL;
+		hdr->request = 0;
 
 		/* random MAC address generation */
 		rand = rte_rand();
@@ -115,6 +117,7 @@ int attach_memnic_port(struct vport_memnic *memnic,
 	memnic->ptr = nic;
 	memnic->up = 0;
 	memnic->down = 0;
+	memnic->framesz = MEMNIC_MAX_FRAME_LEN;
 
 	ret = 0;
 
@@ -144,7 +147,7 @@ int memnic_tx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbuf *bu
 		goto drop;
 
 	len = rte_pktmbuf_data_len(buf);
-	if (len > MEMNIC_MAX_FRAME_LEN)
+	if (len > memnic->framesz)
 		goto drop;
 
 retry:
@@ -217,6 +220,26 @@ uint16_t memnic_rx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbu
 		memnic->up = 0;
 		memnic->down = 0;
 
+		memnic->framesz = MEMNIC_MAX_FRAME_LEN;
+
+		if (hdr->request & MEMNIC_FEAT_FRAME_SIZE) {
+			uint32_t framesz = hdr->framesz;
+
+			/* check frame size requested from guest */
+			if (framesz < MEMNIC_MAX_FRAME_LEN ||
+					framesz > MEMNIC_MAX_JUMBO_FRAME_LEN) {
+				RTE_LOG(WARNING, APP,
+					"MEMNIC %u Invalid frame size %u",
+					vportid, framesz);
+				framesz = MEMNIC_MAX_FRAME_LEN;
+			}
+			memnic->framesz = framesz;
+			RTE_LOG(INFO, APP, "MEMNIC %u frame size is %u\n",
+				vportid, framesz);
+		}
+
+		hdr->request = 0;
+
 		rte_mb();
 		hdr->reset = 0;
 		hdr->valid = 1;
@@ -238,7 +261,7 @@ uint16_t memnic_rx(struct vport_memnic *memnic, unsigned vportid, struct rte_mbu
 
 		if (p->status != MEMNIC_PKT_ST_FILLED)
 			break;
-		if (p->len > MEMNIC_MAX_FRAME_LEN) {
+		if (p->len > memnic->framesz) {
 			stats_vport_tx_drop_increment(vportid, INC_BY_1);
 			goto next;
 		}

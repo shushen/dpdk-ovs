@@ -41,19 +41,24 @@
 #define MEMNIC_MAX_PACKET_SIZE	(4096)
 
 #define MEMNIC_MAX_FRAME_LEN	(1500 + 14 + 4) /* MTU + ether header + vlan */
+#define MEMNIC_MAX_JUMBO_FRAME_LEN	(MEMNIC_MAX_PACKET_SIZE - 8)
 
 struct memnic_header {
 	uint32_t magic;
 	uint32_t version;
 	uint32_t valid;
 	uint32_t reset;
-	uint32_t features;
-	uint32_t reserved;
+	uint32_t features;	/* features this MEMNIC provides */
+	uint32_t request;	/* requesting features from Guest */
 	union {
 		uint8_t mac_addr[6];
 		uint8_t dummy[8];
 	};
+	/* for extra features */
+	uint32_t framesz;
 };
+#define MEMNIC_FEAT_FRAME_SIZE	(0x00000001)
+#define MEMNIC_FEAT_ALL		(MEMNIC_FEAT_FRAME_SIZE)
 
 struct memnic_info {
 	uint32_t flags;
