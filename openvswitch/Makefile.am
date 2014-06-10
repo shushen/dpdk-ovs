@@ -52,7 +52,7 @@ if NDEBUG
 AM_CPPFLAGS += -DNDEBUG
 AM_CFLAGS += -fomit-frame-pointer
 else
-AM_LDFLAGS = -export-dynamic -lpthread
+AM_LDFLAGS = -export-dynamic -lpthread -ldl
 endif
 
 # Disable GCC flag that produces compilation warnings in DPDK
