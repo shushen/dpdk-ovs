@@ -49,6 +49,7 @@ enum ovdk_action_type {
 	OVDK_ACTION_SET_UDP,         /* Modify UDP header */
 	OVDK_ACTION_SET_IPV4,        /* Modify IPv4 header */
 	OVDK_ACTION_SET_ETHERNET,    /* Modify Ethernet header */
+	OVDK_ACTION_VSWITCHD,        /* Send packet to vswitchd */
 	OVDK_ACTION_MAX              /* Maximum number of supported actions */
 };
 
@@ -64,6 +65,10 @@ struct ovdk_action_push_vlan {
 	uint16_t tci;           /* Tag Control Information */
 };
 
+struct ovdk_action_vswitchd {
+	uint32_t pid;           /* netlink pid */
+};
+
 struct ovdk_action {
 	enum ovdk_action_type type;
 	union {                 /* union of difference action types */
@@ -74,6 +79,7 @@ struct ovdk_action {
 		struct ovs_key_ipv4 ipv4;
 		struct ovs_key_tcp tcp;
 		struct ovs_key_udp udp;
+		struct ovdk_action_vswitchd vswitchd;
 		/* add other action structs here */
 	} data;
 };

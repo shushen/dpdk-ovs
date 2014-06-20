@@ -375,7 +375,12 @@ test_dpif_dpdk_flow_put(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 */
 	ctrlmbuf_data = rte_ctrlmbuf_data(mbuf);
 	request = (struct ovdk_message *)ctrlmbuf_data;
-	assert(request->flow_msg.actions[0].type == OVDK_ACTION_DROP);
+	assert(request->flow_msg.actions[0].type == OVDK_ACTION_OUTPUT);
+	assert(request->flow_msg.actions[1].type == OVDK_ACTION_OUTPUT);
+	assert(request->flow_msg.actions[2].type == OVDK_ACTION_POP_VLAN);
+	assert(request->flow_msg.actions[3].type == OVDK_ACTION_OUTPUT);
+	assert(request->flow_msg.actions[4].type == OVDK_ACTION_NULL);
+	assert(request->flow_msg.num_actions == 4);
 	assert(request->flow_msg.key.in_port == DPDK_RING_STUB_IN_PORT);
 	assert(request->flow_msg.key.ip_proto == DPDK_RING_STUB_NW_PROTO);
 	assert(request->flow_msg.key.tran_src_port == rte_cpu_to_be_16(DPDK_RING_STUB_TP_SRC));
@@ -471,7 +476,6 @@ test_dpif_dpdk_flow_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 */
 	ctrlmbuf_data = rte_ctrlmbuf_data(mbuf);
 	request = (struct ovdk_message *)ctrlmbuf_data;
-
 	assert(request->flow_msg.actions[0].type == OVDK_ACTION_NULL);
 	assert(request->flow_msg.key.in_port == DPDK_RING_STUB_IN_PORT);
 	assert(request->flow_msg.key.ip_proto == DPDK_RING_STUB_NW_PROTO);
@@ -1449,6 +1453,7 @@ test_dpif_dpdk_recv(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	unsigned pipeline_id = 1;
 	struct flow flow;
 	enum odp_key_fitness fitness_error = ODP_FIT_ERROR;
+	union user_action_cookie cookie;
 
 	/* invalid params */
 
@@ -1471,7 +1476,7 @@ test_dpif_dpdk_recv(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	result = dpif_p->dpif_class->recv(dpif_p, &upcall, &ofpbuf);
 	assert(result == EINVAL);
 
-	/* Normal operation */
+	/* Normal operation - flow miss*/
 
 	/* Enqueue fake upcall */
 	result = enqueue_upcall_on_exception_ring(OVS_PACKET_CMD_MISS, pipeline_id);
@@ -1489,6 +1494,28 @@ test_dpif_dpdk_recv(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(flow.nw_dst == rte_cpu_to_be_32(DPDK_RING_STUB_NW_DST));
 	assert(flow.vlan_tci == rte_cpu_to_be_16(DPDK_RING_STUB_VLAN_TCI));
 	assert(flow.dl_type == rte_cpu_to_be_16(DPDK_RING_STUB_DL_TYPE));
+
+	/* Normal operation - send to userspace */
+	/* Enqueue fake upcall */
+	result = enqueue_upcall_on_exception_ring(OVS_PACKET_CMD_ACTION, pipeline_id);
+	assert(result == 0);
+	result = dpif_p->dpif_class->recv(dpif_p, &upcall, &ofpbuf);
+	assert(result == 0);
+	assert(upcall.type == DPIF_UC_ACTION);
+        fitness_error = odp_flow_key_to_flow(upcall.key, upcall.key_len, &flow);
+	assert(fitness_error != ODP_FIT_ERROR);
+	assert(flow.in_port.odp_port == DPDK_RING_STUB_IN_PORT);
+	assert(flow.nw_proto == DPDK_RING_STUB_NW_PROTO);
+	assert(flow.tp_src == rte_cpu_to_be_16(DPDK_RING_STUB_TP_SRC));
+	assert(flow.tp_dst == rte_cpu_to_be_16(DPDK_RING_STUB_TP_DST));
+	assert(flow.nw_src == rte_cpu_to_be_32(DPDK_RING_STUB_NW_SRC));
+	assert(flow.nw_dst == rte_cpu_to_be_32(DPDK_RING_STUB_NW_DST));
+	assert(flow.vlan_tci == rte_cpu_to_be_16(DPDK_RING_STUB_VLAN_TCI));
+	assert(flow.dl_type == rte_cpu_to_be_16(DPDK_RING_STUB_DL_TYPE));
+	assert(nl_attr_get_size(upcall.userdata) == sizeof(cookie.slow_path));
+	memset(&cookie, 0, sizeof cookie.slow_path);
+	memcpy(&cookie, nl_attr_get(upcall.userdata), nl_attr_get_size(upcall.userdata));
+	assert(cookie.type == USER_ACTION_COOKIE_SLOW_PATH);
 }
 
 void

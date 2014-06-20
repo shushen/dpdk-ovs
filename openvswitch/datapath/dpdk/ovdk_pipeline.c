@@ -144,6 +144,7 @@ static inline void update_flow_stats(struct rte_mbuf *pkt,
                                      uint64_t tsc);
 static void send_signal_to_dpif(void);
 static inline int clone_packet(struct rte_mbuf **dest, struct rte_mbuf **src);
+static inline int prepend_upcall(struct rte_mbuf *mbuf, uint8_t cmd);
 
 /* Handle exception packets */
 static int ovdk_pipeline_send_exception_to_vswitchd(struct rte_mbuf **pkts,
@@ -593,7 +594,6 @@ ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
 				return ret;
 			}
 
-
 			/*
 			 * First output action gets handled by RTE_PIPELINE_ACTION_PORT but the
 			 * other actions get handled by the tables f_action() callback.
@@ -625,11 +625,18 @@ ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
 			assert(num_actions == 1);
 
 			ovdk_pipeline_entry.pf_entry.action = RTE_PIPELINE_ACTION_DROP;
-
+			break;
+	 	} else if (actions[action_count].type == OVDK_ACTION_VSWITCHD) {
+			/*
+			 * Only support case of send to userspace as
+			 * a single action
+			 */
+			assert(num_actions == 1);
+			/* send to exception port */
+			port_id = 0;
 			break;
 		}
 	}
-
 
 	rte_memcpy(&ovdk_pipeline_entry.actions, actions,
 	           sizeof(struct ovdk_action) * OVDK_MAX_ACTIONS);
@@ -1058,7 +1065,8 @@ actions_execute(struct rte_mbuf *mbuf, struct ovdk_action *actions,
 				first_output = false;
 				continue;
 			}
-		} else if (unlikely(action->type != OVDK_ACTION_DROP)) {
+		} else if (unlikely(action->type != OVDK_ACTION_VSWITCHD ||
+		                    action->type != OVDK_ACTION_DROP)) {
 			/*
 			 * It should never be the case where the last action
 			 * is not to output
@@ -1148,6 +1156,14 @@ action_execute(const struct ovdk_action *action, struct rte_mbuf *mbuf)
 		break;
 	case OVDK_ACTION_DROP:
 		/* Do nothing as the packet framework action will do the actual drop */
+	case OVDK_ACTION_VSWITCHD:
+		ret = prepend_upcall(mbuf, PACKET_CMD_ACTION);
+		if (ret) {
+			ovdk_stats_vswitch_data_tx_drop_increment(1);
+		} else {
+			ovdk_pipeline[lcore_id].wakeup_required = true;
+			ovdk_stats_vswitch_data_tx_increment(1);
+		}
 		break;
 	case OVDK_ACTION_MAX:
 	case OVDK_ACTION_NULL:
@@ -1166,11 +1182,7 @@ ovdk_pipeline_send_exception_to_vswitchd(struct rte_mbuf **pkts,
         void *arg __attribute__((unused)))
 {
 	uint32_t i = 0;
-	struct ovdk_upcall upcall = {0};
-	void *mbuf_ptr = NULL;
-	struct ovdk_flow_key *key_ptr = NULL;
 	int error = 0;
-	uint32_t vportid = 0;
 	unsigned lcore_id = 0;
 
 	lcore_id = rte_lcore_id();
@@ -1181,28 +1193,10 @@ ovdk_pipeline_send_exception_to_vswitchd(struct rte_mbuf **pkts,
 		if ((pkt_mask & *pkts_mask) == 0)
 			continue;
 
-		/* Fill upcall structure */
-		upcall.cmd = PACKET_CMD_MISS;
-		key_ptr = (void*)RTE_MBUF_METADATA_UINT8_PTR(pkts[i],
-		                                      OVDK_PIPELINE_KEY_OFFSET);
-		upcall.key = *key_ptr;
-
-		/*
-		 * Convert in_port representation from pipeline in_port to
-		 * vportid
-		 */
-		error = ovdk_vport_get_vportid(upcall.key.in_port, &vportid);
-		upcall.key.in_port = (uint8_t)vportid;
-
-
-		/* Discard everything except the data */
-		rte_pktmbuf_pkt_len(pkts[i]) = rte_pktmbuf_data_len(pkts[i]);
-
-		mbuf_ptr = rte_pktmbuf_prepend(pkts[i], sizeof(upcall));
-
-		if(mbuf_ptr == NULL || error ) {
+		error = prepend_upcall(pkts[i], PACKET_CMD_MISS);
+		if (error) {
 			uint64_t pkt_err_mask = 1lu << i;
-			RTE_LOG(ERR, APP, "Failed to append upcall"
+			RTE_LOG(ERR, APP, "Failed to prepend upcall"
 			                  " information, dropping packet\n");
 			ovdk_stats_vswitch_data_tx_drop_increment(1);
 			*pkts_mask ^= pkt_err_mask;
@@ -1210,9 +1204,7 @@ ovdk_pipeline_send_exception_to_vswitchd(struct rte_mbuf **pkts,
 			continue;
 		}
 
-		rte_memcpy(mbuf_ptr, &upcall, sizeof(upcall));
 		ovdk_stats_vswitch_data_tx_increment(1);
-
 	}
 
 	ovdk_pipeline[lcore_id].wakeup_required = true;
@@ -1262,3 +1254,47 @@ measure_cpu_frequency(void) {
 	cpu_freq /= 1000000;
 	cpu_freq *= 1000000;
 }
+
+/*
+ * Prepend an upcall to the mbuf using the specified 'cmd'
+ */
+static inline int
+prepend_upcall(struct rte_mbuf *mbuf, uint8_t cmd)
+{
+	struct ovdk_upcall upcall = {0};
+	struct ovdk_flow_key *key_ptr = NULL;
+	int error = 0;
+	uint32_t vportid = 0;
+	void *mbuf_ptr = NULL;
+
+	key_ptr = (void*)RTE_MBUF_METADATA_UINT8_PTR(mbuf,
+                                      OVDK_PIPELINE_KEY_OFFSET);
+	upcall.key = *key_ptr;
+	upcall.cmd = cmd;
+
+	/*
+	 * Convert in_port representation from pipeline in_port to
+	 * vportid
+	 */
+	error = ovdk_vport_get_vportid(upcall.key.in_port, &vportid);
+	if (error) {
+		RTE_LOG(ERR, APP, "Failed to get vportid when prepending "
+		                  "upcall\n");
+		return -1;
+	}
+
+	upcall.key.in_port = (uint8_t)vportid;
+
+	/* Discard everything except the data */
+	rte_pktmbuf_pkt_len(mbuf) = rte_pktmbuf_data_len(mbuf);
+	mbuf_ptr = rte_pktmbuf_prepend(mbuf, sizeof(upcall));
+	if(mbuf_ptr == NULL) {
+		RTE_LOG(ERR, APP, "Failed to prepend upcall\n");
+		return -1;
+	}
+
+	rte_memcpy(mbuf_ptr, &upcall, sizeof(upcall));
+
+	return 0;
+}
+

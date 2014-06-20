@@ -1014,6 +1014,10 @@ dpif_dpdk_create_actions(struct ovdk_action *dpif_actions,
                 create_action_set_datapath(dpif_actions, nl_attr_get(a), i);
                 ++i;
                 break;
+            case OVS_ACTION_ATTR_USERSPACE:
+                dpif_actions[i].type = OVDK_ACTION_VSWITCHD;
+                dpif_actions[i].data.vswitchd.pid = nl_attr_get_u32(nl_attr_get(a));
+                ++i;
             default:
                 /* unsupported action */
                 break;
@@ -1547,11 +1551,12 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
     struct ofpbuf key = {0};
     struct flow flow;
     struct ovdk_upcall info = {0};
-    int type = 0;
     int error = 0;
     int sock_msg = 0;
     unsigned pipeline_id = 0;
     unsigned initial_pipeline = UINT32_MAX;
+    union user_action_cookie cookie = {0};
+    size_t userdata_len = 0;
 
     DPDK_DEBUG()
 
@@ -1586,12 +1591,21 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
                 continue;
             }
         }
+
+        memset(upcall, 0, sizeof(*upcall));
+        upcall->packet = buf;
+
         switch (info.cmd) {
         case OVS_PACKET_CMD_MISS:
-            type = DPIF_UC_MISS;
+            upcall->type = DPIF_UC_MISS;
+            upcall->userdata = 0;
+            userdata_len = 0;
             break;
         case OVS_PACKET_CMD_ACTION:
-            type = DPIF_UC_ACTION;
+            upcall->type = DPIF_UC_ACTION;
+            cookie.type = USER_ACTION_COOKIE_SLOW_PATH;
+            nl_msg_put_unspec(buf, 0, &cookie, sizeof(cookie.slow_path));
+            userdata_len = sizeof(cookie.slow_path) + NLA_HDRLEN;
             break;
         default:
             return EINVAL;
@@ -1599,30 +1613,24 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
 
         dpif_dpdk_flow_key_to_flow(&info.key, &flow);
         ofpbuf_init(&key, 0);
-        /* There are two port numbering schemes, odp_port and ofp_port for
-         * the datapath and OpenFlow layer respectively. Rather than having
-         * conversion logic here we require that you use ofport_request when
-         * adding ports to ensure the odp_port and ofp_port will be the same
-         */
         odp_flow_key_from_flow(&key, &flow, flow.in_port.odp_port);
         ofpbuf_put(buf, key.data, key.size);
-        buf->size -= key.size;
-
-        memset(upcall, 0, sizeof(*upcall));
-        upcall->type = type;
-        upcall->packet = buf;
-        upcall->key = ofpbuf_tail(buf);
         upcall->key_len = key.size;
-        upcall->userdata = 0;
+
+        buf->size -= key.size;
+        upcall->key = ofpbuf_tail(buf);
+
+        buf->size -= userdata_len;
+        upcall->userdata = ofpbuf_tail(buf);
 
         /* free memory allocated in ofpbuf key */
         ofpbuf_uninit(&key);
 
-        break;
+	break;
+
     } while (peek_next_pipeline(&last_used_recv_pipeline) != initial_pipeline);
 
-
-    return error;
+    return 0;
 }
 
 static void
@@ -1927,6 +1935,12 @@ dpif_dpdk_flow_actions_to_actions(const struct ovdk_action *actions,
             nl_msg_put_unspec(actionsp, OVS_KEY_ATTR_UDP,
                               &actions[i].data.udp,
                               sizeof(struct ovs_key_udp));
+            nl_msg_end_nested(actionsp, offset);
+            break;
+        case OVDK_ACTION_VSWITCHD:
+            offset = nl_msg_start_nested(actionsp, OVS_ACTION_ATTR_USERSPACE);
+            nl_msg_put_u32(actionsp, OVS_USERSPACE_ATTR_PID,
+                           actions[i].data.vswitchd.pid);
             nl_msg_end_nested(actionsp, offset);
             break;
         case OVDK_ACTION_NULL:

@@ -155,18 +155,20 @@ create_dpdk_flow_get_reply(struct ovdk_message *reply)
 void
 create_dpif_flow_put_message(struct dpif_flow_put *put)
 {
-	struct ofpbuf *buf;
+	struct ofpbuf *key_buf;
+	struct ofpbuf *action_buf;
 
-	buf = ofpbuf_new(BUF_SIZE);
+	key_buf = ofpbuf_new(BUF_SIZE);
+	action_buf = ofpbuf_new(BUF_SIZE);
 
 	/* Output action */
-        /* With NULL we expect OVDK_ACTION_DROP to be sent to datapath */
-	put->actions_len = 0;
- 	put->actions = NULL;
+	create_actions(action_buf);
+	put->actions_len = action_buf->size;
+	put->actions = action_buf->data;
 
-	create_dpif_flow(buf);
-	put->key = buf->data;
-	put->key_len = buf->size;
+	create_dpif_flow(key_buf);
+	put->key = key_buf->data;
+	put->key_len = key_buf->size;
 
 	/* Flags */
 	put->flags = DPIF_FP_CREATE;
