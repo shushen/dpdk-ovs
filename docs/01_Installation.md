@@ -33,9 +33,7 @@ ______
 
 ### Intel® DPDK
 
-Intel® DPDK is a set of software libraries and Ethernet drivers (native and virtualized) that run in Linux user space to boost packet processing throughput on Intel® Architecture. You can find information, including download links, for Intel® DPDK via the Intel® DPDK portal on [01.org][01org-dpdk].
-
-**Note:** Intel® DPDK vSwitch does not currently support the version of Intel® DPDK provided by `dpdk.org`. Please use only the latest versions from [intel.com][intel-dpdk] or [01.org][01org-dpdk].
+Intel® DPDK is a set of software libraries and Ethernet drivers (native and virtualized) that run in Linux user space to boost packet processing throughput on Intel® Architecture. You can find information, including download links, for Intel® DPDK  via [DPDK.org][dpdkorg].
 
 ### Intel® DPDK vSwitch
 
@@ -103,7 +101,7 @@ cd ~/ovs_dpdk               # directory containing DPDK and DPDK vSwitch
 
 #### DPDK
 
-Refer to the [Intel® DPDK Getting Started Guide][intel-dpdkgsg] for a relevant make target, e.g.:
+Refer to the [Intel® DPDK Getting Started Guide][dpdkorg-dpdkgsg] for a relevant make target, e.g.:
 
 ```bash
 cd DPDK                     # DPDK sub-directory
@@ -113,7 +111,7 @@ make install T="$RTE_TARGET"
 cd -
 ```
 
-**Note:** To enable the new IVSHM feature introduced with Intel® DPDK 1.6.0, Intel® DPDK has to be compiled using the `ivshmem` target. This requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [intel.com][intel-dpdkgsg] - for additional information on performing this step.
+**Note:** To enable the new IVSHM feature introduced with Intel® DPDK 1.6.0, Intel® DPDK has to be compiled using the `ivshmem` target. This requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [dpdk.org][dpdkorg-dpdkgsg] - for additional information on performing this step.
 
 #### Open vSwitch
 
@@ -208,34 +206,33 @@ modprobe uio
 insmod ./DPDK/$RTE_TARGET/kmod/igb_uio.ko
 ```
 
-Once the `igb_uio` driver has been loaded, some interfaces should be bound to it. Intel® DPDK does not do this automatically so you should the `pci_unbind.py` script found in `$RTE_SDK/tools/`. In brief, the following commands can be used:
+Once the `igb_uio` driver has been loaded, some interfaces should be bound to it. Intel® DPDK does not do this automatically  so you should use the `dpdk_nic_bind.py` script found in `$RTE_SDK/tools/`. In brief, the following commands can be used:
 
 To get the current status of the ports (i.e. what's bound and what isn't):
 
 ```bash
-./DPDK/tools/pci_unbind.py --status
+./DPDK/tools/dpdk_nic_bind.py --status
 ```
 
 To bind devices:
 
 ```bash
-./DPDK/tools/pci_unbind.py --bind igb_uio [hw_addr...]
+./DPDK/tools/dpdk_nic_bind.py --bind igb_uio [hw_addr...]
 ```
 
 For example:
 
 ```bash
-./DPDK/tools/pci_unbind.py --bind igb_uio 81:00.0 81:00.1
+./DPDK/tools/dpdk_nic_bind.py --bind igb_uio 81:00.0 81:00.1
 ```
 
-You can refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg] - for full instructions on performing this step.
+You can refer to the [*Intel® Data Plane Development Kitt (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] - for full instructions on performing this step.
 
 ______
 
 © 2014, Intel Corporation. All Rights Reserved
 
 [01org-downloads]: https://01.org/packet-processing/downloads
-[01org-dpdk]: https://01.org/packet-processing/overview/dpdk-detail
-[intel-dpdk]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/packet-processing-is-enhanced-with-software-from-intel-dpdk.html
-[intel-dpdkgsg]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/intel-dpdk-getting-started-guide.html
+[dpdkorg]: http://dpdk.org
+[dpdkorg-dpdkgsg]: http://dpdk.org/doc
 [intel-ark]: http://ark.intel.com/

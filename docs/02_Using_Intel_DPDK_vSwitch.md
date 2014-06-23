@@ -20,7 +20,7 @@ Of these, the `--base_addr` argument is particularly important. The purpose of t
 
 The process of finding a valid virtual address to use with `--base_addr` is one based on trial and error. The virtual addresses can be taken from EAL's output to `stdout`. Once a "valid" virtual address is found it can be re-used over and over with guaranties that it will work.
 
-Check the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg] for more information about EAL arguments.
+Check the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] for more information about EAL arguments.
 
 After the EAL arguments, the following arguments (i.e. `[args...]` above) are supported:
 
@@ -42,7 +42,7 @@ ______
 
 ## ovs-ivshmem-mngr
 
-The IVSHM manager utility is used to share the Intel® DPDK objects - created on the host by `ovs-dpdk` - with guests. It makes use of the Intel® DPDK IVSHM API. Please consult the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg] for details on IVSHM.
+The IVSHM manager utility is used to share the Intel® DPDK objects - created on the host by `ovs-dpdk` - with guests. It makes use of the Intel® DPDK IVSHM API. Please consult the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] for details on IVSHM.
 
 The IVSHM manager provides a flexible and easy to use interface that allows multiple combinations regarding what Intel® DPDK objects are shared with the guests. Only the port names specified in `ovs-dpdk` are needed. The utility will query the `ovs-dpdk` internal configuration and collect all Intel® DPDK ring and memzone information associated with the ports being shared. Finally, it will create the metadata and a command line to be used when running QEMU processes (i.e. starting guests). These command lines will be printed to the screen and stored in temporary files - one per guest - under the `/tmp` directory (for automation purposes).
 
@@ -56,7 +56,7 @@ The `ovs-ivshmem-mngr` application can be executed as follows:
 ./utilities/ovs-ivshmem-mngr [eal] -- [args...]
 ```
 
-The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. The other arguments must be a list of metadata names and port names. The metadata names are arbitrary names used to distinguish the set of Intel® DPDK objects being shared with a guest. There is a one to one relation between metadatas and guests. The port names must be the identical to those previously added to the switch. Each metadata name must be unique and followed by a comma separated list of port names. The metadata name and ports are separated by a colon (:).
+The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg]. The other arguments must be a list of metadata names and port names. The metadata names are arbitrary names used to distinguish the set of Intel® DPDK objects being shared with a guest. There is a one to one relation between metadatas and guests. The port names must be the identical to those previously added to the switch. Each metadata name must be unique and followed by a comma separated list of port names. The metadata name and ports are separated by a colon (:).
 
 Example of one metadata and four ports:
 
@@ -92,7 +92,7 @@ The version of `ovs-vswitchd` found in Intel® DPDK vSwitch is functionally iden
 ./vswitchd/ovs-vswitchd [eal] -- [database]
 ```
 
-The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-vswitchd` - available [here][ovs-man-vswitchd], in the included manpages for the application, or via the `--help` option like so:
+The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-vswitchd` - available [here][ovs-man-vswitchd], in the included manpages for the application, or via the `--help` option like so:
 
 ```bash
 ./vswitchd/ovs-vswitchd [eal] -- --help
@@ -124,7 +124,7 @@ The version of `ovs-dpctl` found in Intel® DPDK vSwitch is functionally identic
 ./utilities/ovs-dpctl [eal] -- [options] command [switch] [args...]
 ```
 
-The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-dpctl` - available [here][ovs-man-dpctl], in the included manpages for the application, or via the `--help` option like so:
+The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-dpctl` - available [here][ovs-man-dpctl], in the included manpages for the application, or via the `--help` option like so:
 
 ```bash
 ./utilities/ovs-dpctl [eal] -- --help
@@ -247,7 +247,7 @@ ______
 
 © 2014, Intel Corporation. All Rights Reserved
 
-[intel-dpdkgsg]: http://www.intel.com/content/www/us/en/intelligent-systems/
+[dpdkorg-dpdkgsg]: http://dpdk.org/doc
 [ovs-man-vswitchd]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=vswitchd%2Fovs-vswitchd.8
 [ovs-man-dpctl]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=utilities%2Fovs-dpctl.8
 [ovs-man-ofctl]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=utilities%2Fovs-ofctl.8

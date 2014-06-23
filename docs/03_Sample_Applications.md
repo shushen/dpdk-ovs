@@ -14,7 +14,7 @@ The `ovs_client` application can be executed as follows:
 
 ### Args
 
-The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg].
+The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg].
 
 After the EAL arguments, the following application-specific arguments are supported:
 
@@ -33,4 +33,4 @@ ______
 
 © 2014, Intel Corporation. All Rights Reserved
 
-[intel-dpdkgsg]: https://www-ssl.intel.com/content/www/us/en/intelligent-systems/intel-technology/packet-processing-is-enhanced-with-software-from-intel-dpdk.html
+[dpdkorg-dpdkgsg]: http://dpdk.org/doc

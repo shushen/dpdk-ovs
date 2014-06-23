@@ -1,6 +1,6 @@
 Intel® DPDK vSwitch supports the offload of virtio-net device servicing in the guest, reducing context switching and packet copies in the virtual dataplane when using the vhost-net module.
 
-This section contains instructions on how to compile and run a sample application that demonstrates performance of an Intel® DPDK-accelerated version of Userspace vHost for IO virtualization. For more information on the Userspace vHost implementation refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Sample Applications User Guide*][intel-dpdksample].
+This section contains instructions on how to compile and run a sample application that demonstrates performance of an Intel® DPDK-accelerated version of Userspace vHost for IO virtualization. For more information on the Userspace vHost implementation refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Sample Applications User Guide*][dpdkorg-dpdksample].
 
 ## Overview
 
@@ -316,5 +316,5 @@ ______
 © 2014, Intel Corporation. All Rights Reserved
 
 [doc-installation]: 01_Installation.md
-[intel-dpdksample]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/intel-dpdk-sample-applications-user-guide.html
+[dpdkorg-dpdksample]: http://dpdk.org/doc
 [fuse-source]: http://sourceforge.net/projects/fuse/files/fuse-2.X/
