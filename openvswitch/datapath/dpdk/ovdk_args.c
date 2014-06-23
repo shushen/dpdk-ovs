@@ -47,7 +47,7 @@
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
-#define PARAM_STATS "stats"
+#define PARAM_STATS_INTERVAL "stats_int"
 #define PARAM_STATS_CORE "stats_core"
 
 #define PORTMASK_BASE 16
@@ -65,10 +65,10 @@ static void
 usage(void)
 {
 	printf(
-	    "%s [EAL options] -- -p PORTMASK --stats_core STATS_CORE --stats UPDATE_TIME\n"
+	    "%s [EAL options] -- -p PORTMASK --stats_core STATS_CORE --stats_int UPDATE_TIME\n"
 	    " -p PORTMASK: hexadecimal bitmask of ports to use\n"
 	    " --stats_core CORE_ID: the core used to display stats\n"
-	    " --stats UPDATE_TIME:\n"
+	    " --stats_int UPDATE_TIME:\n"
 	    "   Interval (in seconds) at which stats are updated. Set to 0 to disable (default)\n"
 	    , progname);
 }
@@ -85,7 +85,7 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 	int option_index, opt;
 	char **argvopt = argv;
 	static struct option lgopts[] = {
-			{PARAM_STATS, 1, 0, 0},
+			{PARAM_STATS_INTERVAL, 1, 0, 0},
 			{PARAM_STATS_CORE, 1, 0, 0},
 			{NULL, 0, 0, 0}
 	};
@@ -102,9 +102,9 @@ ovdk_args_parse_app_args(int argc, char *argv[])
                                 }
                                 break;
 			case 0:
-				if (strncmp(lgopts[option_index].name, PARAM_STATS, 5) == 0) {
+				if (strncmp(lgopts[option_index].name, PARAM_STATS_INTERVAL, 9) == 0) {
 					stats_interval = atoi(optarg);
-				} else if (strncmp(lgopts[option_index].name, PARAM_STATS_CORE, 8) == 0) {
+				} else if (strncmp(lgopts[option_index].name, PARAM_STATS_CORE, 10) == 0) {
 					stats_core = atoi(optarg);
 				}
 				break;
