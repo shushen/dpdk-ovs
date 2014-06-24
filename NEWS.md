@@ -5,6 +5,7 @@
 - Added vswitchd command-line parameter to pin stats display to a specific
   core.
 - Add support for portmask argument for physical devices
+- Port for use with the version of DPDK available from DPDK.org
 
 # v1.0 - May 2014
 
