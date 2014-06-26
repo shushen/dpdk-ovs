@@ -131,6 +131,8 @@ ovdk_lcore_main_loop(__attribute__((unused)) void *arg)
 	ovdk_pipeline_init();
 	ovdk_datapath_init();
 
+	RTE_LOG(INFO, APP, "Pipeline %d initialised\n", lcore_id);
+
 	while (1) {
 		/*
 		 * On every core, we loop indefinitely handling any
