@@ -499,6 +499,7 @@ dpif_dpdk_port_get_stats(const char *name, struct dpif_dpdk_vport_stats *stats)
 
     DPDK_DEBUG()
 
+    request.port_no = UINT32_MAX;
     strncpy(request.port_name, name, DPDK_PORT_MAX_STRING_LEN);
     request.cmd = OVS_VPORT_CMD_GET;
     error = dpif_dpdk_vport_transact(&request, &reply);
