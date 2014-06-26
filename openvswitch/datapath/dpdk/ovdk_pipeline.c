@@ -1065,8 +1065,8 @@ actions_execute(struct rte_mbuf *mbuf, struct ovdk_action *actions,
 				first_output = false;
 				continue;
 			}
-		} else if (unlikely(action->type != OVDK_ACTION_VSWITCHD ||
-		                    action->type != OVDK_ACTION_DROP)) {
+		} else if (unlikely((action->type != OVDK_ACTION_VSWITCHD &&
+		                    action->type != OVDK_ACTION_DROP))) {
 			/*
 			 * It should never be the case where the last action
 			 * is not to output
