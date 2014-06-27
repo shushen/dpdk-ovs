@@ -203,9 +203,9 @@ rte_port_ivshm_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 	uint32_t num_alloced = 0;
 	uint32_t ring_free_count = 0;
 	uint32_t num_to_alloc = 0;
-	struct rte_mbuf *alloc_buf[ALLOC_BURST_SIZE] = {0};
+	struct rte_mbuf *alloc_buf[ALLOC_BURST_SIZE];
 	int n_enq_pkts = 0;
-	struct rte_mbuf *freebufs[FREE_BURST_SIZE] = {0};
+	struct rte_mbuf *freebufs[FREE_BURST_SIZE];
 	struct rte_port_ivshm_reader *p =
 	       (struct rte_port_ivshm_reader *) port;
 
