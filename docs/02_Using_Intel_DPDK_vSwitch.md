@@ -30,6 +30,9 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
 * `--stats_core`
   The ID of the core used to print statistics.
 
+* `-p PORTMASK`
+  PORTMASK Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID, that is, for a portmask of 0x3, ports 0 and 1 are configured.
+
 ### Example Command
 
 An example configuration, with two physical ports and stats disabled:
