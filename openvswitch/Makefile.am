@@ -36,6 +36,7 @@ dpdk_libs=\
 	$(dpdk_lib_dir)/librte_table.a \
 	$(dpdk_lib_dir)/librte_pmd_e1000.a \
 	$(dpdk_lib_dir)/librte_pmd_ixgbe.a \
+	$(dpdk_lib_dir)/librte_pmd_i40e.a \
 	$(dpdk_lib_dir)/librte_pmd_vmxnet3_uio.a \
 	$(dpdk_lib_dir)/librte_pmd_virtio_uio.a \
 	$(dpdk_lib_dir)/librte_kvargs.a \
