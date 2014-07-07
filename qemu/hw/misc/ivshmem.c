@@ -15,6 +15,8 @@
  *
  * Contributions after 2012-01-13 are licensed under the terms of the
  * GNU GPL, version 2 or (at your option) any later version.
+ *
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  */
 #include "hw/hw.h"
 #include "hw/i386/pc.h"
@@ -40,6 +42,11 @@
 
 #define IVSHMEM_REG_BAR_SIZE 0x100
 
+#define IVSHMEM_MAX_FILES 256
+#define FOUR_KB_PAGE_ALIGNMENT_MASK 0xFFF
+#define FD_PREFIX "fd:"
+#define ONE_GB (1<<30)
+
 //#define DEBUG_IVSHMEM
 #ifdef DEBUG_IVSHMEM
 #define IVSHMEM_DPRINTF(fmt, ...)        \
@@ -64,7 +71,7 @@ typedef struct EventfdEntry {
 
 typedef struct IVShmemState {
     /*< private >*/
-    PCIDevice parent_obj;
+    PCIDevice dev;
     /*< public >*/
 
     uint32_t intrmask;
@@ -84,7 +91,7 @@ typedef struct IVShmemState {
     uint64_t ivshmem_size; /* size of shared memory region */
     uint32_t ivshmem_attr;
     uint32_t ivshmem_64bit;
-    int shm_fd; /* shared memory file descriptor */
+    int shm_fds[IVSHMEM_MAX_FILES]; /* shared memory file descriptor */
 
     Peer *peers;
     int nb_peers; /* how many guests we have space for */
@@ -111,6 +118,19 @@ enum ivshmem_registers {
     DOORBELL = 12,
 };
 
+enum ivshmem_fd_fields {
+    TOK_FILENAME = 0,
+    TOK_OFFSET,
+    TOK_SIZE,
+    TOK_NUM
+};
+
+typedef struct IVShmemFile {
+    int fd;
+    uint64_t offset;
+    uint64_t size;
+} IVShmemFile;
+
 static inline uint32_t ivshmem_has_feature(IVShmemState *ivs,
                                                     unsigned int feature) {
     return (ivs->features & (1 << feature));
@@ -123,7 +143,6 @@ static inline bool is_power_of_two(uint64_t x) {
 /* accessing registers - based on rtl8139 */
 static void ivshmem_update_irq(IVShmemState *s, int val)
 {
-    PCIDevice *d = PCI_DEVICE(s);
     int isr;
     isr = (s->intrstatus & s->intrmask) & 0xffffffff;
 
@@ -133,7 +152,7 @@ static void ivshmem_update_irq(IVShmemState *s, int val)
            isr ? 1 : 0, s->intrstatus, s->intrmask);
     }
 
-    qemu_set_irq(d->irq[0], (isr != 0));
+    qemu_set_irq(s->dev.irq[0], (isr != 0));
 }
 
 static void ivshmem_IntrMask_write(IVShmemState *s, uint32_t val)
@@ -233,7 +252,7 @@ static uint64_t ivshmem_io_read(void *opaque, hwaddr addr,
 
         case IVPOSITION:
             /* return my VM ID if the memory is mapped */
-            if (s->shm_fd > 0) {
+            if (s->shm_fds[0] > 0) {
                 ret = s->vm_id;
             } else {
                 ret = -1;
@@ -300,11 +319,10 @@ static CharDriverState* create_eventfd_chr_device(void * opaque, EventNotifier *
         fprintf(stderr, "creating eventfd for eventfd %d failed\n", eventfd);
         exit(-1);
     }
-    qemu_chr_fe_claim_no_fail(chr);
 
     /* if MSI is supported we need multiple interrupts */
     if (ivshmem_has_feature(s, IVSHMEM_MSI)) {
-        s->eventfd_table[vector].pdev = PCI_DEVICE(s);
+        s->eventfd_table[vector].pdev = &s->dev;
         s->eventfd_table[vector].vector = vector;
 
         qemu_chr_add_handlers(chr, ivshmem_can_receive, fake_irqfd,
@@ -318,43 +336,134 @@ static CharDriverState* create_eventfd_chr_device(void * opaque, EventNotifier *
 
 }
 
-static int check_shm_size(IVShmemState *s, int fd) {
-    /* check that the guest isn't going to try and map more memory than the
-     * the object has allocated return -1 to indicate error */
-
+static off_t get_file_size(int fd) {
     struct stat buf;
 
     fstat(fd, &buf);
 
-    if (s->ivshmem_size > buf.st_size) {
-        fprintf(stderr,
-                "IVSHMEM ERROR: Requested memory size greater"
-                " than shared object size (%" PRIu64 " > %" PRIu64")\n",
-                s->ivshmem_size, (uint64_t)buf.st_size);
+    return buf.st_size;
+}
+
+/* check the sum of all ivshmem files is equals to the ivshmem device size. */
+static int check_total_shm_size(IVShmemState *s,
+        IVShmemFile f[IVSHMEM_MAX_FILES], int num_files) {
+    uint64_t total_size = 0;
+    int i;
+
+    for (i = 0; i < num_files; i++)
+        total_size += f[i].size;
+
+    if (total_size != s->ivshmem_size) {
+        fprintf(stderr, "IVSHMEM ERROR: total size not equal to ivshmem size!\n");
         return -1;
-    } else {
-        return 0;
     }
+
+    return 0;
+}
+
+/* check that the guest isn't going to try and map more memory than the
+ * the object has allocated return -1 to indicate error */
+static int check_shm_size(int fd, uint64_t size, off_t offset) {
+
+    off_t file_size = get_file_size(fd);
+
+    /* make an exception for special files */
+    if (file_size != 0 && offset >= file_size) {
+        fprintf(stderr, "IVSHMEM ERROR: offset is bigger than file size\n");
+        return -1;
+    }
+
+    /* check if size is page aligned */
+    if (size & FOUR_KB_PAGE_ALIGNMENT_MASK) {
+        fprintf(stderr, "IVSHMEM ERROR: file chunk size must be 4K-aligned\n");
+        return -1;
+    }
+
+    /* check if offset is page aligned */
+    if (offset & FOUR_KB_PAGE_ALIGNMENT_MASK) {
+        fprintf(stderr, "IVSHMEM ERROR: file chunk offset must be 4K-aligned\n");
+        return -1;
+    }
+
+    return 0;
 }
 
 /* create the shared memory BAR when we are not using the server, so we can
  * create the BAR and map the memory immediately */
-static void create_shared_memory_BAR(IVShmemState *s, int fd) {
+static int create_shared_memory_BAR(IVShmemState *s,
+        IVShmemFile f[IVSHMEM_MAX_FILES], int num_files) {
 
-    void * ptr;
+    void * ptr_data, * virt_area;
+    uint64_t total_size = 0, one_gb_align;
+    int i, fd_zero;
 
-    s->shm_fd = fd;
+    /* open /dev/zero for mmap */
+    fd_zero = open("/dev/zero", O_RDWR);
 
-    ptr = mmap(0, s->ivshmem_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if (fd_zero < 0) {
+        fprintf(stderr, "ivshmem: opening /dev/zero failed (%s)\n",
+                strerror(errno));
+        return -1;
+    }
+
+    /* Get virtual area of ivshmem_size plus 1GB for alignment.
+     * virt_area later will be used to remap files backed up by hugepages (1GB
+     * or 2MB). Therefore and due to mmap restrictions virt_area will have to
+     * be aligned to both 1GB and 2MB (1GB will cover both scenarios). In order
+     * to be sure we can freely align virt_area up to 1GB we reserve vshmem_size
+     * plus 1GB */
+    virt_area = mmap(NULL, s->ivshmem_size + ONE_GB,
+            PROT_READ|PROT_WRITE,
+            MAP_PRIVATE, fd_zero, 0);
+
+    if (virt_area == MAP_FAILED) {
+        fprintf(stderr, "ivshmem: mmap /dev/zero failed (%s)\n",
+                strerror(errno));
+        return -1;
+    }
+
+    /* Calculate 1GB boundary alignment covering 1GB and 2MB hugepage cases */
+    one_gb_align = ONE_GB - ((uint64_t) virt_area % ONE_GB);
+
+    munmap(virt_area, s->ivshmem_size + ONE_GB);
+    close(fd_zero);
+
+    /* Finally align virt_area to 1GB boundary. */
+    virt_area += one_gb_align;
+
+    /* at this point virt_area contains a virtual address that where we can
+     * safely use to mmap all ivshmem files.
+     * Proceed to mmap all ivshmem files so. */
+    for (i = 0; i < num_files; i++) {
+
+        /* remap file into the start of virtual area */
+        ptr_data = mmap(virt_area + total_size,
+                f[i].size, PROT_READ|PROT_WRITE,
+                MAP_SHARED | MAP_FIXED, f[i].fd, f[i].offset);
+
+        /* we need to make sure we get _exactly_ what we want */
+        if (ptr_data == MAP_FAILED || ptr_data != virt_area + total_size) {
+            fprintf(stderr, "ivshmem: mmap failed (%s)\n", strerror(errno));
+            return -1;
+        }
+
+        total_size += f[i].size;
+    }
+
+    memcpy(s->shm_fds, f, sizeof(s->shm_fds));
 
     memory_region_init_ram_ptr(&s->ivshmem, OBJECT(s), "ivshmem.bar2",
-                               s->ivshmem_size, ptr);
-    vmstate_register_ram(&s->ivshmem, DEVICE(s));
+                               s->ivshmem_size, virt_area);
+    vmstate_register_ram(&s->ivshmem, &s->dev.qdev);
     memory_region_add_subregion(&s->bar, 0, &s->ivshmem);
 
     /* region for shared memory */
-    pci_register_bar(PCI_DEVICE(s), 2, s->ivshmem_attr, &s->bar);
+    pci_register_bar(&s->dev, 2, s->ivshmem_attr, &s->bar);
+
+    return 0;
 }
+
+
 
 static void ivshmem_add_eventfd(IVShmemState *s, int posn, int i)
 {
@@ -468,7 +577,7 @@ static void ivshmem_read(void *opaque, const uint8_t * buf, int flags)
 
         s->max_peer = 0;
 
-        if (check_shm_size(s, incoming_fd) == -1) {
+        if (check_shm_size(incoming_fd, s->ivshmem_size, 0) == -1) {
             exit(-1);
         }
 
@@ -477,7 +586,7 @@ static void ivshmem_read(void *opaque, const uint8_t * buf, int flags)
                                                             incoming_fd, 0);
         memory_region_init_ram_ptr(&s->ivshmem, OBJECT(s),
                                    "ivshmem.bar2", s->ivshmem_size, map_ptr);
-        vmstate_register_ram(&s->ivshmem, DEVICE(s));
+        vmstate_register_ram(&s->ivshmem, &s->dev.qdev);
 
         IVSHMEM_DPRINTF("guest h/w addr = %" PRIu64 ", size = %" PRIu64 "\n",
                          s->ivshmem_offset, s->ivshmem_size);
@@ -485,7 +594,8 @@ static void ivshmem_read(void *opaque, const uint8_t * buf, int flags)
         memory_region_add_subregion(&s->bar, 0, &s->ivshmem);
 
         /* only store the fd if it is successfully mapped */
-        s->shm_fd = incoming_fd;
+        memset(s->shm_fds, 0, sizeof(s->shm_fds));
+        s->shm_fds[0] = incoming_fd;
 
         return;
     }
@@ -529,21 +639,20 @@ static void ivshmem_read(void *opaque, const uint8_t * buf, int flags)
  * we just enable all vectors on init and after reset. */
 static void ivshmem_use_msix(IVShmemState * s)
 {
-    PCIDevice *d = PCI_DEVICE(s);
     int i;
 
-    if (!msix_present(d)) {
+    if (!msix_present(&s->dev)) {
         return;
     }
 
     for (i = 0; i < s->vectors; i++) {
-        msix_vector_use(d, i);
+        msix_vector_use(&s->dev, i);
     }
 }
 
 static void ivshmem_reset(DeviceState *d)
 {
-    IVShmemState *s = IVSHMEM(d);
+    IVShmemState *s = DO_UPCAST(IVShmemState, dev.qdev, d);
 
     s->intrstatus = 0;
     ivshmem_use_msix(s);
@@ -578,7 +687,7 @@ static uint64_t ivshmem_get_size(IVShmemState * s) {
 
 static void ivshmem_setup_msi(IVShmemState * s)
 {
-    if (msix_init_exclusive_bar(PCI_DEVICE(s), s->vectors, 1)) {
+    if (msix_init_exclusive_bar(&s->dev, s->vectors, 1)) {
         IVSHMEM_DPRINTF("msix initialization failed\n");
         exit(1);
     }
@@ -594,13 +703,12 @@ static void ivshmem_setup_msi(IVShmemState * s)
 static void ivshmem_save(QEMUFile* f, void *opaque)
 {
     IVShmemState *proxy = opaque;
-    PCIDevice *pci_dev = PCI_DEVICE(proxy);
 
     IVSHMEM_DPRINTF("ivshmem_save\n");
-    pci_device_save(pci_dev, f);
+    pci_device_save(&proxy->dev, f);
 
     if (ivshmem_has_feature(proxy, IVSHMEM_MSI)) {
-        msix_save(pci_dev, f);
+        msix_save(&proxy->dev, f);
     } else {
         qemu_put_be32(f, proxy->intrstatus);
         qemu_put_be32(f, proxy->intrmask);
@@ -613,7 +721,6 @@ static int ivshmem_load(QEMUFile* f, void *opaque, int version_id)
     IVSHMEM_DPRINTF("ivshmem_load\n");
 
     IVShmemState *proxy = opaque;
-    PCIDevice *pci_dev = PCI_DEVICE(proxy);
     int ret;
 
     if (version_id > 0) {
@@ -625,14 +732,14 @@ static int ivshmem_load(QEMUFile* f, void *opaque, int version_id)
         return -EINVAL;
     }
 
-    ret = pci_device_load(pci_dev, f);
+    ret = pci_device_load(&proxy->dev, f);
     if (ret) {
         return ret;
     }
 
     if (ivshmem_has_feature(proxy, IVSHMEM_MSI)) {
-        msix_load(pci_dev, f);
-	ivshmem_use_msix(proxy);
+        msix_load(&proxy->dev, f);
+    ivshmem_use_msix(proxy);
     } else {
         proxy->intrstatus = qemu_get_be32(f);
         proxy->intrmask = qemu_get_be32(f);
@@ -642,7 +749,7 @@ static int ivshmem_load(QEMUFile* f, void *opaque, int version_id)
 }
 
 static void ivshmem_write_config(PCIDevice *pci_dev, uint32_t address,
-				 uint32_t val, int len)
+                 uint32_t val, int len)
 {
     pci_default_write_config(pci_dev, address, val, len);
     msix_write_config(pci_dev, address, val, len);
@@ -650,7 +757,7 @@ static void ivshmem_write_config(PCIDevice *pci_dev, uint32_t address,
 
 static int pci_ivshmem_init(PCIDevice *dev)
 {
-    IVShmemState *s = IVSHMEM(dev);
+    IVShmemState *s =  DO_UPCAST(IVShmemState, dev, dev);
     uint8_t *pci_conf;
 
     if (s->sizearg == NULL)
@@ -659,7 +766,7 @@ static int pci_ivshmem_init(PCIDevice *dev)
         s->ivshmem_size = ivshmem_get_size(s);
     }
 
-    register_savevm(DEVICE(dev), "ivshmem", 0, 0, ivshmem_save, ivshmem_load,
+    register_savevm(&s->dev.qdev, "ivshmem", 0, 0, ivshmem_save, ivshmem_load,
                                                                         dev);
 
     /* IRQFD requires MSI */
@@ -689,18 +796,18 @@ static int pci_ivshmem_init(PCIDevice *dev)
         migrate_add_blocker(s->migration_blocker);
     }
 
-    pci_conf = dev->config;
+    pci_conf = s->dev.config;
     pci_conf[PCI_COMMAND] = PCI_COMMAND_IO | PCI_COMMAND_MEMORY;
 
     pci_config_set_interrupt_pin(pci_conf, 1);
 
-    s->shm_fd = 0;
+    memset(s->shm_fds, 0, sizeof(s->shm_fds));
 
     memory_region_init_io(&s->ivshmem_mmio, OBJECT(s), &ivshmem_mmio_ops, s,
                           "ivshmem-mmio", IVSHMEM_REG_BAR_SIZE);
 
     /* region for registers*/
-    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY,
+    pci_register_bar(&s->dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY,
                      &s->ivshmem_mmio);
 
     memory_region_init(&s->bar, OBJECT(s), "ivshmem-bar2-container", s->ivshmem_size);
@@ -734,7 +841,7 @@ static int pci_ivshmem_init(PCIDevice *dev)
         /* allocate/initialize space for interrupt handling */
         s->peers = g_malloc0(s->nb_peers * sizeof(Peer));
 
-        pci_register_bar(dev, 2, s->ivshmem_attr, &s->bar);
+        pci_register_bar(&s->dev, 2, s->ivshmem_attr, &s->bar);
 
         s->eventfd_chr = g_malloc0(s->vectors * sizeof(CharDriverState *));
 
@@ -742,7 +849,8 @@ static int pci_ivshmem_init(PCIDevice *dev)
                      ivshmem_event, s);
     } else {
         /* just map the file immediately, we're not using a server */
-        int fd;
+        IVShmemFile f[IVSHMEM_MAX_FILES];
+        int f_index = 0;
 
         if (s->shmobj == NULL) {
             fprintf(stderr, "Must specify 'chardev' or 'shm' to ivshmem\n");
@@ -751,38 +859,122 @@ static int pci_ivshmem_init(PCIDevice *dev)
 
         IVSHMEM_DPRINTF("using shm_open (shm object = %s)\n", s->shmobj);
 
-        /* try opening with O_EXCL and if it succeeds zero the memory
-         * by truncating to 0 */
-        if ((fd = shm_open(s->shmobj, O_CREAT|O_RDWR|O_EXCL,
-                        S_IRWXU|S_IRWXG|S_IRWXO)) > 0) {
-           /* truncate file to length PCI device's memory */
-            if (ftruncate(fd, s->ivshmem_size) != 0) {
-                fprintf(stderr, "ivshmem: could not truncate shared file\n");
+        memset(f, 0, sizeof(f));
+
+        /* check if we are trying to share a regular file */
+        if (strncmp(s->shmobj, FD_PREFIX, sizeof(FD_PREFIX) - 1) == 0) {
+            int token_n, n_cols, i;
+            char * tok;
+
+            n_cols = 0;
+            token_n = -1;
+
+
+            /* find out how many colons do we have */
+            for (i = 0; i <= strlen(s->shmobj); i++) {
+                if (s->shmobj[i] == ':')
+                    n_cols++;
             }
 
-        } else if ((fd = shm_open(s->shmobj, O_CREAT|O_RDWR,
-                        S_IRWXU|S_IRWXG|S_IRWXO)) < 0) {
-            fprintf(stderr, "ivshmem: could not open shared file\n");
-            exit(-1);
+            tok = strtok(s->shmobj, ":");
 
+            while (tok != NULL) {
+                if (f_index == IVSHMEM_MAX_FILES) {
+                    fprintf(stderr, "ivshmem: too many files (maximum is  %i)\n",
+                            IVSHMEM_MAX_FILES);
+                    exit(-1);
+                }
+
+                /* skip the first token */
+                if (token_n == -1) {
+                    tok = strtok(0, ":");
+                    token_n++;
+                    continue;
+                }
+
+                switch (token_n % TOK_NUM) {
+                case TOK_FILENAME:
+                    if ((f[f_index].fd = open(tok, O_RDWR | O_SYNC)) < 0) {
+
+                        fprintf(stderr, "ivshmem: error opening file %s: %s\n",
+                                tok, strerror(errno));
+                        exit(-1);
+                    }
+                    /* get true file size, may be changed later */
+                    f[f_index].size = get_file_size(f[f_index].fd);
+                    break;
+                case TOK_OFFSET:
+                    f[f_index].offset = strtoull(tok, NULL, 16);
+                    break;
+                case TOK_SIZE:
+                    f[f_index].size = strtoull(tok, NULL, 16);
+                    f_index++;
+                    break;
+                default:
+                    fprintf(stderr, "ivshmem: invalid parameters\n");
+                    exit(-1);
+                }
+
+                tok = strtok(0, ":");
+                token_n++;
+            }
+
+            /* check every file descriptor */
+            for (i = 0; i < IVSHMEM_MAX_FILES; i++) {
+                if (f[i].fd > 0) {
+                    if (check_shm_size(f[i].fd, f[i].size, f[i].offset) == -1)
+                        exit(-1);
+                }
+            }
+
+            /* check if we haven't skipped any tokens */
+            if ((token_n != n_cols) || (n_cols > (IVSHMEM_MAX_FILES * 3))) {
+                fprintf(stderr, "ivshmem: invalid parameters\n");
+                exit(-1);
+            }
+        }
+        else {
+            /* try opening with O_EXCL and if it succeeds zero the memory
+             * by truncating to 0 */
+            if ((f[0].fd = shm_open(s->shmobj, O_CREAT|O_RDWR|O_EXCL,
+                            S_IRWXU|S_IRWXG|S_IRWXO)) > 0) {
+               /* truncate file to length PCI device's memory */
+                if (ftruncate(f[0].fd, s->ivshmem_size) != 0) {
+                    fprintf(stderr, "ivshmem: could not truncate shared file\n");
+                }
+
+            } else if ((f[0].fd = shm_open(s->shmobj, O_CREAT|O_RDWR,
+                            S_IRWXU|S_IRWXG|S_IRWXO)) < 0) {
+                fprintf(stderr, "ivshmem: could not open shared file\n");
+                exit(-1);
+            }
+
+            if (s->ivshmem_size > get_file_size(f[0].fd)) {
+                fprintf(stderr, "ivshmem: Requested memory size greater"
+                        " than shared object size\n");
+                exit(-1);
+            }
+
+            f_index = 1;
+            f[0].size = s->ivshmem_size;
         }
 
-        if (check_shm_size(s, fd) == -1) {
-            exit(-1);
-        }
+        if (check_total_shm_size(s, f, f_index))
+                exit(-1);
 
-        create_shared_memory_BAR(s, fd);
+        if (create_shared_memory_BAR(s, f, f_index) < 0)
+                    exit(-1);
 
     }
 
-    dev->config_write = ivshmem_write_config;
+    s->dev.config_write = ivshmem_write_config;
 
     return 0;
 }
 
 static void pci_ivshmem_uninit(PCIDevice *dev)
 {
-    IVShmemState *s = IVSHMEM(dev);
+    IVShmemState *s =  DO_UPCAST(IVShmemState, dev, dev);
 
     if (s->migration_blocker) {
         migrate_del_blocker(s->migration_blocker);
@@ -791,10 +983,10 @@ static void pci_ivshmem_uninit(PCIDevice *dev)
 
     memory_region_destroy(&s->ivshmem_mmio);
     memory_region_del_subregion(&s->bar, &s->ivshmem);
-    vmstate_unregister_ram(&s->ivshmem, DEVICE(dev));
+    vmstate_unregister_ram(&s->ivshmem, &s->dev.qdev);
     memory_region_destroy(&s->ivshmem);
     memory_region_destroy(&s->bar);
-    unregister_savevm(DEVICE(dev), "ivshmem", s);
+    unregister_savevm(&dev->qdev, "ivshmem", s);
 }
 
 static Property ivshmem_properties[] = {
@@ -821,7 +1013,6 @@ static void ivshmem_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_MEMORY_RAM;
     dc->reset = ivshmem_reset;
     dc->props = ivshmem_properties;
-    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 static const TypeInfo ivshmem_info = {
