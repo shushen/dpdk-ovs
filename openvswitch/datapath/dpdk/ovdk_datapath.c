@@ -102,7 +102,7 @@ struct ovdk_datapath {
 	struct rte_ring *control_free_ring;
 	struct rte_ring *packet_alloc_ring;
 	struct rte_ring *control_alloc_ring;
-};
+} __rte_cache_aligned;
 
 /* mempool for control messages */
 static struct rte_mempool *ctrlmbuf_pool = NULL;
