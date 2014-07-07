@@ -49,6 +49,7 @@
 #define VLAN_PRIO_SHIFT         13
 #define ETHER_TYPE_IPv4_BS      0x8
 #define ETHER_TYPE_VLAN_BS      0x81
+#define PREFETCH_OFFSET         3
 
 struct icmp_hdr {
 	uint8_t icmp_type;
@@ -74,10 +75,22 @@ int
 flow_keys_extract(struct rte_mbuf **pkts, uint32_t num_pkts,
                   uint64_t *pkts_mask __attribute__((unused)) ,void *arg)
 {
-	uint32_t i = 0;
+	int i = 0;
+	int nb_rx = num_pkts;
 	uint32_t vport_id = 0;
 
-	for (i = 0; i < num_pkts; i ++)
+	for (i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++) {
+		rte_prefetch0(RTE_MBUF_METADATA_UINT32_PTR(pkts[i], 0));
+		rte_prefetch0(rte_pktmbuf_mtod(pkts[i], void *));
+	}
+
+	for (i = 0; i < nb_rx - PREFETCH_OFFSET; i++) {
+		rte_prefetch0(RTE_MBUF_METADATA_UINT32_PTR(pkts[i + PREFETCH_OFFSET], 0));
+		rte_prefetch0(rte_pktmbuf_mtod(pkts[i + PREFETCH_OFFSET], void *));
+		flow_key_extract(*(uint32_t *)arg, pkts[i]);
+	}
+
+	for (; i < nb_rx; i++)
 		flow_key_extract(*(uint32_t *)arg, pkts[i]);
 
 	ovdk_vport_get_vportid(*(uint32_t *)arg, &vport_id);
