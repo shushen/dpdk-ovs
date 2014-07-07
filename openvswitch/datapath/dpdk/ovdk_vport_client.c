@@ -132,7 +132,7 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 		port_writer_params->tx_ring_name,
 		PORT_CLIENT_TX_RING_SIZE,
 		rte_socket_id(),
-		RING_F_SP_ENQ);
+		0);
 
 	if (ret == NULL) {
 		rte_panic("Cannot create TX ring for port %u\n",
