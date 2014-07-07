@@ -124,8 +124,10 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
 
     num_control_pkts = num_pkts - num_packet_pkts;
 
-    alloc_packet_mbufs((void **)packet_mbufs, num_packet_pkts, pipeline_id);
-    alloc_control_mbufs((void **)control_mbufs, num_control_pkts, pipeline_id);
+    if (num_packet_pkts)
+        alloc_packet_mbufs((void **)packet_mbufs, num_packet_pkts, pipeline_id);
+    if (num_control_pkts)
+        alloc_control_mbufs((void **)control_mbufs, num_control_pkts, pipeline_id);
 
     /* Get thread id to ensure reply is handled by the same thread */
     tid = (uint32_t)syscall(SYS_gettid);
@@ -166,22 +168,26 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
         }
     }
 
-    packet_ret = rte_ring_mp_enqueue_bulk(packet_ring[pipeline_id], (void * const *)packet_mbufs, num_packet_pkts);
-    if (packet_ret == -ENOBUFS) {
-        enqueue_packet_mbufs_to_be_freed((void * const *)packet_mbufs, num_packet_pkts, pipeline_id);
-        packet_ret = ENOBUFS;
-    } else if (unlikely(packet_ret == -EDQUOT)) {
-        /* do not return this error code to the caller */
-        packet_ret = 0;
+    if (num_packet_pkts) {
+        packet_ret = rte_ring_mp_enqueue_bulk(packet_ring[pipeline_id], (void * const *)packet_mbufs, num_packet_pkts);
+        if (packet_ret == -ENOBUFS) {
+            enqueue_packet_mbufs_to_be_freed((void * const *)packet_mbufs, num_packet_pkts, pipeline_id);
+            packet_ret = ENOBUFS;
+        } else if (unlikely(packet_ret == -EDQUOT)) {
+            /* do not return this error code to the caller */
+            packet_ret = 0;
+        }
     }
 
-    control_ret = rte_ring_mp_enqueue_bulk(request_ring[pipeline_id], (void * const *)control_mbufs, num_control_pkts);
-    if (control_ret == -ENOBUFS) {
-        enqueue_control_mbufs_to_be_freed((void * const *)control_mbufs, num_control_pkts, pipeline_id);
-        control_ret = ENOBUFS;
-    } else if (unlikely(control_ret == -EDQUOT)) {
-        /* do not return this error code to the caller */
-        control_ret = 0;
+    if (num_control_pkts) {
+        control_ret = rte_ring_mp_enqueue_bulk(request_ring[pipeline_id], (void * const *)control_mbufs, num_control_pkts);
+        if (control_ret == -ENOBUFS) {
+            enqueue_control_mbufs_to_be_freed((void * const *)control_mbufs, num_control_pkts, pipeline_id);
+            control_ret = ENOBUFS;
+        } else if (unlikely(control_ret == -EDQUOT)) {
+            /* do not return this error code to the caller */
+            control_ret = 0;
+        }
     }
 
     if (packet_ret != 0)
