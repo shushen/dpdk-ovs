@@ -98,10 +98,8 @@ int main(int argc, char *argv[])
 	struct rte_ring *rx_ring = NULL;
 	struct rte_ring *tx_ring = NULL;
 	struct rte_ring *free_q = NULL;
-	struct rte_ring *alloc_q = NULL;
 	int retval = 0;
 	void *pkts[PKT_READ_SIZE];
-	void *af_pkts[PKT_READ_SIZE];
 	int ret = 0;
 	unsigned rx_count, free_count;
 	unsigned pkts_count;
@@ -125,9 +123,6 @@ int main(int argc, char *argv[])
 		return -1;
 
 	if ((free_q = ovs_vport_client_lookup_free_q(port_name)) == NULL)
-		return -1;
-
-	if ((alloc_q = ovs_vport_client_lookup_alloc_q(port_name)) == NULL)
 		return -1;
 
 	RTE_LOG(INFO, APP, "Finished Process Init.\n");
@@ -172,20 +167,6 @@ int main(int argc, char *argv[])
 		 */
 		if (ret == -ENOBUFS)
 			enqueue_mbufs_to_be_freed(free_q, pkts, pkts_count);
-
-		/*Simulate using the alloc queue*/
-		free_count = rte_ring_free_count(free_q);
-
-		pkts_count = RTE_MIN(free_count, PKT_READ_SIZE);
-
-		if (unlikely(pkts_count == 0))
-			continue;
-
-		ret = rte_ring_dequeue_bulk(alloc_q, af_pkts, pkts_count);
-		if (unlikely(ret < 0))
-			continue;
-
-		enqueue_mbufs_to_be_freed(free_q, af_pkts, pkts_count);
 	}
 
 	return 0;
