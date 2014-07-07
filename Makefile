@@ -57,7 +57,7 @@ export ROOT_DIR := $(CURDIR)
 export DPDK_DIR := $(RTE_SDK)
 export DOC_DIR := $(ROOT_DIR)/docs
 export OVS_DIR := $(ROOT_DIR)/openvswitch
-export QEMU_DIR := $(ROOT_DIR)/qemu-1_4_0
+export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
 export MEMNIC_PATCH := $(ROOT_DIR)/guest/memnic/memnic_set_mac_address.patch
 #End Directories####################
@@ -95,7 +95,7 @@ config-ovs:
 	cd $(OVS_DIR) && ./boot.sh && ./configure RTE_SDK=$(DPDK_DIR) --disable-ssl && cd $(ROOT_DIR)
 
 config-qemu:
-	cd $(QEMU_DIR) && ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --target-list=x86_64-softmmu && cd $(ROOT_DIR)
+	cd $(QEMU_DIR) && ./configure --enable-kvm --target-list=x86_64-softmmu && cd $(ROOT_DIR)
 #End Targets for Configuration#######
 
 #Targets for Clean##################
