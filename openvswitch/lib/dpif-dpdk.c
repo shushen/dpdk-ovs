@@ -612,6 +612,8 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
         dpif_dpdk_vport_table_entry_reset(vportid);
         return error;
     }
+    VLOG_DBG("Added vportid %d as in port to pipeline %d", vportid, pipeline_id);
+
     /* Modify message and add output ports to available datapath pipelines */
     request.flags = VPORT_FLAG_OUT_PORT;
     for (i = min_pipeline_id; i <= max_pipeline_id; i++) {
@@ -1172,6 +1174,7 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
     if (error) {
         return -error;
     }
+    VLOG_DBG("Added flow to pipeline %d", pipeline_id);
 
     if (put->stats) {
         dpif_dpdk_flow_get_stats(&reply, put->stats);
@@ -1626,7 +1629,7 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
         /* free memory allocated in ofpbuf key */
         ofpbuf_uninit(&key);
 
-	break;
+        break;
 
     } while (peek_next_pipeline(&last_used_recv_pipeline) != initial_pipeline);
 

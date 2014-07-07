@@ -236,14 +236,15 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 	vport_name = request->port_name;
 	reply.vport_msg = *request;
 
-        ret = ovdk_vport_port_verify(vportid);
-        if (ret != 0) {
-                RTE_LOG(WARNING, APP, "Invalid port ID for new port: '%u'"
-                                ,vportid);
-                reply.error = ret;
-                ovdk_datapath_send_reply(&reply);
-                return ret;
-        }
+	ret = ovdk_vport_port_verify(vportid);
+	if (ret != 0) {
+		RTE_LOG(WARNING, APP, "Invalid port ID for new port: '%u'"
+	                             ,vportid);
+		reply.error = ret;
+		ovdk_datapath_send_reply(&reply);
+
+		return ret;
+	}
 
 	if (flags & VPORT_FLAG_IN_PORT) {
 		ret = ovdk_pipeline_port_in_add(vportid, vport_name);
@@ -254,6 +255,8 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
+		RTE_LOG(DEBUG, APP, "Added %s as in-port on lcore_id = %d\n",
+		                      vport_name, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
@@ -265,6 +268,8 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
+		RTE_LOG(DEBUG, APP, "Added %s as out-port on lcore_id = %d\n",
+		                       vport_name, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -503,7 +508,7 @@ ovdk_datapath_flow_del(struct ovdk_flow_message *request)
 	 * message
 	 */
 	reply.flow_msg.stats.used = ovs_flow_used_time(rte_rdtsc(),
-			                                       reply.flow_msg.stats.used);
+	                                      reply.flow_msg.stats.used);
 
 	reply.error = 0;
 	ovdk_datapath_send_reply(&reply);
