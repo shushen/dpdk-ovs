@@ -39,8 +39,28 @@
 #include "ovdk_mempools.h"
 #include "ovdk_stats.h"
 
-#define PORT_RX_RING_SIZE       128
+#define PORT_RX_RING_SIZE       512
 #define PORT_TX_RING_SIZE       512
+
+/*
+ * RX and TX Prefetch, Host, and Write-back threshold values should be
+ * carefully set for optimal performance. Consult the network
+ * controller's datasheet and supporting DPDK documentation for guidance
+ * on how these parameters should be set.
+ *
+ * Default configuration for rx and tx thresholds etc.
+ *
+ * These default values are optimized for use with the Intel(R) 82599 10 GbE
+ * Controller and the DPDK ixgbe PMD. Consider using other values for other
+ * network controllers and/or network drivers.
+ */
+#define MP_DEFAULT_PTHRESH     36
+#define MP_DEFAULT_RX_HTHRESH  8
+#define MP_DEFAULT_TX_HTHRESH  0
+#define MP_DEFAULT_WTHRESH     0
+#define RX_FREE_THRESH         64
+#define TX_FREE_THRESH         32
+#define TX_RS_THRESH           32
 
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
@@ -51,35 +71,26 @@ static struct rte_eth_conf port_conf = {
 		.jumbo_frame    = 0, /* Jumbo Frame Support disabled */
 		.hw_strip_crc   = 0, /* CRC stripped by hardware */
 	},
-	.rx_adv_conf = {
-		.rss_conf = {
-			.rss_key = NULL,
-			.rss_hf = ETH_RSS_IPV4 | ETH_RSS_IPV6,
-		},
-	},
-	.txmode = {
-		.mq_mode = ETH_MQ_TX_NONE,
-	},
 };
 
 static struct rte_eth_rxconf rx_conf = {
 	.rx_thresh = {
-		.pthresh = 8,
-		.hthresh = 8,
-		.wthresh = 4,
+		.pthresh = MP_DEFAULT_PTHRESH,
+		.hthresh = MP_DEFAULT_RX_HTHRESH,
+		.wthresh = MP_DEFAULT_WTHRESH,
 	},
-	.rx_free_thresh = 64,
+	.rx_free_thresh = RX_FREE_THRESH,
 	.rx_drop_en = 0,
 };
 
 static struct rte_eth_txconf tx_conf = {
 	.tx_thresh = {
-		.pthresh = 36,
-		.hthresh = 0,
-		.wthresh = 0,
+		.pthresh = MP_DEFAULT_PTHRESH,
+		.hthresh = MP_DEFAULT_TX_HTHRESH,
+		.wthresh = MP_DEFAULT_WTHRESH,
 	},
-	.tx_free_thresh = 0,
-	.tx_rs_thresh = 0,
+	.tx_free_thresh = TX_FREE_THRESH,
+	.tx_rs_thresh = TX_RS_THRESH,
 };
 
 /* total number of active phy ports */
