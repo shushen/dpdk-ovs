@@ -120,7 +120,6 @@ struct ovdk_pipeline {
 } __rte_cache_aligned;
 
 struct ovdk_pipeline ovdk_pipeline[RTE_MAX_LCORE];
-static int dpif_socket = -1;
 
 static struct rte_ring *create_ring(const char *name);
 
@@ -155,6 +154,7 @@ static void send_signal_to_dpif(void)
 {
 	static struct sockaddr_un addr;
 	int n;
+	unsigned lcore_id = rte_lcore_id();
 
 	if (!addr.sun_family) {
 		addr.sun_family = AF_UNIX;
@@ -162,7 +162,7 @@ static void send_signal_to_dpif(void)
 	}
 
 	/* don't care about error */
-	sendto(dpif_socket, &n, sizeof(n), 0,
+	sendto(ovdk_pipeline[lcore_id].dpif_socket, &n, sizeof(n), 0,
 		(struct sockaddr *)&addr, sizeof(addr));
 }
 
@@ -417,11 +417,11 @@ ovdk_pipeline_init(void)
 	/*
 	 * Initialize socket used to wakeup the vswitchd
 	 */
-	dpif_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
-	if (dpif_socket < 0)
+	ovdk_pipeline[lcore_id].dpif_socket = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (ovdk_pipeline[lcore_id].dpif_socket < 0)
 		rte_exit(EXIT_FAILURE, "Cannot create socket");
 
-	if (ioctl(dpif_socket, FIONBIO, &opt) < 0)
+	if (ioctl(ovdk_pipeline[lcore_id].dpif_socket, FIONBIO, &opt) < 0)
 		rte_exit(EXIT_FAILURE, "Cannot make socket non-blocking");
 	return;
 }
