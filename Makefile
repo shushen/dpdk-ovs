@@ -57,7 +57,7 @@ export ROOT_DIR := $(CURDIR)
 export DPDK_DIR := $(RTE_SDK)
 export DOC_DIR := $(ROOT_DIR)/docs
 export OVS_DIR := $(ROOT_DIR)/openvswitch
-export QEMU_DIR := $(ROOT_DIR)/qemu
+export QEMU_DIR := $(ROOT_DIR)/qemu-1_4_0
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
 export MEMNIC_PATCH := $(ROOT_DIR)/guest/memnic/memnic_set_mac_address.patch
 #End Directories####################
