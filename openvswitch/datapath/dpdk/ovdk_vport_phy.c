@@ -1,0 +1,202 @@
+/*-
+ *   BSD LICENSE
+ *
+ *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
+ *   All rights reserved.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in
+ *       the documentation and/or other materials provided with the
+ *       distribution.
+ *     * Neither the name of Intel Corporation nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
+
+#include <rte_config.h>
+#include <rte_ethdev.h>
+
+#include "ovdk_vport_phy.h"
+#include "ovdk_mempools.h"
+#include "ovdk_stats.h"
+
+#define PORT_RX_RING_SIZE       128
+#define PORT_TX_RING_SIZE       512
+
+static struct rte_eth_conf port_conf = {
+	.rxmode = {
+		.split_hdr_size = 0,
+		.header_split   = 0, /* Header Split disabled */
+		.hw_ip_checksum = 1, /* IP checksum offload enabled */
+		.hw_vlan_filter = 0, /* VLAN filtering disabled */
+		.jumbo_frame    = 0, /* Jumbo Frame Support disabled */
+		.hw_strip_crc   = 0, /* CRC stripped by hardware */
+	},
+	.rx_adv_conf = {
+		.rss_conf = {
+			.rss_key = NULL,
+			.rss_hf = ETH_RSS_IPV4 | ETH_RSS_IPV6,
+		},
+	},
+	.txmode = {
+		.mq_mode = ETH_MQ_TX_NONE,
+	},
+};
+
+static struct rte_eth_rxconf rx_conf = {
+	.rx_thresh = {
+		.pthresh = 8,
+		.hthresh = 8,
+		.wthresh = 4,
+	},
+	.rx_free_thresh = 64,
+	.rx_drop_en = 0,
+};
+
+static struct rte_eth_txconf tx_conf = {
+	.tx_thresh = {
+		.pthresh = 36,
+		.hthresh = 0,
+		.wthresh = 0,
+	},
+	.tx_free_thresh = 0,
+	.tx_rs_thresh = 0,
+};
+
+/* total number of active phy ports */
+int total_ports = 0;
+
+/**
+ * Initialise all 1G and 10G NICs available
+ */
+int
+ovdk_vport_phy_init(void)
+{
+	if (
+#ifdef RTE_LIBRTE_IGB_PMD
+	    (rte_igb_pmd_init() < 0) ||
+#endif
+#ifdef RTE_LIBRTE_IXGBE_PMD
+	    (rte_ixgbe_pmd_init() < 0) ||
+#endif
+	    (rte_eal_pci_probe() < 0 ))
+		return -1;
+
+	/* get total number of ports */
+	total_ports = rte_eth_dev_count();
+
+	return total_ports;
+}
+
+int
+ovdk_vport_phy_port_init(struct vport_info *vport_info,
+                         unsigned port_id)
+{
+	struct rte_pipeline_port_in_params *port_in_params = NULL;
+	struct rte_pipeline_port_out_params *port_out_params = NULL;
+	struct rte_port_ethdev_writer_params *port_writer_params = NULL;
+	struct rte_port_ethdev_reader_params *port_reader_params = NULL;
+	struct rte_mempool *mp = NULL;
+	unsigned lcore_id = 0;
+	int ret = 0;
+
+	RTE_LOG(INFO, USER1, "Initializing NIC port %u ...\n", port_id);
+
+	mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);
+	if (mp == NULL)
+		rte_panic("Cannot find mempool %s\n", PKTMBUF_POOL_NAME);
+
+	/* Check for null type before use*/
+	if(vport_info == NULL)
+		rte_panic("Cannot init client port %d, invalid vport info\n",
+		          port_id);
+
+	vport_info->type = OVDK_VPORT_TYPE_PHY;
+
+	/* Init port */
+	ret = rte_eth_dev_configure(
+		port_id,
+		1,             /* Currently only one rx queue is supported */
+		RTE_MAX_LCORE, /* Output queue for every core */
+		&port_conf);
+	if (ret < 0)
+		rte_panic("Cannot init NIC port %u (%d)\n", port_id, ret);
+
+	rte_eth_promiscuous_enable(port_id);
+
+	/* Init RX queues */
+	ret = rte_eth_rx_queue_setup(
+		port_id,
+		0,
+		PORT_RX_RING_SIZE,
+		rte_eth_dev_socket_id(port_id),
+		&rx_conf,
+		mp);
+	if (ret < 0)
+		rte_panic("Cannot init RX for port %u (%d)\n",
+		          (unsigned) port_id, ret);
+
+	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
+		/* Init TX queues - One for every lcore*/
+		ret = rte_eth_tx_queue_setup(
+			port_id,
+			lcore_id,
+			PORT_TX_RING_SIZE,
+			rte_eth_dev_socket_id(port_id),
+			&tx_conf);
+		if (ret < 0)
+			rte_panic("Cannot init TX for port %d (%d)\n",
+				  port_id, ret);
+	}
+
+	/* Start port */
+	ret = rte_eth_dev_start(port_id);
+	if (ret < 0)
+		rte_panic("Cannot start port %d (%d)\n", port_id, ret);
+
+
+	port_reader_params = &vport_info->phy.port_reader_ethdev_params;
+	port_reader_params->port_id = port_id;
+	port_reader_params->queue_id = 0;
+
+	port_in_params = &vport_info->port_in_params;
+	port_in_params->ops = &rte_port_ethdev_reader_ops;
+	port_in_params->arg_create = port_reader_params;
+	port_in_params->f_action = NULL;
+	port_in_params->arg_ah = &vport_info->vportid;
+	port_in_params->burst_size = 32;
+
+	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
+		port_writer_params = &vport_info->phy.port_writer_ethdev_params[lcore_id];
+		port_writer_params->port_id = port_id;
+		port_writer_params->queue_id = lcore_id;
+		port_writer_params->tx_burst_sz = 32;
+
+		port_out_params = &vport_info->port_out_params[lcore_id];
+		port_out_params->ops = &rte_port_ethdev_writer_ops;
+		port_out_params->arg_create = port_writer_params;
+		port_out_params->f_action = ovdk_stats_port_out_update;
+		port_out_params->arg_ah = &vport_info->vportid;
+	}
+
+	return 0;
+}
