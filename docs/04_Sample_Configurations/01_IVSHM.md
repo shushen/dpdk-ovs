@@ -185,8 +185,8 @@ APP: QEMU cmdline for metadata 'vm_1': -device ivshmem,size=4M,shm=fd:/dev/
 Start QEMU with the metadata created above, for example:
 
 ```bash
-./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4  \
-  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 8192M -smp 2 \
+./qemu/x86_64-softmmu/qemu-system-x86_64 -cpu host -boot c                   \
+   -hda <qemu_imagename.qcow2> -snapshot -m 8192M -smp 2                     \
   --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid     \
   -drive file=fat:rw:/tmp/qemu_share,snapshot=off                            \
   -monitor unix:/tmp/vm1monitor,server,nowait                                \

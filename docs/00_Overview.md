@@ -66,10 +66,7 @@ ______
 
 ### QEMU
 
-A number of modifications have been made to QEMU 1.4.0
-
-* A modified VirtIO back-end has been provided. This allows a QEMU virtual machine to interface directly with the accelerated Open vSwitch without any transition to host userspace. This will allow legacy applications that depend on standard socket interfaces in the guest to interface with the accelerated Open vSwitch. This code can be found in `qemu/net/dpdk*`. Support for this feature was removed with release 1.0 of Intel® DPDK vSwitch - please use *Userspace vHost VirtIO* in its place.
-* A modified Inter-VM Shared Memory PCI device allows for an Intel® DPDK hugepage to be shared with an Intel® DPDK application in the guest. This allows for very fast zero-copy communication with the accelerated OpenVSwitch. This code can be found in `qemu/hw/ivshmem.c`
+QEMU 1.6.2 has been modified by adding a modified Inter-VM Shared Memory (IVSHMEM) PCI device that allows for an Intel® DPDK hugepage to be shared with an Intel® DPDK application in the guest. This allows for very fast zero-copy communication with the accelerated OpenVSwitch. This code can be found in `qemu/hw/misc/ivshmem.c`
 
 ### Open vSwitch
 

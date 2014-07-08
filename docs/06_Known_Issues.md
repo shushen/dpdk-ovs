@@ -79,14 +79,6 @@ In addition to the standard unit tests, Intel® DPDK vSwitch extends the testsuit
 
 ______
 
-## QEMU
-
-The IVSHM model has been validated only on QEMU v1.4.0 and above. This limitation is due to a known bug in earlier versions (such as v1.1), which prevents mapping of hugepages of size > 256 MB. Further modifications were added to allow multiple IVSHM files to be passed into the command line.
-
-QEMU is added as an Intel® DPDK secondary process, attempting to run a secondary process before a primary process will result in a segfault. This behavior is standard for Intel® DPDK applications.
-
-______
-
 ## ovs-vswitchd
 
 Not all functionality that is supported by Open vSwitch is supported by the Intel® DPDK vSwitch.

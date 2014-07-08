@@ -224,8 +224,8 @@ cp -aL <DPDK_DIR>/* /tmp/qemu_share/DPDK
 **Note:** QEMU will fail if `ovdk-dpdk` is not already running. The following command line will launch QEMU with two vhost enabled virtio devices. It is important to note that the tap device names should be **identical** to the ovdk-dpdk port names:
 
 ```bash
-./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4  \
-  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 4096M -smp 2 \
+./qemu/x86_64-softmmu/qemu-system-x86_64 -cpu host -boot c                   \
+  -hda <qemu_imagename.qcow2> -snapshot -m 4096M -smp 2                      \
   --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid     \
   -drive file=fat:rw:/tmp/qemu_share,snapshot=off                            \
   -monitor unix:/tmp/vm1monitor,server,nowait                                \
