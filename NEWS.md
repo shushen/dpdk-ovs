@@ -6,6 +6,9 @@
   core.
 - Add support for portmask argument for physical devices
 - Port for use with the version of DPDK available from DPDK.org
+- QEMU
+  - Convert 'qemu' folder to a subtree
+  - Upgrade from v1.4.0 to v1.6.2, removing QEMU support for legacy VirtIO in the process
 
 # v1.0 - May 2014
 
