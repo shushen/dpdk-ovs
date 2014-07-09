@@ -350,9 +350,18 @@ ivshmem_mngr_share_vport_client(const char *metadata_name, const char *port_name
 	ring = ovs_vport_client_lookup_free_q(port_name);
 	if (ring == NULL)
 		return -1;
-	ring = ovs_vport_client_lookup_free_q(port_name);
 	if (rte_ivshmem_metadata_add_ring(ring, metadata_name) < 0) {
 		RTE_LOG(ERR, APP, "Failed adding free_q to metadata '%s'\n",
+				metadata_name);
+		return -1;
+	}
+
+	/* ALLOC queue */
+	ring = ovs_vport_client_lookup_alloc_q(port_name);
+	if (ring == NULL)
+		return -1;
+	if (rte_ivshmem_metadata_add_ring(ring, metadata_name) < 0) {
+		RTE_LOG(ERR, APP, "Failed adding alloc_q to metadata '%s'\n",
 				metadata_name);
 		return -1;
 	}

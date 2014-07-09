@@ -105,6 +105,7 @@ ovdk_vport_vhost_port_init(struct vport_info *vport_info)
 		port_out_params->ops = &rte_port_vhost_writer_ops;
 		port_out_params->arg_create = port_writer_params;
 		port_out_params->f_action = ovdk_stats_port_out_update;
+		port_out_params->f_action_bulk = ovdk_stats_port_out_update_bulk;
 		port_out_params->arg_ah = &vport_info->vportid;
 	}
 

@@ -91,14 +91,7 @@ int total_ports = 0;
 int
 ovdk_vport_phy_init(void)
 {
-	if (
-#ifdef RTE_LIBRTE_IGB_PMD
-	    (rte_igb_pmd_init() < 0) ||
-#endif
-#ifdef RTE_LIBRTE_IXGBE_PMD
-	    (rte_ixgbe_pmd_init() < 0) ||
-#endif
-	    (rte_eal_pci_probe() < 0 ))
+	if (rte_eal_pci_probe() < 0 )
 		return -1;
 
 	/* get total number of ports */
@@ -195,6 +188,7 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 		port_out_params->ops = &rte_port_ethdev_writer_ops;
 		port_out_params->arg_create = port_writer_params;
 		port_out_params->f_action = ovdk_stats_port_out_update;
+		port_out_params->f_action_bulk = ovdk_stats_port_out_update_bulk;
 		port_out_params->arg_ah = &vport_info->vportid;
 	}
 

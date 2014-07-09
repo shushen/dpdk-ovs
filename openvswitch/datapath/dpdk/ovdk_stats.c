@@ -593,7 +593,24 @@ ovdk_stats_vswitch_control_overrun_get(void)
  * action handlers.
  */
 int
-ovdk_stats_port_out_update(struct rte_mbuf **pkts __rte_unused,
+ovdk_stats_port_out_update(struct rte_mbuf *pkt __rte_unused,
+                           uint64_t *pkts_mask __rte_unused,
+                           void *arg)
+{
+	uint32_t vportid = *(uint32_t *)arg;
+
+	ovdk_stats_vport_tx_increment(vportid, 1);
+
+	return 0;
+}
+/*
+ * Wrapper for 'tx increment' function.
+ *
+ * Wrap the 'tx increment' function so that it can be used by the 'rte_port'
+ * bulk action handlers.
+ */
+int
+ovdk_stats_port_out_update_bulk(struct rte_mbuf **pkts __rte_unused,
                            uint64_t *pkts_mask,
                            void *arg)
 {

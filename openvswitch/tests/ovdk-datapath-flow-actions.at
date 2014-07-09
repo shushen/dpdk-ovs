@@ -1,0 +1,27 @@
+#
+# Wrapper macro for groups of dpif-dpdk-flow-table tests
+#
+# Accepts two parameters: a test group name ($1) and a list of test names to
+# run against the executable ($2).
+#
+m4_define([TEST_OVDK_DATAPATH_FLOW_ACTIONS],
+  [AT_BANNER([ovdk-datapath -- flow-actions -- $1])
+  m4_foreach(
+    [testname],
+    [$2],
+    [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
+     AT_KEYWORDS(dpdk datapath-actions flow-actions)
+     AT_SKIP_IF([test "$HAVE_DPDK" = no])
+     AT_CHECK([sudo $srcdir/test-ovdk-datapath-flow-actions -c 1 -n 4 -- testname], [0], [ignore], [])
+     AT_CLEANUP])])
+#
+# Tests
+#
+TEST_OVDK_DATAPATH_FLOW_ACTIONS([flow-add], [
+    flow-add-default,
+    flow-add-failure])
+
+TEST_OVDK_DATAPATH_FLOW_ACTIONS([flow-del], [flow-del-default])
+
+TEST_OVDK_DATAPATH_FLOW_ACTIONS([flow-get], [
+		flow-get-default])

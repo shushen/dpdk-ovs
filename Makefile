@@ -55,13 +55,11 @@ export NUMPROC=$(shell cat /proc/cpuinfo | grep processor | wc -l)
 #Directories########################
 export ROOT_DIR := $(CURDIR)
 export DPDK_DIR := $(RTE_SDK)
+export DOC_DIR := $(ROOT_DIR)/docs
 export OVS_DIR := $(ROOT_DIR)/openvswitch
 export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
-export KNI_DIR := $(ROOT_DIR)/guest/kni/kni_client
-export KNI_PATCH := $(ROOT_DIR)/guest/kni/rte_kni_module_1_6.patch
 export MEMNIC_PATCH := $(ROOT_DIR)/guest/memnic/memnic_set_mac_address.patch
-
 #End Directories####################
 
 #WRL Build Variables################
@@ -72,7 +70,7 @@ endif
 
 #Targets with Dependencies##########
 .PHONY: all ivshm-deps ovs-deps qemu-deps
-all: dpdk ovs-deps qemu-deps ivshm-deps kni-deps
+all: dpdk ovs-deps qemu-deps ivshm-deps
 
 ovs-deps: dpdk config-ovs
 	cd $(OVS_DIR) && $(MAKE) -j $(NUMPROC) && cd $(ROOT_DIR)
@@ -83,16 +81,14 @@ qemu-deps: dpdk config-qemu
 ivshm-deps: dpdk
 	cd $(IVSHM_DIR) && $(MAKE) -j $(NUMPROC) && cd $(ROOT_DIR)
 
-kni-deps: dpdk
-	cd $(KNI_DIR) && $(MAKE) -j $(NUMPROC) && cd $(ROOT_DIR)
 #End Targets with Dependencies######
 
 #Targets for Configuration###########
 #These do not include a make and can therefore be used with tools.
-.PHONY: config patch-dpdk-kni clean-patch-dpdk-kni patch-memnic clean-patch-memnic config-dpdk config-ovs config-qemu
+.PHONY: config patch-memnic clean-patch-memnic config-dpdk config-ovs config-qemu
 config: config-dpdk config-ovs config-qemu
 
-config-dpdk: patch-dpdk-kni patch-memnic
+config-dpdk: patch-memnic
 	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) config T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 config-ovs:
@@ -103,8 +99,8 @@ config-qemu:
 #End Targets for Configuration#######
 
 #Targets for Clean##################
-.PHONY: clean clean-qemu clean-ivshm clean-kni clean-ovs clean-dpdk clean-patch-dpdk-kni clean-patch-memnic
-clean: config-dpdk clean-ivshm clean-kni clean-ovs clean-qemu clean-patch-dpdk-kni clean-patch-memnic clean-dpdk
+.PHONY: clean clean-qemu clean-ivshm clean-ovs clean-dpdk clean-patch-memnic
+clean: config-dpdk clean-ivshm clean-ovs clean-qemu clean-patch-memnic clean-dpdk
 
 clean-dpdk:
 	cd $(DPDK_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
@@ -118,9 +114,6 @@ clean-ovs:
 clean-ivshm:
 	cd $(IVSHM_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
 
-clean-kni:
-	cd $(KNI_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
-
 #End Targets for Clean##############
 
 #Targets for Check##################
@@ -133,7 +126,7 @@ check-ovs:
 #End Targets for Check##############
 
 #Simple Targets#####################
-.PHONY: dpdk ivshm kni ovs qemu
+.PHONY: dpdk ivshm ovs qemu docs
 
 dpdk: config-dpdk
 	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) install T=$(RTE_TARGET) && cd $(ROOT_DIR)
@@ -147,28 +140,9 @@ qemu:
 ivshm: ovs
 	cd $(IVSHM_DIR) && $(MAKE) && cd $(ROOT_DIR)
 
-kni: ovs
-	cd $(KNI_DIR) && $(MAKE) && cd $(ROOT_DIR)
-
+docs:
+	$(MAKE) -C $(DOC_DIR)
 #End Simple Targets#################
-
-#KNI patching#######################
-patch-dpdk-kni:
-	@if patch -N -p1 -d $(DPDK_DIR) --dry-run --silent <$(KNI_PATCH) 2>&1 >/dev/null; then \
-		echo "Applying KNI patch"; \
-		patch -N -p1 -d $(DPDK_DIR) <$(KNI_PATCH); \
-	else \
-		echo "KNI patch doesn't apply. If the patch was already applied ignore this message."; \
-	fi
-
-clean-patch-dpdk-kni:
-	@if patch -R -N -p1 -d $(DPDK_DIR) --dry-run --silent <$(KNI_PATCH) 2>&1 >/dev/null; then \
-		echo "Reversing KNI patch"; \
-		patch -R -N -p1 -d $(DPDK_DIR) <$(KNI_PATCH); \
-	else \
-		echo "KNI patch doesn't reverse. If the patch was not already applied ignore this message."; \
-	fi
-#End KNI patching###################
 
 #MEMNIC patching#######################
 patch-memnic:
@@ -181,7 +155,7 @@ patch-memnic:
 
 clean-patch-memnic:
 	@if patch -R -N -p1 -d $(MEMNIC_DIR) --dry-run --silent <$(MEMNIC_PATCH) 2>&1 >/dev/null; then \
-		echo "Reversing KNI patch"; \
+		echo "Reversing MEMNIC patch"; \
 		patch -R -N -p1 -d $(MEMNIC_DIR) <$(MEMNIC_PATCH); \
 	else \
 		echo "MEMNIC patch doesn't reverse. If the patch was not already applied ignore this message."; \

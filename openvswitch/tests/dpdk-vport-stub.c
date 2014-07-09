@@ -34,133 +34,9 @@
 
 #include <rte_string_fns.h>
 
-#include "vport.h"
-
-#define MAX_BUFS               100
-#define MAX_VPORTS             256
-
-struct rte_mbuf *buf_array[MAX_VPORTS][MAX_BUFS] = {NULL};
-
-int buf_tail[MAX_VPORTS] = {0};
-int buf_head[MAX_VPORTS] = {0};
-
-uint16_t
-receive_from_vport(uint32_t portid, struct rte_mbuf **bufs)
-{
-	int count = 0;
-	int i = 0;
-	int head = buf_head[portid];
-	int tail = buf_tail[portid];
-
-	/* check how many buffers can be received */
-	count = tail - head;
-
-	/* only receive PKT_BURST_SIZE as maximum */
-	if (count > PKT_BURST_SIZE)
-		count = PKT_BURST_SIZE;
-
-	for (i = 0; i < count; i++) {
-		bufs[i] = buf_array[portid][head];
-		head = ++buf_head[portid];
-	}
-
-	return count;
-}
-
-int
-send_to_vport(uint32_t portid, struct rte_mbuf *buf)
-{
-	int tail = buf_tail[portid]++;
-
-	/* add one buffer to buf structure and update index */
-	buf_array[portid][tail] = buf;
-	return 0;
-}
-
-void
-vport_init(void)
-{
-	/* init and fini will both re-initialize buf pointers and indices */
-	vport_fini();
-	return;
-}
-
-void
-vport_fini(void)
-{
-	int bufs = 0;
-	int ports = 0;
-
-	/* initialize all buf pointers and indices to zero */
-	for (bufs = 0; bufs < MAX_BUFS; bufs++)
-		for (ports = 0; ports < MAX_VPORTS; ports++) {
-			buf_array[ports][bufs] = NULL;
-			buf_tail[ports] = 0;
-			buf_head[ports] = 0;
-		}
-
-	return;
-}
-
-void
-vport_set_name(unsigned vportid, const char *fmt, ...)
-{
-}
-
-char *
-vport_get_name(unsigned vportid)
-{
-	return NULL;
-}
-
-uint32_t
-vport_name_to_portid(const char *name) {
-	return 0;
-}
-
-enum vport_type
-vport_get_type(unsigned vportid){
-	return 0;
-}
-
-uint32_t
-vport_next_available_index(enum vport_type type)
-{
-	return 0;
-}
-
-bool
-vport_id_is_valid(unsigned vportid, enum vport_type type){
-	return true;
-}
-
-bool
-vport_is_enabled(unsigned vportid)
-{
-	return 1;
-}
-
-int
-vport_attach(unsigned vportid, const char *name)
-{
-	return 0;
-}
-
-bool
-vport_exists(unsigned vportid)
-{
-	return  0;
-}
-
-void
-vport_enable(unsigned vportid)
-{
-}
-
-void
-vport_disable(unsigned vportid)
-{
-}
+#include "rte_config.h"
+#include "ovdk_vport_types.h"
+#include "ovdk_vport_info.h"
 
 static struct rte_ring *
 create_ring(const char *name)
@@ -179,23 +55,39 @@ create_vport_client(struct vport_info *vport, const char *port_name)
 	struct vport_client *client;
 	char ring_name[RTE_RING_NAMESIZE];
 
-	vport->type = VPORT_TYPE_CLIENT;
+	vport->type = OVDK_VPORT_TYPE_CLIENT;
 	rte_snprintf(vport->name, sizeof(vport->name), port_name);
 
 	client = &vport->client;
 
 	/* Create rings and store their names */
 	rte_snprintf(ring_name, sizeof(ring_name), "%sRX", port_name);
-	client->rx_q = create_ring(ring_name);
+	rte_snprintf(client->port_reader_client_params.rx_ring_name,
+	             sizeof(client->port_reader_client_params.rx_ring_name),
+	             ring_name);
+	create_ring(ring_name);
 	rte_snprintf(client->ring_names.rx, sizeof(client->ring_names.rx), ring_name);
 
 	rte_snprintf(ring_name, sizeof(ring_name), "%sTX", port_name);
-	client->tx_q = create_ring(ring_name);
+	rte_snprintf(client->port_writer_client_params.tx_ring_name,
+	             sizeof(client->port_writer_client_params.tx_ring_name),
+	             ring_name);
+	create_ring(ring_name);
 	rte_snprintf(client->ring_names.tx, sizeof(client->ring_names.tx), ring_name);
 
 	rte_snprintf(ring_name, sizeof(ring_name), "%sFREE", port_name);
-	client->free_q = create_ring(ring_name);
+	rte_snprintf(client->port_reader_client_params.free_ring_name,
+	             sizeof(client->port_reader_client_params.free_ring_name),
+	             ring_name);
+	create_ring(ring_name);
 	rte_snprintf(client->ring_names.free, sizeof(client->ring_names.free), ring_name);
+
+	rte_snprintf(ring_name, sizeof(ring_name), "%sALLOC", port_name);
+	rte_snprintf(client->port_reader_client_params.alloc_ring_name,
+	             sizeof(client->port_reader_client_params.alloc_ring_name),
+	             ring_name);
+	create_ring(ring_name);
+	rte_snprintf(client->ring_names.alloc, sizeof(client->ring_names.alloc), ring_name);
 }
 
 static const struct rte_memzone *
@@ -209,43 +101,3 @@ create_memzone(const char *name)
 	return mz;
 }
 
-void
-create_vport_kni(struct vport_info *vport, const char *port_name)
-{
-	struct vport_kni *kni;
-	char mz_name[RTE_MEMZONE_NAMESIZE];
-
-	vport->type = VPORT_TYPE_KNI;
-	rte_snprintf(vport->name, sizeof(vport->name), port_name);
-
-	kni = &vport->kni;
-
-	/* Create memzones and store their names */
-	rte_snprintf(mz_name, sizeof(mz_name), "%sTX", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.tx, sizeof(kni->fifo_names.tx), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sRX", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.rx, sizeof(kni->fifo_names.rx), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sALLOC", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.alloc, sizeof(kni->fifo_names.alloc), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sFREE", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.free, sizeof(kni->fifo_names.free), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sRESP", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.resp, sizeof(kni->fifo_names.resp), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sREQ", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.req, sizeof(kni->fifo_names.req), mz_name);
-
-	rte_snprintf(mz_name, sizeof(mz_name), "%sSYNC", port_name);
-	create_memzone(mz_name);
-	rte_snprintf(kni->fifo_names.sync, sizeof(kni->fifo_names.sync), mz_name);
-}

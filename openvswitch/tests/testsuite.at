@@ -1,6 +1,7 @@
 AT_INIT
 
 AT_COPYRIGHT([Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+Copyright (c) 2014 Intel Corporation.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -108,9 +109,14 @@ m4_include([tests/ovs-xapi-sync.at])
 m4_include([tests/interface-reconfigure.at])
 m4_include([tests/stp.at])
 m4_include([tests/vlog.at])
-m4_include([tests/netdev-dpdk.at])
+
+# DPDK tests
+if HAVE_DPDK
+m4_include([tests/dpif-dpdk-vport-table.at])
+m4_include([tests/dpif-dpdk-flow-table.at])
 m4_include([tests/dpif-dpdk.at])
-m4_include([tests/dpdk-datapath.at])
-m4_include([tests/ovs-vport.at])
-m4_include([tests/dpdk-link.at])
-m4_include([tests/memnic.at])
+m4_include([tests/multicore-dpif-dpdk.at])
+m4_include([tests/netdev-dpdk.at])
+m4_include([tests/ovdk-datapath-flow-actions.at])
+endif
+

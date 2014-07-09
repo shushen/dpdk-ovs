@@ -42,7 +42,9 @@
 #include <rte_mbuf.h>
 
 #include "ofpbuf.h"
-#include "flow.h"
+
+#include "ofpbuf_helper.h"
+#include "ovdk_flow.h"
 
 /* We declare a struct ofpbuf per core as each thread may do an action
  * simultaneously and while the ofbuf itself is merely overlayed on top
@@ -55,7 +57,7 @@ struct ofpbuf buf[RTE_MAX_LCORE];
 static int vlan_tagged(struct rte_mbuf *mbuf);
 static int tcp_pkt(struct ipv4_hdr *ipv4_hdr);
 
-void * overlay_ofpbuf(struct rte_mbuf *mbuf)
+void *overlay_ofpbuf(struct rte_mbuf *mbuf)
 {
 	const unsigned id = rte_lcore_id();
 
@@ -66,18 +68,18 @@ void * overlay_ofpbuf(struct rte_mbuf *mbuf)
 	buf[id].l2 = mbuf->pkt.data;
 
 	if (vlan_tagged(mbuf))
-		buf[id].l3 = buf[id].l2 + sizeof(struct ether_hdr)
+		buf[id].l3 = (uint8_t *)buf[id].l2 + sizeof(struct ether_hdr)
 		                        + sizeof(struct vlan_hdr);
 	else
-		buf[id].l3 = buf[id].l2 + sizeof(struct ether_hdr);
+		buf[id].l3 = (uint8_t *)buf[id].l2 + sizeof(struct ether_hdr);
 
-	buf[id].l4 = buf[id].l3 + IPV4_HEADER_SIZE((struct ipv4_hdr *)buf[id].l3);
+	buf[id].l4 = (uint8_t *)buf[id].l3 + IPV4_HEADER_SIZE((struct ipv4_hdr *)buf[id].l3);
 
 	/* Only TCP and UDP set actions are supported */
 	if (tcp_pkt(buf[id].l4))
-		buf[id].l7 = buf[id].l4 + sizeof(struct tcp_hdr);
+		buf[id].l7 = (uint8_t *)buf[id].l4 + sizeof(struct tcp_hdr);
 	else
-		buf[id].l7 = buf[id].l4 + sizeof(struct udp_hdr);
+		buf[id].l7 = (uint8_t *)buf[id].l4 + sizeof(struct udp_hdr);
 
 	return &buf[id];
 }

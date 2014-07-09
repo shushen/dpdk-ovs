@@ -33,6 +33,9 @@
  */
 
 #include <config.h>
+#include <string.h>
+#include <assert.h>
+
 #include <rte_config.h>
 #include <rte_mbuf.h>
 #include <rte_memcpy.h>
@@ -42,64 +45,53 @@
 #include <rte_memzone.h>
 #include <rte_ether.h>
 #include <rte_byteorder.h>
-#include <linux/openvswitch.h>
-#include <getopt.h>
 
-#include "common.h"
+#include "command-line.h"
+#include "timeval.h"
+#include "util.h"
+#include "vlog.h"
+
 #include "netdev-provider.h"
 #include "packets.h"
-#include "vlog.h"
 #include "netdev-dpdk.h"
 #include "dpif-dpdk.h"
 
-#include <string.h>
-#include <assert.h>
+struct netdev netdev;
+struct netdev *netdev_p = &netdev;
+struct netdev **netdevp = &netdev_p;
 
+void test_netdev_dpdk_change_seq(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 
-void test_netdev_dpdk_change_seq(struct netdev *netdev_p);
-
-int
-main(int argc, char *argv[])
-{
-	struct netdev netdev;
-	struct netdev *netdev_p = &netdev;
-	struct netdev **netdevp = &netdev_p;
-	int c = 0;
-
-	netdev_open("br0", "dpdkphy", netdevp);
-
-	while(1)
-	{
-		static struct option long_options[] =
-		{
-			{"netdev_dpdk_test_change_seq", no_argument, 0, 'a'},
-			{0, 0, 0, 0}
-		};
-		int option_index = 0;
-		c = getopt_long(argc, argv, "a", long_options, &option_index);
-
-		if (c == -1)
-			break;
-
-		switch (c)
-		{
-			case 'a':
-			test_netdev_dpdk_change_seq(netdev_p);
-			break;
-
-			default:
-			abort();
-		}
-	}
-
-	netdev_close(netdev_p);
-	return 0;
-}
-
-void test_netdev_dpdk_change_seq(struct netdev *netdev_p)
+void
+test_netdev_dpdk_change_seq(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 {
 	int result = -1;
 
 	result = netdev_p->netdev_class->change_seq(netdev_p);
 	assert(result == 0);
+}
+
+static const struct command commands[] = {
+	{"change-seq", 0, 0, test_netdev_dpdk_change_seq},
+	{NULL, 0, 0, NULL},
+};
+
+int
+main(int argc, char *argv[])
+{
+	set_program_name(argv[0]);
+	vlog_set_levels(NULL, VLF_ANY_FACILITY, VLL_EMER);
+	vlog_set_levels(NULL, VLF_CONSOLE, VLL_DBG);
+
+	time_alarm(10);
+
+	/* Initialise system */
+	netdev_open("br0", "dpdkphy", netdevp);
+
+	run_command(argc - 1, argv + 1, commands);
+
+	/* Cleanup system */
+	netdev_close(netdev_p);
+
+	return 0;
 }

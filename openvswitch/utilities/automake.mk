@@ -4,9 +4,6 @@ bin_PROGRAMS += \
 	utilities/ovs-dpctl \
 	utilities/ovs-ofctl \
 	utilities/ovs-vsctl
-if HAVE_DPDK
-bin_PROGRAMS += utilities/ovs-ivshm-mngr
-endif
 bin_SCRIPTS += utilities/ovs-pki
 if HAVE_PYTHON
 bin_SCRIPTS += \
@@ -142,6 +139,7 @@ include utilities/bugtool/automake.mk
 
 # Build IVSHM manager.
 if HAVE_DPDK
+bin_PROGRAMS += utilities/ovs-ivshm-mngr
 utilities_ovs_ivshm_mngr_SOURCES = utilities/ovs-ivshm-mngr.c
 utilities_ovs_ivshm_mngr_SOURCES += datapath/dpdk/ovs-vport.c
 utilities_ovs_ivshm_mngr_CFLAGS = -iquote ./datapath/dpdk

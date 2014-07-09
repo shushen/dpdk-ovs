@@ -65,13 +65,17 @@ TESTSUITE_AT = \
 	tests/ovs-xapi-sync.at \
 	tests/stp.at \
 	tests/interface-reconfigure.at \
-	tests/vlog.at \
-	tests/dpdk-datapath.at \
-	tests/ovs-vport.at \
-	tests/dpif-dpdk.at \
+	tests/vlog.at
+if HAVE_DPDK
+TESTSUITE_AT += \
+	tests/dpif-dpdk-vport-table.at \
 	tests/netdev-dpdk.at \
-	tests/dpdk-link.at \
-	tests/memnic.at
+	tests/dpif-dpdk-flow-table.at \
+	tests/ovdk-datapath-flow-actions.at \
+	tests/dpif-dpdk.at
+	tests/multicore-dpif-dpdk.at
+endif
+
 TESTSUITE = $(srcdir)/tests/testsuite
 DISTCLEANFILES += tests/atconfig tests/atlocal
 
@@ -111,8 +115,6 @@ valgrind_wrappers = \
 	tests/valgrind/test-byte-order \
 	tests/valgrind/test-classifier \
 	tests/valgrind/test-csum \
-	tests/valgrind/test-dpdk-link \
-	tests/valgrind/test-netdev_dpdk \
 	tests/valgrind/test-file_name \
 	tests/valgrind/test-flows \
 	tests/valgrind/test-hash \
@@ -193,29 +195,21 @@ tests_test_atomic_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-bundle
 tests_test_bundle_SOURCES = tests/test-bundle.c
-tests_test_bundle_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_bundle_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_bundle_LDADD += $(dpdk_libs)
+endif
 
 noinst_PROGRAMS += tests/test-classifier
 tests_test_classifier_SOURCES = tests/test-classifier.c
-tests_test_classifier_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_classifier_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_classifier_LDADD += $(dpdk_libs)
+endif
 
 noinst_PROGRAMS += tests/test-csum
 tests_test_csum_SOURCES = tests/test-csum.c
 tests_test_csum_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
-
-noinst_PROGRAMS += tests/test-dpdk-link
-tests_test_dpdk_link_SOURCES = tests/test-dpdk-link.c
-tests_test_dpdk_link_SOURCES += tests/dpdk-ring-stub.c
-tests_test_dpdk_link_LDADD = lib/libopenvswitch.a $(dpdk_libs)
-
-noinst_PROGRAMS += tests/test-dpif-dpdk
-tests_test_dpif_dpdk_SOURCES = tests/test-dpif-dpdk.c
-tests_test_dpif_dpdk_SOURCES += tests/dpdk-ring-stub.c
-tests_test_dpif_dpdk_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
-
-noinst_PROGRAMS += tests/test-netdev-dpdk
-tests_test_netdev_dpdk_SOURCES = tests/test-netdev-dpdk.c
-tests_test_netdev_dpdk_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-file_name
 tests_test_file_name_SOURCES = tests/test-file_name.c
@@ -223,7 +217,10 @@ tests_test_file_name_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-flows
 tests_test_flows_SOURCES = tests/test-flows.c
-tests_test_flows_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_flows_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_flows_LDADD += $(dpdk_libs)
+endif
 dist_check_SCRIPTS = tests/flowgen.pl
 
 noinst_PROGRAMS += tests/test-hash
@@ -260,7 +257,10 @@ tests_test_lockfile_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-multipath
 tests_test_multipath_SOURCES = tests/test-multipath.c
-tests_test_multipath_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_multipath_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_multipath_LDADD += $(dpdk_libs)
+endif
 
 noinst_PROGRAMS += tests/test-packets
 tests_test_packets_SOURCES = tests/test-packets.c
@@ -288,7 +288,10 @@ tests_test_unix_socket_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-odp
 tests_test_odp_SOURCES = tests/test-odp.c
-tests_test_odp_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_odp_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_odp_LDADD += $(dpdk_libs)
+endif
 
 noinst_PROGRAMS += tests/test-ovsdb
 tests_test_ovsdb_SOURCES = \
@@ -297,39 +300,6 @@ tests_test_ovsdb_SOURCES = \
 	tests/idltest.h
 EXTRA_DIST += tests/uuidfilt.pl tests/ovsdb-monitor-sort.pl
 tests_test_ovsdb_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
-
-# datapath tests
-noinst_PROGRAMS += tests/test-datapath
-tests_test_datapath_SOURCES = tests/test-datapath-dpdk.c
-tests_test_datapath_SOURCES += tests/ut.c
-tests_test_datapath_SOURCES += tests/dpdk-vport-stub.c
-tests_test_datapath_SOURCES += datapath/dpdk/jobs.c
-tests_test_datapath_SOURCES += datapath/dpdk/action.c
-tests_test_datapath_SOURCES += datapath/dpdk/datapath.c
-tests_test_datapath_SOURCES += datapath/dpdk/flow.c
-tests_test_datapath_SOURCES += datapath/dpdk/stats.c
-tests_test_datapath_SOURCES += datapath/dpdk/ofpbuf_helper.c
-tests_test_datapath_SOURCES += datapath/dpdk/veth.c
-tests_test_datapath_CFLAGS = -iquote ./datapath/dpdk
-tests_test_datapath_LDADD = lib/libopenvswitch.a $(dpdk_libs)
-
-# ovs-vport tests
-noinst_PROGRAMS += tests/test-ovs-vport
-tests_test_ovs_vport_SOURCES = tests/test-ovs-vport.c
-tests_test_ovs_vport_SOURCES += tests/ut.c
-tests_test_ovs_vport_SOURCES += tests/dpdk-vport-stub.c
-tests_test_ovs_vport_SOURCES += datapath/dpdk/ovs-vport.c
-tests_test_ovs_vport_CFLAGS = -iquote ./datapath/dpdk
-tests_test_ovs_vport_LDADD = $(dpdk_libs)
-
-# memnic tests
-noinst_PROGRAMS += tests/test-memnic
-tests_test_memnic_SOURCES = tests/test-memnic.c
-tests_test_memnic_SOURCES += tests/ut.c
-tests_test_memnic_SOURCES += datapath/dpdk/vport-memnic.c
-tests_test_memnic_SOURCES += datapath/dpdk/stats.c
-tests_test_memnic_CFLAGS = -iquote ./datapath/dpdk
-tests_test_memnic_LDADD = $(dpdk_libs)
 
 # used for ivshm-mngr integration tests
 noinst_PROGRAMS += tests/dummy-vports-info-mock
@@ -377,11 +347,67 @@ tests_test_uuid_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 noinst_PROGRAMS += tests/test-vconn
 tests_test_vconn_SOURCES = tests/test-vconn.c
-tests_test_vconn_LDADD = lib/libopenvswitch.a $(SSL_LIBS) $(dpdk_libs)
+tests_test_vconn_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+if HAVE_DPDK
+tests_test_vconn_LDADD += $(dpdk_libs)
+endif
 
 noinst_PROGRAMS += tests/test-byte-order
 tests_test_byte_order_SOURCES = tests/test-byte-order.c
 tests_test_byte_order_LDADD = lib/libopenvswitch.a
+
+# DPDK tests
+if HAVE_DPDK
+noinst_PROGRAMS += tests/test-dpif-dpdk-flow-table
+tests_test_dpif_dpdk_flow_table_SOURCES = tests/test-dpif-dpdk-flow-table.c
+tests_test_dpif_dpdk_flow_table_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+
+noinst_PROGRAMS += tests/test-dpif-dpdk-vport-table
+tests_test_dpif_dpdk_vport_table_SOURCES = tests/test-dpif-dpdk-vport-table.c
+tests_test_dpif_dpdk_vport_table_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+tests_test_dpif_dpdk_vport_table_LDADD += $(dpdk_libs)
+
+noinst_PROGRAMS += tests/test-dpif-dpdk
+tests_test_dpif_dpdk_SOURCES = tests/test-dpif-dpdk.c
+tests_test_dpif_dpdk_SOURCES += tests/dpdk-ring-stub.c
+tests_test_dpif_dpdk_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+tests_test_dpif_dpdk_LDADD += $(dpdk_libs)
+
+noinst_PROGRAMS += tests/test-multicore-dpif-dpdk
+tests_test_multicore_dpif_dpdk_SOURCES = tests/test-multicore-dpif-dpdk.c
+tests_test_multicore_dpif_dpdk_SOURCES += tests/dpdk-ring-stub.c
+tests_test_multicore_dpif_dpdk_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+tests_test_multicore_dpif_dpdk_LDADD += $(dpdk_libs)
+
+noinst_PROGRAMS += tests/test-netdev-dpdk
+tests_test_netdev_dpdk_SOURCES = tests/test-netdev-dpdk.c
+tests_test_netdev_dpdk_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+tests_test_netdev_dpdk_LDADD += $(dpdk_libs)
+
+noinst_PROGRAMS += tests/test-ovdk-datapath-flow-actions
+tests_test_ovdk_datapath_flow_actions_SOURCES = tests/test-ovdk-datapath-flow-actions.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += tests/ovdk-pipeline-stub.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_stats.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_datapath.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_mempools.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_hash.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vport.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vport_phy.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vport_client.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vport_bridge.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_flow.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vport_vhost.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_virtio-net.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_vhost-net-cdev.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/ovdk_args.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/rte_port_vhost.c
+tests_test_ovdk_datapath_flow_actions_SOURCES += datapath/dpdk/rte_port_ivshm.c
+tests_test_ovdk_datapath_flow_actions_CFLAGS = $(AM_CFLAGS)
+tests_test_ovdk_datapath_flow_actions_CFLAGS += -D_FILE_OFFSET_BITS=64
+tests_test_ovdk_datapath_flow_actions_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+tests_test_ovdk_datapath_flow_actions_LDADD += $(dpdk_libs)
+tests_test_ovdk_datapath_flow_actions_LDADD += -lfuse
+endif
 
 # Python tests.
 CHECK_PYFILES = \

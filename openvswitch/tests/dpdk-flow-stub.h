@@ -1,4 +1,4 @@
-/*
+/*-
  *   BSD LICENSE
  *
  *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
@@ -32,37 +32,9 @@
  *
  */
 
+#define DPDK_FLOW_STUB_STATS_PACKET_COUNT 1024
+#define DPDK_FLOW_STUB_STATS_BYTE_COUNT   65536
+#define DPDK_FLOW_STUB_STATS_USED         256
+#define DPDK_FLOW_STUB_STATS_TCP_FLAGS    128
 
-#ifndef _ARGS_H_
-#define _ARGS_H_
-
-#include "vport.h"
-
-#define PARAM_CONFIG "config"
-#define PARAM_STATS "stats"
-#define VHOST_CHAR_DEV_NAME "vhost_dev_basename"
-#define VHOST_CHAR_DEV_IDX "vhost_dev_index"
-#define VHOST_RETRY_COUNT "vhost_retry_count"
-#define VHOST_RETRY_WAIT "vhost_retry_wait"
-#define PARAM_CSC "client_switching_core"
-#define PARAM_KSC "kni_switching_core"
-
-#define MAX_CFG_PARAMS MAX_PHYPORTS
-struct cfg_params {
-	uint8_t port_id;
-	uint8_t queue_id;
-	uint8_t lcore_id;
-} __rte_cache_aligned;
-
-extern struct cfg_params *cfg_params;
-extern uint16_t nb_cfg_params;
-
-int parse_app_args(uint8_t max_ports, int argc, char *argv[]);
-int parse_config(const char *q_arg);
-
-/* global var for number of clients - extern in header */
-unsigned stats_display_interval; /* in seconds, set to 0 to disable update */
-unsigned client_switching_core;
-struct port_info port_cfg;
-
-#endif /* ifndef _ARGS_H_ */
+/* TODO - move relevevant flow stub code here from dpdk-ring-stub.c/h */

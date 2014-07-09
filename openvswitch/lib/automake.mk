@@ -295,6 +295,10 @@ lib_libopenvswitch_a_SOURCES += \
 	lib/dpdk-link.c \
 	lib/dpif-dpdk.c \
 	lib/dpif-dpdk.h \
+	lib/dpif-dpdk-vport-table.c \
+	lib/dpif-dpdk-vport-table.h \
+	lib/dpif-dpdk-flow-table.c \
+	lib/dpif-dpdk-flow-table.h \
 	lib/netdev-dpdk.c
 endif
 

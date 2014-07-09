@@ -1,4 +1,4 @@
-/*
+/*-
  *   BSD LICENSE
  *
  *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
@@ -32,61 +32,83 @@
  *
  */
 
-#include "common.h"
+#ifndef __DPDK_RING_STUB_H__
+#define __DPDK_RING_STUB_H__
 
-#define VSWITCHD_RINGSIZE   2048
-#define VSWITCHD_PACKET_RING_NAME  "MProc_Vswitchd_Packet_Ring"
-#define VSWITCHD_REPLY_RING_NAME   "MProc_Vswitchd_Reply_Ring"
-#define VSWITCHD_MESSAGE_RING_NAME "MProc_Vswitchd_Message_Ring"
-#define VSWITCHD_FREE_RING_NAME    "MProc_Vswitchd_Free_Ring"
-#define VSWITCHD_ALLOC_RING_NAME   "MProc_Vswitchd_Alloc_Ring"
-#define NO_FLAGS            0
-#define SOCKET0             0
-
-#define FLOW_CMD_FAMILY        0xF
-#define VPORT_CMD_FAMILY       0xE
-#define PACKET_CMD_FAMILY      0x1F
+#include "flow.h"
+#include "dpif.h"
+#include "datapath/dpdk/ovdk_datapath_messages.h"
+#include "datapath/dpdk/ovdk_action_types.h"
 
 #define action_output_build(action_struct, vport)   do { \
-                             (action_struct)->type = ACTION_OUTPUT; \
+                             (action_struct)->type = OVDK_ACTION_OUTPUT; \
                              (action_struct)->data.output.port = (vport);\
                          } while (0)
 
 #define action_drop_build(action_struct)   do { \
-                             (action_struct)->type = ACTION_NULL; \
+                             (action_struct)->type = OVDK_ACTION_NULL; \
                          } while (0)
 
 #define action_pop_vlan_build(action_struct)   do { \
-                             (action_struct)->type = ACTION_POP_VLAN; \
+                             (action_struct)->type = OVDK_ACTION_POP_VLAN; \
                          } while (0)
 
 #define action_push_vlan_build(action_struct, tci_)   do { \
-                             (action_struct)->type = ACTION_PUSH_VLAN; \
+                             (action_struct)->type = OVDK_ACTION_PUSH_VLAN; \
                              (action_struct)->data.vlan.tci = tci_;\
                          } while (0)
 
 #define action_null_build(action_struct)   do { \
-                             (action_struct)->type = ACTION_NULL; \
+                             (action_struct)->type = OVDK_ACTION_NULL; \
                          } while (0)
-#define NO_FLOW 0
-#define FLOW_EXISTS 1
+
+#define NUM_CORES 	RTE_MAX_LCORE
+
+#define DPDK_RING_STUB_IN_PORT      0
+#define DPDK_RING_STUB_NW_PROTO     IPPROTO_TCP
+#define DPDK_RING_STUB_TP_SRC       12345
+#define DPDK_RING_STUB_TP_DST       80
+#define DPDK_RING_STUB_NW_SRC       0x0a010101
+#define DPDK_RING_STUB_NW_DST       0x0a0101fe
+#define DPDK_RING_STUB_VLAN_TCI     0
+#define DPDK_RING_STUB_DL_SRC_0     0
+#define DPDK_RING_STUB_DL_SRC_1     1
+#define DPDK_RING_STUB_DL_SRC_2     2
+#define DPDK_RING_STUB_DL_SRC_3     3
+#define DPDK_RING_STUB_DL_SRC_4     4
+#define DPDK_RING_STUB_DL_SRC_5     5
+#define DPDK_RING_STUB_DL_DST_0     5
+#define DPDK_RING_STUB_DL_DST_1     4
+#define DPDK_RING_STUB_DL_DST_2     3
+#define DPDK_RING_STUB_DL_DST_3     2
+#define DPDK_RING_STUB_DL_DST_4     1
+#define DPDK_RING_STUB_DL_DST_5     0
+#define DPDK_RING_STUB_DL_TYPE      ETHER_TYPE_IPv4
+#define DPDK_RING_STUB_FLOW_HANDLE  0xdeadbeef
+
+#define DPDK_RING_STUB_ACTION_OUTPUT_0    0
+#define DPDK_RING_STUB_ACTION_OUTPUT_1    1
+#define DPDK_RING_STUB_ACTION_OUTPUT_2    2
 
 /* ring to receive messages from vswitchd */
-extern struct rte_ring *vswitchd_message_ring;
-extern struct rte_ring *vswitchd_reply_ring;
+extern struct rte_ring *vswitchd_request_ring[];
+extern struct rte_ring *vswitchd_reply_ring[];
+extern struct rte_ring *vswitchd_packet_ring[];
 
-void create_dpdk_port_add_reply(struct dpif_dpdk_message *reply,
-    uint32_t port_no, int return_code);
-void create_dpdk_port_del_reply(struct dpif_dpdk_message *reply,
-    int return_code);
-void create_dpdk_port_query_reply(struct dpif_dpdk_message *reply,
-    uint32_t port_no, char port_name[32], enum dpif_dpdk_vport_type type,
-    int return_code);
-
-void create_dpdk_flow_get_reply(struct dpif_dpdk_message *reply);
-void create_dpdk_flow_put_reply(struct dpif_dpdk_message *reply);
-void create_dpdk_flow_del_reply(struct dpif_dpdk_message *reply, uint8_t flow_exists);
+void create_dpdk_port_reply(struct ovdk_message *reply,
+                            int return_code);
+int enqueue_reply_on_reply_ring(struct ovdk_message reply, unsigned pipeline_id);
+int enqueue_upcall_on_exception_ring(uint8_t upcall_cmd, unsigned pipeline_id);
+int dequeue_packet_from_packet_ring(struct ovdk_action *actions, uint8_t *num_actions, unsigned pipeline_id);
+int dequeue_request_from_request_ring(struct ovdk_message **request, unsigned pipeline_id);
+void init_test_rings(unsigned mempool_size, uint64_t *mask);
+void create_dpif_flow_get_message(struct dpif_flow_put *get);
+void create_dpdk_flow_get_reply(struct ovdk_message *reply);
 void create_dpif_flow_put_message(struct dpif_flow_put *put);
-int enqueue_reply_on_reply_ring(struct dpif_dpdk_message reply);
+void create_dpdk_flow_put_reply(struct ovdk_message *reply, int error);
 void create_dpif_flow_del_message(struct dpif_flow_del *del);
-void init_test_rings(unsigned mempool_size);
+void create_dpdk_flow_del_reply(struct ovdk_message *reply);
+void create_dpdk_port_reply(struct ovdk_message *reply, int return_code);
+void create_dpif_execute_message(struct dpif_execute *execute);
+
+#endif /* __DPDK_RING_STUB_H__ */

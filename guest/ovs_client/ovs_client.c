@@ -41,19 +41,18 @@
 #include <ovs-vport.h>
 
 /* Number of packets to attempt to read from queue */
-#define PKT_READ_SIZE  32u
-
-#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
+#define PKT_READ_SIZE           32u
+#define RTE_LOGTYPE_APP         RTE_LOGTYPE_USER1
 
 #define enqueue_mbufs_to_be_freed(queue, mbufs, n) \
   rte_ring_enqueue_bulk(queue, mbufs, n)
 
-/* our client port name - tells us which rx queue to read, and tx
+/* Our client port name - tells us which rx queue to read, and tx
  * queue to write to. */
 static char *port_name = NULL;
 
 /*
- * print a usage message
+ * Print a usage message
  */
 static void
 usage(const char *progname)
@@ -78,7 +77,7 @@ parse_app_args(int argc, char *argv[])
 		switch (opt) {
 		case 'p':
 			if (ovs_vport_is_vport_name_valid(optarg) < 0)
-				return -1;
+				return -2;
 			port_name = optarg;
 			break;
 		default:
@@ -99,8 +98,10 @@ int main(int argc, char *argv[])
 	struct rte_ring *rx_ring = NULL;
 	struct rte_ring *tx_ring = NULL;
 	struct rte_ring *free_q = NULL;
+	struct rte_ring *alloc_q = NULL;
 	int retval = 0;
 	void *pkts[PKT_READ_SIZE];
+	void *af_pkts[PKT_READ_SIZE];
 	int ret = 0;
 	unsigned rx_count, free_count;
 	unsigned pkts_count;
@@ -111,19 +112,22 @@ int main(int argc, char *argv[])
 	argc -= retval;
 	argv += retval;
 
-	if (parse_app_args(argc, argv) < 0)
-		rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
+	if ((retval = parse_app_args(argc, argv)) < 0)
+		rte_exit(EXIT_FAILURE, "Invalid command-line arguments type %d\n", retval);
 
 	if (ovs_vport_lookup_vport_info() == NULL)
 		return -1;
 
-	if ((rx_ring = ovs_vport_client_lookup_rx_q(port_name)) == NULL)
+	if ((tx_ring = ovs_vport_client_lookup_rx_q(port_name)) == NULL)
 		return -1;
 
-	if ((tx_ring = ovs_vport_client_lookup_tx_q(port_name)) == NULL)
+	if ((rx_ring = ovs_vport_client_lookup_tx_q(port_name)) == NULL)
 		return -1;
 
 	if ((free_q = ovs_vport_client_lookup_free_q(port_name)) == NULL)
+		return -1;
+
+	if ((alloc_q = ovs_vport_client_lookup_alloc_q(port_name)) == NULL)
 		return -1;
 
 	RTE_LOG(INFO, APP, "Finished Process Init.\n");
@@ -132,6 +136,7 @@ int main(int argc, char *argv[])
 	printf("[Press Ctrl-C to quit ...]\n");
 
 	for (;;) {
+		/*Do the actual work of forwarding packets*/
 		rx_count = rte_ring_count(rx_ring);
 		free_count = rte_ring_free_count(free_q);
 
@@ -167,6 +172,20 @@ int main(int argc, char *argv[])
 		 */
 		if (ret == -ENOBUFS)
 			enqueue_mbufs_to_be_freed(free_q, pkts, pkts_count);
+
+		/*Simulate using the alloc queue*/
+		free_count = rte_ring_free_count(free_q);
+
+		pkts_count = RTE_MIN(free_count, PKT_READ_SIZE);
+
+		if (unlikely(pkts_count == 0))
+			continue;
+
+		ret = rte_ring_dequeue_bulk(alloc_q, af_pkts, pkts_count);
+		if (unlikely(ret < 0))
+			continue;
+
+		enqueue_mbufs_to_be_freed(free_q, af_pkts, pkts_count);
 	}
 
 	return 0;

@@ -47,7 +47,9 @@ void ovdk_stats_vport_clear_all(void);
 void ovdk_stats_vport_clear(unsigned vportid);
 void ovdk_stats_vswitch_clear(void);
 
-int ovdk_stats_port_out_update(struct rte_mbuf **pkts, uint64_t *pkts_mask,
+int ovdk_stats_port_out_update(struct rte_mbuf *pkts, uint64_t *pkts_mask,
+                               void *arg);
+int ovdk_stats_port_out_update_bulk(struct rte_mbuf **pkts, uint64_t *pkts_mask,
                                void *arg);
 int ovdk_stats_port_in_update(struct rte_mbuf **pkts, uint32_t n,
                               uint64_t *pkts_mask, void *arg);

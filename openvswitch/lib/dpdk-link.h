@@ -17,12 +17,13 @@
 #ifndef __DPDK_LINK_H
 #define __DPDK_LINK_H
 
-#include "dpif-dpdk.h"
+#include "ofpbuf.h"
+#include "datapath/dpdk/ovdk_datapath_messages.h"
 
-int dpdk_link_init(void);
-int dpdk_link_send(struct dpif_dpdk_message *, const struct ofpbuf *);
-int dpdk_link_send_bulk(struct dpif_dpdk_message *, const struct ofpbuf *const *, size_t);
-int dpdk_link_recv_reply(struct dpif_dpdk_message *);
-int dpdk_link_recv_packet(struct ofpbuf **, struct dpif_dpdk_upcall *);
+int dpdk_link_init(uint64_t *mask);
+int dpdk_link_send(struct ovdk_message *, const struct ofpbuf *, unsigned pipeline_id);
+int dpdk_link_send_bulk(struct ovdk_message *, const struct ofpbuf *const *, size_t, unsigned pipeline_id);
+int dpdk_link_recv_reply(struct ovdk_message *, unsigned pipeline_id);
+int dpdk_link_recv_packet(struct ofpbuf **, struct ovdk_upcall *, unsigned pipeline_id);
 
 #endif /* DPDK_LINK_H */

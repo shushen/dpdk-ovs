@@ -41,7 +41,8 @@
 #include <rte_string_fns.h>
 
 #include "ovs-vport.h"
-#include "vport-types.h"
+#include "ovdk_vport_info.h"
+#include "ovdk_mempools.h"
 
 static struct vport_info *stub_vports = NULL;
 static struct rte_mempool *pktmbuf_pool;
@@ -54,15 +55,13 @@ main(int argc, char *argv[])
 
 	static const struct rte_memzone *stub_vports_mz = NULL;
 
-	stub_vports_mz = rte_memzone_reserve(MZ_VPORT_INFO,
-			sizeof(struct vport_info) * MAX_VPORTS, rte_socket_id(), 0);
+	stub_vports_mz = rte_memzone_reserve(OVDK_MZ_VPORT_INFO,
+			sizeof(struct vport_info) * OVDK_MAX_VPORTS, rte_socket_id(), 0);
 	assert(stub_vports_mz != NULL);
 
 	stub_vports = stub_vports_mz->addr;
 	create_vport_client(&stub_vports[0], "Client1");
 	create_vport_client(&stub_vports[1], "Client2");
-	create_vport_kni(&stub_vports[2], "KNI0");
-	create_vport_kni(&stub_vports[3], "KNI1");
 
 	assert(stub_vports_mz == ovs_vport_lookup_vport_info());
 
@@ -76,6 +75,7 @@ main(int argc, char *argv[])
 
 	return 0;
 }
+
 
 
 

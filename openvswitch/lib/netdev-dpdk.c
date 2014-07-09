@@ -21,7 +21,6 @@
 
 #include <inttypes.h>
 
-#include "common.h"
 #include "netdev-provider.h"
 #include "packets.h"
 #include "vlog.h"
@@ -104,7 +103,7 @@ netdev_dpdk_get_etheraddr(const struct netdev *netdev_ OVS_UNUSED,
 
 static void
 netdev_stats_from_dpdk_vport_stats(struct netdev_stats *dst,
-                                   struct dpif_dpdk_vport_stats *src)
+                                   struct ovdk_port_stats *src)
 {
     dst->rx_packets = src->rx;
     dst->tx_packets = src->tx;
@@ -133,7 +132,7 @@ static int
 netdev_dpdk_get_stats(const struct netdev *netdev_,
                        struct netdev_stats *stats)
 {
-    struct dpif_dpdk_vport_stats reply;
+    struct ovdk_port_stats reply;
     int error = 0;
 
     DPDK_DEBUG()

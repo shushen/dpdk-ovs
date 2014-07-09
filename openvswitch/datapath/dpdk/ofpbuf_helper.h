@@ -35,7 +35,11 @@
 #ifndef __OFPBUF_HELPER_H__
 #define __OFPBUF_HELPER_H__
 
-void * overlay_ofpbuf(struct rte_mbuf *mbuf);
+#include <rte_mbuf.h>
+
+#include "ofpbuf.h"
+
+void *overlay_ofpbuf(struct rte_mbuf *mbuf);
 void update_mbuf(struct ofpbuf *ovs_pkt, struct rte_mbuf *mbuf);
 
 #endif

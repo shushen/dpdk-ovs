@@ -45,9 +45,6 @@
 
 #include "rte_port_ivshm.h"
 
-/* Macro for printing using RTE_LOG */
-#define RTE_LOGTYPE_PORT RTE_LOGTYPE_USER1
-
 /*
  * The maximum number of buffers we will allocate/free at a time on
  * to the alloc ring and the free ring respectively

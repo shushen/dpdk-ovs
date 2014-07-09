@@ -91,6 +91,15 @@ struct rte_ring *ovs_vport_client_lookup_tx_q(const char *port_name);
 struct rte_ring *ovs_vport_client_lookup_free_q(const char *port_name);
 
 /**
+ * Lookup the ALLOC queue of vport client named port_name.
+ *
+ * Returns the ALLOC rte_ring of vport client named port_name in case this
+ * is valid. Otherwise returns NULL.
+ * ovs_vport_lookup_vport() must have been called before.
+ */
+struct rte_ring *ovs_vport_client_lookup_alloc_q(const char *port_name);
+
+/**
  * Lookup the TX queue of vport KNI named port_name.
  *
  * Returns the TX rte_memzone of vport KNI named port_name in case this
@@ -154,27 +163,6 @@ const struct rte_memzone *ovs_vport_kni_lookup_req_fifo(const char *port_name);
 const struct rte_memzone *ovs_vport_kni_lookup_sync_fifo(const char *port_name);
 
 /**
- * Lookup the packet mempool.
- *
- * Returns the rte_mempool used to allocate mbufs in the host. In case of
- * failure return NULL.
- * This function can only be called on the *host*. DPDK IVSHMEM does not
- * share mempools only its memzone. When running on the *guest* use
- * ovs_vport_lookup_packet_mempools_memzone instead.
- */
-struct rte_mempool *ovs_vport_host_lookup_packet_mempool(void);
-
-/**
- * Lookup the packet mempool's memzone.
- *
- * Returns the rte_memzone associated to the packet mempool by doing a
- * rte_memzone_lookup("MP_" + PKTMBUF_POOL_NAME). In case of failure returns
- * NULL.
- * This function is meant to be used on the *guest* side.
- */
-const struct rte_memzone *ovs_vport_guest_lookup_packet_mempools_memzone(void);
-
-/**
  * Check if port_name is a valid vport name.
  *
  * Returns 0 in case port_name is a valid vport port name following the
@@ -182,4 +170,10 @@ const struct rte_memzone *ovs_vport_guest_lookup_packet_mempools_memzone(void);
  */
 int ovs_vport_is_vport_name_valid(const char *port_name);
 
+/**
+ * Lookup the host mempool
+ *
+ * Returns the host mempool or a null pointer on failure.
+ */
+struct rte_mempool *ovs_vport_host_lookup_packet_mempool(void);
 #endif  /* __OVS_VPORT_H_ */

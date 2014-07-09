@@ -8,10 +8,7 @@
 
 AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = datapath
-if HAVE_DPDK
-SUBDIRS += . datapath/dpdk datapath/dpdk/fd_link
-endif
+SUBDIRS = datapath datapath/dpdk/fd_link
 
 if HAVE_DPDK
 OVS_DIR = $(abs_top_srcdir)
@@ -23,18 +20,29 @@ dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
 dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
 
 dpdk_libs=\
-      $(dpdk_lib_dir)/librte_mbuf.a \
-      $(dpdk_lib_dir)/librte_eal.a \
-      $(dpdk_lib_dir)/librte_pmd_ring.a \
-      $(dpdk_lib_dir)/libethdev.a \
-      $(dpdk_lib_dir)/librte_cmdline.a \
-      $(dpdk_lib_dir)/librte_hash.a \
-      $(dpdk_lib_dir)/librte_lpm.a \
-      $(dpdk_lib_dir)/librte_mempool.a \
-      $(dpdk_lib_dir)/librte_ring.a \
-      $(dpdk_lib_dir)/librte_malloc.a \
-      $(dpdk_lib_dir)/librte_kni.a \
-      $(dpdk_lib_dir)/librte_ivshmem.a 
+	$(dpdk_lib_dir)/librte_mbuf.a \
+	$(dpdk_lib_dir)/librte_eal.a \
+	$(dpdk_lib_dir)/librte_hash.a \
+	$(dpdk_lib_dir)/librte_pmd_ring.a \
+	$(dpdk_lib_dir)/libethdev.a \
+	$(dpdk_lib_dir)/librte_cmdline.a \
+	$(dpdk_lib_dir)/librte_lpm.a \
+	$(dpdk_lib_dir)/librte_mempool.a \
+	$(dpdk_lib_dir)/librte_ring.a \
+	$(dpdk_lib_dir)/librte_malloc.a \
+	$(dpdk_lib_dir)/librte_kni.a \
+	$(dpdk_lib_dir)/librte_ivshmem.a \
+	$(dpdk_lib_dir)/librte_pipeline.a \
+	$(dpdk_lib_dir)/librte_table.a \
+	$(dpdk_lib_dir)/librte_pmd_e1000.a \
+	$(dpdk_lib_dir)/librte_pmd_ixgbe.a \
+	$(dpdk_lib_dir)/librte_pmd_vmxnet3_uio.a \
+	$(dpdk_lib_dir)/librte_pmd_virtio_uio.a \
+	$(dpdk_lib_dir)/librte_kvargs.a \
+	$(dpdk_lib_dir)/librte_acl.a \
+	$(dpdk_lib_dir)/librte_ip_frag.a \
+	$(dpdk_lib_dir)/librte_sched.a \
+	$(dpdk_lib_dir)/librte_port.a
 endif
 
 AM_CPPFLAGS = $(SSL_CFLAGS)
@@ -58,6 +66,7 @@ endif
 # Disable GCC flag that produces compilation warnings in DPDK
 if HAVE_DPDK
 AM_CFLAGS += -Wno-bad-function-cast
+AM_CFLAGS += -msse4.2
 endif
 
 # PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo
@@ -312,3 +321,6 @@ include xenserver/automake.mk
 include python/automake.mk
 include python/compat/automake.mk
 include tutorial/automake.mk
+if HAVE_DPDK
+include datapath/dpdk/automake.mk
+endif

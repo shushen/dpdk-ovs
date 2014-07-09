@@ -41,17 +41,18 @@
 #include <rte_mempool.h>
 #include <rte_string_fns.h>
 
-#include "vport-types.h"
+#include "ovdk_mempools.h"
+#include "ovdk_vport_info.h"
 #include "ovs-vport.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 #define client_vport_name_equal_to(client, client_name) \
-	(client.type == VPORT_TYPE_CLIENT					\
+	(client.type == OVDK_VPORT_TYPE_CLIENT					\
 	&& !strncmp(client.name, client_name, sizeof(client.name)))
 
 #define kni_vport_name_equal_to(kni, kni_name) 			\
-	(kni.type == VPORT_TYPE_KNI							\
+	(kni.type == OVDK_VPORT_TYPE_KNI							\
 	&& !strncmp(kni.name, kni_name, sizeof(kni.name)))
 
 #define ASSERT_VPORTS_NOT_NULL() assert(vports != NULL)
@@ -66,10 +67,14 @@ get_client_vport_by_name(const char *port_name)
 	int i = 0;
 	struct vport_client *client = NULL;
 
-	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
+	if ((ovs_vport_is_vport_name_valid(port_name)) < 0) {
+		RTE_LOG(ERR, APP,
+		        "Client vport name is invalid [%s]\n",
+		        port_name);
 		return NULL;
+	}
 
-	for (i = 0; i < MAX_VPORTS; i++) {
+	for (i = 0; i < OVDK_MAX_VPORTS; i++) {
 		if (client_vport_name_equal_to(vports[i], port_name)) {
 			client = &vports[i].client;
 			break;
@@ -89,7 +94,7 @@ get_kni_vport_by_name(const char *port_name)
 	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
 		return NULL;
 
-	for (i = 0; i < MAX_VPORTS; i++) {
+	for (i = 0; i < OVDK_MAX_VPORTS; i++) {
 		if (kni_vport_name_equal_to(vports[i], port_name)) {
 			kni = &vports[i].kni;
 			break;
@@ -130,13 +135,14 @@ ovs_vport_lookup_vport_info(void)
 		return vports_mz;
 	}
 
-	vports_mz = rte_memzone_lookup(MZ_VPORT_INFO);
+	vports_mz = rte_memzone_lookup(OVDK_MZ_VPORT_INFO);
 	if (vports_mz == NULL) {
 		RTE_LOG(ERR, APP, "Cannot find vport memzone\n");
 		return NULL;
 	}
 
 	vports = vports_mz->addr;
+
 	return vports_mz;
 }
 
@@ -151,7 +157,7 @@ ovs_vport_is_vport_client(const char *port_name)
 	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
 		return -1;
 
-	for (i = 0; i < MAX_VPORTS; i++)
+	for (i = 0; i < OVDK_MAX_VPORTS; i++)
 		if (client_vport_name_equal_to(vports[i], port_name))
 			return 0;
 	return -1;
@@ -167,7 +173,7 @@ ovs_vport_is_vport_kni(const char *port_name)
 	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
 		return -1;
 
-	for (i = 0; i < MAX_VPORTS; i++)
+	for (i = 0; i < OVDK_MAX_VPORTS; i++)
 		if (kni_vport_name_equal_to(vports[i], port_name))
 			return 0;
 	return -1;
@@ -182,6 +188,7 @@ ovs_vport_client_lookup_rx_q(const char *port_name)
 	ASSERT_VPORTS_NOT_NULL();
 
 	client = get_client_vport_by_name(port_name);
+
 	if (client != NULL)
 		ring = ring_lookup(client->ring_names.rx);
 
@@ -214,6 +221,21 @@ ovs_vport_client_lookup_free_q(const char *port_name)
 	client = get_client_vport_by_name(port_name);
 	if (client != NULL)
 		ring = ring_lookup(client->ring_names.free);
+
+	return ring;
+}
+
+struct rte_ring *
+ovs_vport_client_lookup_alloc_q(const char *port_name)
+{
+	struct vport_client *client = NULL;
+	struct rte_ring *ring = NULL;
+
+	ASSERT_VPORTS_NOT_NULL();
+
+	client = get_client_vport_by_name(port_name);
+	if (client != NULL)
+		ring = ring_lookup(client->ring_names.alloc);
 
 	return ring;
 }
@@ -322,6 +344,12 @@ ovs_vport_kni_lookup_sync_fifo(const char *port_name)
 	return mz;
 }
 
+inline int
+ovs_vport_is_vport_name_valid(const char *port_name)
+{
+	return vport_is_valid_name(port_name);
+}
+
 struct rte_mempool *
 ovs_vport_host_lookup_packet_mempool(void)
 {
@@ -332,16 +360,3 @@ ovs_vport_host_lookup_packet_mempool(void)
 	return mp;
 }
 
-const struct rte_memzone *
-ovs_vport_guest_lookup_packet_mempools_memzone(void)
-{
-	char mz_name[RTE_MEMZONE_NAMESIZE];
-	rte_snprintf(mz_name, sizeof(mz_name), "MP_%s", PKTMBUF_POOL_NAME);
-	return memzone_lookup(mz_name);
-}
-
-inline int
-ovs_vport_is_vport_name_valid(const char *port_name)
-{
-	return vport_is_valid_name(port_name);
-}
