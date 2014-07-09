@@ -1,1 +1,0 @@
-../../../openvswitch/datapath/dpdk/kni-types.h
