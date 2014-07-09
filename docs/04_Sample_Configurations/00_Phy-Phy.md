@@ -4,7 +4,7 @@ ______
 
 ## Overview
 
-This guide covers a Phy->Phy configuration using IVSHM vports:
+This guide covers a Phy->Phy configuration using physical NICs:
 
 ```
                                                          __
@@ -13,7 +13,7 @@ This guide covers a Phy->Phy configuration using IVSHM vports:
     |              +-=------------------+              |   |
     |              |                    v              |   |  host
     |   +--------------+            +--------------+   |   |
-    |   |   phy port   |  ovs_dpdk  |   phy port   |   |   |
+    |   |   phy port   |  ovs-dpdk  |   phy port   |   |   |
     +---+--------------+------------+--------------+---+ __|
                ^                           :
                |                           |
@@ -63,10 +63,10 @@ Add a bridge to the switch:
 Add ports to the bridge:
 
 ```bash
-./utilities/ovs-vsctl --no-wait add-port br0 port16 -- set Interface port16 \
-  type=dpdkphy ofport_request=16 option:port=1
-./utilities/ovs-vsctl --no-wait add-port br0 port17 -- set Interface port17 \
-  type=dpdkphy ofport_request=17 option:port=2
+./utilities/ovs-vsctl --no-wait add-port br0 port1 -- set Interface port1 \
+  type=dpdkphy ofport_request=1 option:port=0
+./utilities/ovs-vsctl --no-wait add-port br0 port2 -- set Interface port2 \
+  type=dpdkphy ofport_request=2 option:port=1
 ```
 
 Confirm the ports have been successfully added:
@@ -83,22 +83,21 @@ You should see something like this:
         Port "br0"
             Interface "br0"
                 type: internal
-        Port "port16"
-            Interface "port16"
+        Port "port1"
+            Interface "port1"
                 type: dpdkphy
                 options: {port="1"}
-        Port "port17"
-            Interface "port17"
+        Port "port2"
+            Interface "port2"
                 type: dpdkphy
                 options: {port="2"}
 ```
 
-Start `ovs_dpdk`:
+Start `ovs-dpdk`:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> -- -p 0x03 --stats=5 \
-  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/ovs-dpdk -c 0x0F -n 4 --proc-type primary \
+  --base-virtaddr=<virt_addr> -- --stats_core=0 --stats=5
 ```
 
 Start the Open vSwitch daemon:
@@ -118,11 +117,11 @@ Delete the default flow entries from the bridge:
 ./utilities/ovs-ofctl del-flows br0
 ```
 
-Add flow entries to switch packets from `port16` (Phy 0) to `port17` (Phy 1):
+Add flow entries to switch packets from `port1` (Phy 0) to `port2` (Phy 1):
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,\
-nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=1,dl_type=0x0800,nw_src=10.1.1.1,\
+nw_dst=10.1.1.254,idle_timeout=0,action=output:2
 ```
 
 ______
@@ -132,3 +131,5 @@ ______
 Start transmission of packets from the packet generator. If setup correctly, packets can be seen returning to the transmitting port from the DUT.
 
 ______
+
+© 2014, Intel Corporation. All Rights Reserved

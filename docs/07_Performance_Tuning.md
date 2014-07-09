@@ -32,17 +32,17 @@ ______
 
 ## Command Line Affinitisation
 
-For `ovs_dpdk`, substitute in this command:
+For `ovs-dpdk`, substitute in this command:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 --proc-type=primary -- -n 1 -p 0x3 --stats=1
-  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/build/ovs-dpdk -c 0x0c -n 4 --proc-type=primary -- \
+--stats_core=6 --stats=1
 ```
 
 Then for `ovs_client`, substitute in this command:
 
 ```bash
-./ovs_client -c 0x1 -n 4 -- -n 1
+./ovs_client -c 0x01 -n 4 -- -n 1
 ```
 
 **Note:** For all Intel® DPDK-enabled applications, the core mask option (`-c`) must be set so that no two processes have overlapping core masks.
@@ -54,10 +54,13 @@ ______
 | Process | Core | Core Mask | Comments |
 |:-------:|:----:|:---------:|:--------:|
 |Kernel           | 0 | 0x1 |All other CPUs isolated (`isolcpus` boot parameter)|
-|client_switching_core  | 1 | 0x2 |Affinity set in `ovs_dpdk` command line |
-|RX core          | 2 | 0x4 |Affinity set in `ovs_dpdk` command line |
-|RX core          | 3 | 0x8 |Affinity set in `ovs_dpdk` command line |
+|ovs-dpdk process | 2 | 0x4 |Affinity set in `ovs-dpdk` command line |
+|ovs-dpdk process | 3 | 0x8 |Affinity set in `ovs-dpdk` command line |
 |QEMU process VM1 VMCPU0 | 4 | 0x10 |`taskset -a <pid_of_qemu_process>` |
 |QEMU process VM1 VMCPU1 | 5 | 0x20 |`taskset -a <pid_of_qemu_process>` |
 |QEMU process VM2 VMCPU0 | 6 | 0x40 |`taskset -a <pid_of_qemu_process>` |
 |QEMU process VM2 VMCPU1 | 7 | 0x80 |`taskset -a <pid_of_qemu_process>` |
+
+______
+
+© 2014, Intel Corporation. All Rights Reserved

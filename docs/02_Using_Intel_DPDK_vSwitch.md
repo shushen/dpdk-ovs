@@ -2,21 +2,21 @@ Intel® DPDK vSwitch consists of a large number of interconnected utilities. See
 
 ______
 
-## ovs_dpdk
+## ovs-dpdk
 
-The `ovs_dpdk` application replaces the fastpath kernel switching module found in stock OVS with a DPDK-based userspace switching application. By building the switching logic on top of the Intel® DPDK library, packet switching throughput is significantly boosted - particularly for small packets. From an architectural perspective, `ovs_dpdk` is a datapath implementation that sits below a thin, dataplane interface (dpif) provider. This means the `ovs_dpdk` application essentially *is* Intel® DPDK vSwitch.
+The `ovs-dpdk` application replaces the fastpath kernel switching module found in stock OVS with a DPDK-based userspace switching application. By building the switching logic on top of the Intel® DPDK library, packet switching throughput is significantly boosted - particularly for small packets. From an architectural perspective, `ovs-dpdk` is a datapath implementation that sits below a thin, dataplane interface (dpif) provider. This means the `ovs-dpdk` application essentially *is* Intel® DPDK vSwitch.
 
-The `ovs_dpdk` application can be executed as follows:
+The `ovs-dpdk` application can be executed as follows:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk [eal] -- [args...]
+./datapath/dpdk/ovs-dpdk [eal] -- [args...]
 ```
 
 ### Args
 
 The Environment Abstraction Layer (EAL) arguments are required for all DPDK-enhanced applications. They consist of a number of environment specific values - what core to run on, how many threads to use etc.
 
-Of these, the `--base_addr` argument is particularly important. The purpose of this argument is to provide the EAL with a hint of where hugepages should be mapped to. Problems have been seen where secondary processes fail due to collisions with primary processes virtual address space. A good example of this behaviour is QEMU running as a secondary process. When QEMU starts, it loads all required shared libraries and these get mapped into their own virtual address space. Later in the execution, QEMU calls `rte_eal_init()` which attaches the running process to the primary processes hugepages. If these happened to be mapped to the same virtual addresses used by the shared libraries, these libraries will become unavailable due to its virtual address space being overwritten.
+Of these, the `--base_addr` argument is particularly important. The purpose of this argument is to provide the EAL with a hint of where hugepages should be mapped to. Problems have been seen where secondary processes fail due to collisions with a primary process' virtual address space. A good example of this behaviour is QEMU running as a secondary process. When QEMU starts, it loads all required shared libraries and these get mapped into their own virtual address space. Later in the execution, QEMU calls `rte_eal_init()` which attaches the running process to the primary process' hugepages. If these happened to be mapped to the same virtual addresses used by the shared libraries, these libraries will become unavailable due to its virtual address space being overwritten.
 
 The process of finding a valid virtual address to use with `--base_addr` is one based on trial and error. The virtual addresses can be taken from EAL's output to `stdout`. Once a "valid" virtual address is found it can be re-used over and over with guaranties that it will work.
 
@@ -26,54 +26,27 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
 
 * `--stats`
   If zero, statistics are not displayed. If nonzero, it represents the interval in seconds at which statistics are updated onscreen
-* `--client_switching_core`
-  CPU ID of the core on which the main switching loop will run
-* `-p PORTMASK`
-  Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID, that is, for a portmask of 0x3, ports 0 and 1 are configured
-* `-n NUM`
-  Number of client devices to configure
-* `-k NUM`
-  Number of KNI devices to configure
-* `-h NUM`
-  Number of Userspace-vHost devices to configure
-* `-v NUM`
-  Number of vEth devices to configure
-* `-m NUM`
-  Number of MEMNIC devices to configure
-* `--config (port,queue,lcore)[,(port,queue,lcore]`
-  Each port/queue/core group specifies the CPU ID of the core that will handle ingress traffic for the specified queue on the specified port
-* `-J NUM`
-  Maximum frame size which ovs_dpdk can handle in physical port, this will enable jumbo frame of the NIC
 
-In addition, the following parameters are available to configure the vHost devices.
-
-* `--vhost_dev_basename`
-  Set the basename for the vhost character device. If this is not modified then the character device will default to `/dev/vhost-net`
-* `--vhost_dev_index`
-  Set the index to be appended to the vhost character device name. This will only be used if the basename has also been modified
-* `--vhost_retry_count`
-  Set the number of retries when the destination queue is full. This may need to be tuned depending on the system
-* `--vhost_retry_wait`
-  Wait time in uSec when the destination queue is full. This may need to be tuned depending on the system
+* `--stats_core`
+  The ID of the core used to print statistics.
 
 ### Example Command
 
-An example configuration, with two physical ports, four KNI devices, and stats disabled:
+An example configuration, with two physical ports and stats disabled:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk -c 0x0f -n 4 -- -p 0x03 -k 4 --stats=0
-  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 -- -p 0x03 --stats_core=1 --stats=0
 ```
 
 ______
 
 ## ovs-ivshmem-mngr
 
-The IVSHM manager utility is used to share the Intel® DPDK objects - created on the host by `ovs_dpdk` - with guests. It makes use of the Intel® DPDK IVSHM API. Please consult the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg] for details on IVSHM.
+The IVSHM manager utility is used to share the Intel® DPDK objects - created on the host by `ovs-dpdk` - with guests. It makes use of the Intel® DPDK IVSHM API. Please consult the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg] for details on IVSHM.
 
-The IVSHM manager provides a flexible and easy to use interface that allows multiple combinations regarding what Intel® DPDK objects are shared with the guests. Only the port names specified in `ovs_dpdk` are needed. The utility will query the `ovs_dpdk` internal configuration and collect all Intel® DPDK ring and memzone information associated with the ports being shared. Finally, it will create the metadata and a command line to be used when running QEMU processes (i.e. starting guests). These command lines will be printed to the screen and stored in temporary files - one per guest - under the `/tmp` directory (for automation purposes).
+The IVSHM manager provides a flexible and easy to use interface that allows multiple combinations regarding what Intel® DPDK objects are shared with the guests. Only the port names specified in `ovs-dpdk` are needed. The utility will query the `ovs-dpdk` internal configuration and collect all Intel® DPDK ring and memzone information associated with the ports being shared. Finally, it will create the metadata and a command line to be used when running QEMU processes (i.e. starting guests). These command lines will be printed to the screen and stored in temporary files - one per guest - under the `/tmp` directory (for automation purposes).
 
-There are a some points to note about the IVSHM manager utility. Firstly, it must always be executed after `ovs_dpdk` is up and running and all ports have been both added *and* configured. An attempt to run it before this may cause undesired behavior. Secondly, it must be run as an Intel® DPDK secondary process. Failing to do so will cause the utility to exit with an error.
+There are a some points to note about the IVSHM manager utility. Firstly, it must always be executed after `ovs-dpdk` is up and running and all ports have been both added *and* configured. An attempt to run it before this may cause undesired behavior. Secondly, it must be run as an Intel® DPDK secondary process. Failing to do so will cause the utility to exit with an error.
 
 ### Args
 
@@ -102,7 +75,7 @@ In case of passing a non-valid input the IVSHM manager will fail with an error m
 ### Example Command
 
 ```bash
-./utilities/ovs-ivshmem-mngr meta:kniport0,ivshmporta
+./utilities/ovs-ivshmem-mngr meta:ivshmport0,ivshmportb
 ```
 
 ______
@@ -116,13 +89,13 @@ The Open vSwitch daemon application - `ovs-vswitchd` - "manages and controls any
 The version of `ovs-vswitchd` found in Intel® DPDK vSwitch is functionally identical to that found in stock Open vSwitch with one exception - it requires EAL parameters:
 
 ```bash
-./vswitchd/ovs-vswitchd [EAL] -- [database]
+./vswitchd/ovs-vswitchd [eal] -- [database]
 ```
 
 The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-vswitchd` - available [here][ovs-man-vswitchd], in the included manpages for the application, or via the `--help` option like so:
 
 ```bash
-./vswitchd/ovs-vswitchd [EAL] -- --help
+./vswitchd/ovs-vswitchd [eal] -- --help
 ```
 
 Please note that not all options provided by the utility have been validated. See *Known Issues* for a list of validated options.
@@ -148,13 +121,13 @@ The `ovs-dpctl` application is used to "create, modify, and delete Open vSwitch 
 The version of `ovs-dpctl` found in Intel® DPDK vSwitch is functionally identical to that found in stock Open vSwitch with one exception - it requires EAL parameters:
 
 ```bash
-./utilities/ovs-dpctl [EAL] -- [options] command [switch] [args...]
+./utilities/ovs-dpctl [eal] -- [options] command [switch] [args...]
 ```
 
 The EAL parameters are fully documented in the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][intel-dpdkgsg]. For information on the remainder of the parameters/options, see the documentation for the standard `ovs-dpctl` - available [here][ovs-man-dpctl], in the included manpages for the application, or via the `--help` option like so:
 
 ```bash
-./utilities/ovs-dpctl [EAL] -- --help
+./utilities/ovs-dpctl [eal] -- --help
 ```
 
 Please note that not all options provided by the utility have been validated. See *Known Issues* for a list of validated options.
@@ -171,7 +144,7 @@ To add a new interface to the above datapath:
 
 ```bash
 ./utilities/ovs-dpctl -c 11 --proc-type=secondary -- -s add-if dpdk@dp
-  ovs_dpdk_16,type=dpdk
+  ovsdpdk1,type=dpdkphy
 ```
 
 To add a new *flow* to the above datapath, with the following spec
@@ -181,14 +154,14 @@ To add a new *flow* to the above datapath, with the following spec
 * Destination MAC: `00:00:00:00:00:02`
 * Source IP: `1.1.1.1`
 * Destination IP: `2.2.2.2`
-* Input Port: `16`
-* Output Port: `17`
+* Input Port: `0`  (phy 1)
+* Output Port: `1`  (phy 2)
 
 ```bash
 ./utilities/ovs-dpctl -c 11 --proc-type=secondary -- -s add-flow dpdk@dp
-  "in_port(16),eth(src=00:00:00:00:00:01,dst=00:00:00:00:00:02),
+  "in_port(0),eth(src=00:00:00:00:00:01,dst=00:00:00:00:00:02),
   eth_type(0x0800),ipv4(src=1.1.1.1,dst=2.2.2.2,proto=6,tos=0,ttl=64,
-  frag=no),tcp(src=0,dst=0)" "17"
+  frag=no),tcp(src=0,dst=0)" "1"
 ```
 
 ______
@@ -202,7 +175,7 @@ The `ovs-vsctl` application "configures ovs−vswitchd by providing a high−lev
 The version of `ovs-vsctl` found in Intel® DPDK vSwitch is the same as that found in stock Open vSwitch.
 
 ```bash
-./utilities/ovs-ofctl [options] −− [options] command [args] [−− [options] command [args]]...
+./utilities/ovs-vsctl [options] −− [options] command [args] [−− [options] command [args]]...
 ```
 
 For information on the supported parameters/options, see the documentation for the standard `ovs-vsctl` - available [here][ovs-man-vsctl], in the included manpages for the application, or via the `--help` option like so:
@@ -221,11 +194,11 @@ To add a new bridge to `DPDK` datapath:
 ./utilities/ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=dpdk
 ```
 
-To add a new port to the above bridge:
+To add a new OpenFlow port to the above bridge and request OpenFlow port number `1`:
 
 ```bash
-./utilities/ovs-vsctl add-port br0 ovs_dpdk_16 -- set Interface ovs_dpdk_16
-  type=dpdk ofport_request=16
+./utilities/ovs-vsctl add-port br0 myphyport -- set Interface myphyport
+  type=dpdkphy ofport_request=1
 ```
 
 ______
@@ -252,25 +225,27 @@ Please note that not all options provided by the utility have been validated. Se
 
 ### Example Command
 
-Add a new *flow* to an existing bridge - `br0` - with two existing OpenFlow ports - numbers `16` and `17` - where the flow has the following spec:
+Add a new *flow* to an existing bridge - `br0` - with two existing OpenFlow ports - numbers `1` and `2` - where the flow has the following spec:
 
 * Source IP: `1.1.1.1`
 * Destination IP: `2.2.2.2`
-* Input Port: `16`
-* Output Port: `17`
+* Input Port: `1`
+* Output Port: `2`
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,
-  nw_dst=90.90.90.90,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=1,dl_type=0x0800,nw_src=1.1.1.1,
+  nw_dst=90.90.90.90,idle_timeout=0,action=output:2
 ```
 
 ______
 
 ## Other Tools
 
-All other tools provided by Open vSwitch, such as `ovsdb-tool` and `ovsdb-server` run the same in Intel® DPDK vSwitch as those in stock Open vSwitch.
+All other tools provided by Open vSwitch, such as `ovsdb-tool` and `ovsdb-server` work identically in Intel® DPDK vSwitch and stock Open vSwitch.
 
 ______
+
+© 2014, Intel Corporation. All Rights Reserved
 
 [intel-dpdkgsg]: http://www.intel.com/content/www/us/en/intelligent-systems/
 [ovs-man-vswitchd]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=vswitchd%2Fovs-vswitchd.8

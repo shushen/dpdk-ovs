@@ -4,15 +4,13 @@ ______
 
 ## Intel® DPDK vSwitch
 
-* This release supports Intel® DPDK v1.6.0 only. Intel® DPDK v1.5.2 is no longer supported.
+* This release supports Intel® DPDK v1.7.0 only. Intel® DPDK v1.6.0 is no longer supported.
 
 * Intel® Virtualization Technology for Directed I/O (Intel® VT-d) should be disabled in the BIOS settings, unless PCI passthrough is required, in which case the following options should be added to the kernel boot parameters:
 
     ```
     intel_iommu=on iommu=pt
     ```
-
-* Memory corruption is possible if the cores specified using the `-c` option overlap between processes.
 
 * When starting the VMs, the following warning may appear:
 
@@ -26,15 +24,7 @@ ______
     echo 0 > /proc/sys/kernel/randomize_va_space
     ```
 
-* Only one instance of the `kni_client` application should be started in a guest; however, to create multiple KNI devices in a single VM, use the `-p` parameter specifying the KNI ports to initialize and connect to. For example, to connect to KNI ports `KNI0` and `KNI1` in the VM (see KNI section for further details):
-
-    ```bash
-    ./kni_client -c 0x1 -n 4 -- -p KNI0 -p KNI1
-    ```
-
-* In Intel® DPDK vSwitch, packet data is copied before it is injected into VirtIO, which may introduce a higher packet drop rate with larger packet sizes. In general, speeds for VirtIO are similar to standard QEMU, if slightly lower; currently, ways to improve the performance with a different design are being investigated. KNI is offered as a backwards-compatible alternative to VirtIO (that is, it supports non-Intel® DPDK userspace applications in the guest), and offers significantly better performance compared to VirtIO. Intel recommends this option when high throughput is required in a non-Intel® DPDK application use case.
-
-* This release has not been tested or validated for use with Virtual Functions, although it should theoretically work with Intel® DPDK 1.6.0.
+* This release has not been tested or validated for use with Virtual Functions, although it should theoretically work with Intel® DPDK 1.7.0.
 
 * If testing performance with TCP, variances in performance may be observed; this variation is due to the protocol's congestion-control mechanisms. UDP produces more reliable and repeatable results, and it is the preferred protocol for performance testing.
 
@@ -48,7 +38,7 @@ ______
 
     When an Intel® DPDK process starts, it attempts to reserve memory for various rings through a call to `rte_memzone_reserve`; in the case of a Intel® DPDK primary process, the operation should succeed, but for a secondary process, it is expected to fail, as the memory has already been reserved by the primary process. The particular ring specified in the error message - `RG_MP_log_history` - does not affect operation of the secondary process, so this error may be disregarded.
 
-* On start-up, ovs_dpdk may complain that no ports are available (when using an Intel® DPDK-supported NIC):
+* On start-up, `ovs-dpdk` may complain that no ports are available (when using an Intel® DPDK-supported NIC):
 
     ```bash
     Total ports: 0
@@ -61,9 +51,15 @@ ______
 
     For example, `pci_unbind.py -b igb_uio <PCI ID of NIC port>` binds the NIC to the Intel® DPDK igb_uio driver.
 
-* As `ovs_dpdk` requires modification to achieve compatibility with 82571EB-based dual-port cards, modify `openvswitch/datapath/dpdk/init.c`, updating the value of `tx_rings` in the `init_port` function from `num_clients` to `1`, and recompile.
+* Some Intel® DPDK dpif unit tests create files in `/tmp`. These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
 
-* Passing a VLAN packet with VLAN ID `0`, but a priority greater than `0` (a priority tagged packet) is not currently supported, and passing this type of packet will render the switch unresponsive.
+* Some packets will cause the following error message:
+
+    ```bash
+    2000-01-01T00:00:00Z|00000|dpif(dispatcher)|WARN|dpdk@ovs-dpdk: recv failed (Invalid argument)
+    ```
+
+    This is due to missing support for the "send to userspace" action in the datapath, and will be resolved in a future update.
 
 ______
 
@@ -80,16 +76,6 @@ Open vSwitch contains a number of unit tests that collectively form the OVS "tes
 Many of the tests also fail due to differences in the required parameters for utilities such as `ovs-dpctl` (that is, Intel® DPDK vSwitch's version of these utilities require EAL parameters). As a result, these tests should be used as guidelines only.
 
 In addition to the standard unit tests, Intel® DPDK vSwitch extends the testsuite with a number of "Intel® DPDK vSwitch"-specific unit tests. These tests require root privileges to run, due to the use of hugepages by the Intel® DPDK library. These tests are currently the only tests guaranteed to pass.
-
-______
-
-## OFTest
-
-Adding a route when using virtual Ethernet devices has been known to cause system instability. The root cause of this issue is currently being investigated.
-
-A number of OFTest tests currently fail. In most cases, this failure is due to missing functionality in either standard Open vSwitch or Intel® DPDK vSwitch. These issues will be resolved as additional functionality is added. A full list containing the current status of the tests is given in Section 12.3.
-
-OFTest has been validated agains Scapy v2.2.
 
 ______
 
@@ -130,3 +116,5 @@ ______
 The IVSHM manager utility must be executed once the switch is up and running and not before. An attempt to share Intel® DPDK objects using the IVSHM manager utility before the switch has finished with its setup/init process may cause undesired behavior.
 
 ______
+
+© 2014, Intel Corporation. All Rights Reserved

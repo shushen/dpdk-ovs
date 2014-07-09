@@ -18,14 +18,16 @@ ______
 
 Intel® DPDK vSwitch has been validated against the following Linux distributions:
 
-* Intel® DPDK 1.6
-* Wind River Linux 5.1
-* Fedora 16
+* Fedora 18
 
 Additionally, Intel® DPDK vSwitch has been validated on the following processors:
 
 * Intel® Xeon® Processor E5 Family
 * Intel® Atom® Processor C2000 Family
+
+Finally, Intel® DPDK vSwitch requires the following version of Intel® DPDK:
+
+* Intel® DPDK 1.7
 
 ______
 

@@ -6,7 +6,7 @@ ______
 
 ## Overview
 
-This guide covers a Phy->VM->VM->Phy configuration using IVSHM vports:
+This guide covers a Phy->VM->Phy configuration using IVSHM vports:
 
 ```
                                            __
@@ -21,13 +21,13 @@ This guide covers a Phy->VM->VM->Phy configuration using IVSHM vports:
                           |      |
                           :      v                       __
     +-----------------+--------------+-----------------+   |
-    | ovs_dpdk        | ivshm vport1 |                 |   |
+    |                 | ivshm vport1 |                 |   |
     |                 +--------------+                 |   |
     |                     ^      :                     |   |
     |          +----------+      +---------+           |   |  host
     |          :                           v           |   |
     |   +--------------+            +--------------+   |   |
-    |   |   phy port   |            |   phy port   |   |   |
+    |   |   phy port   |  ovs-dpdk  |   phy port   |   |   |
     +---+--------------+------------+--------------+---+ __|
                ^                           :
                |                           |
@@ -80,11 +80,11 @@ Add ports to the bridge:
 
 ```bash
 ./utilities/ovs-vsctl --no-wait add-port br0 port1 -- set Interface port1 \
-  type=dpdkclient ofport_request=1
-./utilities/ovs-vsctl --no-wait add-port br0 port16 -- set Interface port16 \
-  type=dpdkphy ofport_request=16 option:port=1
-./utilities/ovs-vsctl --no-wait add-port br0 port17 -- set Interface port17 \
-  type=dpdkphy ofport_request=17 option:port=2
+  type=dpdkphy ofport_request=1 option:port=0
+./utilities/ovs-vsctl --no-wait add-port br0 port2 -- set Interface port2 \
+  type=dpdkphy ofport_request=2 option:port=1
+./utilities/ovs-vsctl --no-wait add-port br0 port3 -- set Interface port3 \
+  type=dpdkclient ofport_request=3
 ```
 
 Confirm the ports have been successfully added:
@@ -103,23 +103,22 @@ You should see something like this:
                 type: internal
         Port "port1"
             Interface "port1"
-                type: dpdkclient
-        Port "port16"
-            Interface "port16"
+                type: dpdkphy
+                options: {port="0"}
+        Port "port2"
+            Interface "port2"
                 type: dpdkphy
                 options: {port="1"}
-        Port "port17"
-            Interface "port17"
-                type: dpdkphy
-                options: {port="2"}
+        Port "port3"
+            Interface "port3"
+                type: dpdkclient
 ```
 
-Start `ovs_dpdk`:
+Start `ovs-dpdk`:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> -- -p 0x03 -n 1 --stats=5 \
-  --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/build/ovs-dpdk -c 0x0F -n 4 --proc-type primary \
+  --base-virtaddr=<virt_addr> -- --stats_core=0 --stats=5
 ```
 
 Start the Open vSwitch daemon:
@@ -138,13 +137,13 @@ Delete the default flow entries from the bridge:
 ./utilities/ovs-ofctl del-flows br0
 ```
 
-Add flow entries to switch packets from `port16` (Phy 0) to `port1` (Client 1) on the ingress path, and from `port1` to `port17` (Phy 1) on the egress path:
+Add flow entries to switch packets from `port1` (Phy 0) to `port3` (Client 1) on the ingress path, and from `port3` to `port2` (Phy 1) on the egress path:
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,\
-nw_dst=6.6.6.2,idle_timeout=0,action=output:1
-./utilities/ovs-ofctl add-flow br0 in_port=1,dl_type=0x0800,nw_src=1.1.1.1,\
-nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=1,dl_type=0x0800,nw_src=10.1.1.1,\
+nw_dst=10.1.1.254,idle_timeout=0,action=output:3
+./utilities/ovs-ofctl add-flow br0 in_port=3,dl_type=0x0800,nw_src=10.1.1.1,\
+nw_dst=10.1.1.254,idle_timeout=0,action=output:2
 ```
 
 ______
@@ -160,16 +159,17 @@ rm -rf /tmp/qemu_share
 mkdir -p /tmp/qemu_share
 chmod 777 /tmp/qemu_share
 mkdir -p /tmp/qemu_share/DPDK
-mkdir -p /tmp/qemu_share/kni_client
-cp -aL <DPDK_DIR>/* /tmp/qemu_share/DPDK
+mkdir -p /tmp/qemu_share/ovs_client
+cp -aL $RTE_SDK/* /tmp/qemu_share/DPDK
+cp -aL $OPENVSWITCH_DIR/guest/ovs_client/* /tmp/qemu_share/ovs_client
 ```
 
 ### Create IVSHMEM metadata
 
-Run the IVSHMEM manager utility to create the metadata needed to be used with QEMU. In this example `port1` is going to be shared over a metadata file named `vm_1`.
+Run the IVSHMEM manager utility to create the metadata needed to be used with QEMU. In this example `port3` is going to be shared over a metadata file named `vm_1`.
 
 ```bash
-./utilities/ovs-ivshm-mngr -c 0x1 --proc-type=secondary -- vm_1:port1
+./utilities/ovs-ivshm-mngr -c 0x1 --proc-type=secondary -- vm_1:port3
 ```
 
 Among other information the utility will print out to `STDOUT` the exact IVSHMEM command line to be used when launching QEMU. Add this to the other QEMU arguments.
@@ -185,11 +185,11 @@ APP: QEMU cmdline for metadata 'vm_1': -device ivshmem,size=4M,shm=fd:/dev/
 Start QEMU with the metadata created above, for example:
 
 ```bash
-./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4 \
+./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4  \
   -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 8192M -smp 2 \
-  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid \
-  -drive file=fat:rw:/tmp/qemu_share,snapshot=off \
-  -monitor unix:/tmp/vm1monitor,server,nowait \
+  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid     \
+  -drive file=fat:rw:/tmp/qemu_share,snapshot=off                            \
+  -monitor unix:/tmp/vm1monitor,server,nowait                                \
   -device ivshmem,size=4M,shm=fd:/dev/hugepages/rtemap_2:0x0:0x200000:\
 /dev/zero:0x0:0x1fc000:/var/run/.dpdk_ivshmem_metadata_vm_1:0x0:0x4000
 ```
@@ -212,9 +212,9 @@ cp -a /mnt/ovs/* /root/ovs
 ### Build DPDK on the Guest
 
 ```bash
-export RTE_SDK=/root/ovs/DPDK
-export RTE_TARGET=x86_64-ivshmem-linuxapp-gcc
 cd /root/ovs/DPDK
+export RTE_SDK=$(pwd)
+export RTE_TARGET=x86_64-ivshmem-linuxapp-gcc
 export CC=gcc
 make uninstall
 make install T=x86_64-ivshmem-linuxapp-gcc
@@ -223,8 +223,7 @@ make install T=x86_64-ivshmem-linuxapp-gcc
 ### Build `ovs_client` app
 
 ```bash
-cd /root/ovs
-cd ovs_client
+cd /root/ovs/ovs_client
 make clean
 make
 ```
@@ -234,7 +233,7 @@ make
 Having completed the above, run the `ovs_client` application.
 
 ```bash
-./ovs_client -c 0x1 -n 4 -- -p port1
+./ovs_client -c 0x1 -n 4 -- -p port3
 ```
 
 ______
@@ -244,3 +243,5 @@ ______
 Start transmission of packets matching the flows described in the Flow Table Setup section from the packet generator. If setup correctly, packets can be seen returning to the transmitting port from the DUT.
 
 ______
+
+© 2014, Intel Corporation. All Rights Reserved

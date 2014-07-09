@@ -9,6 +9,7 @@ To compile Intel® DPDK vSwitch, you will need the following software:
 * `gcc`
 * `make`
 * GNU Autotools, i.e. `autoconf`, `autom4te`, `automake`
+* `patch`
 * `kernel-devel.$(uname -r)`
 * `kernel`
 * `autoconf`
@@ -24,6 +25,7 @@ To compile Intel® DPDK vSwitch, you will need the following software:
 * `kernel-modules-extra`
 * `pixman-devel`
 * `libfdt-devel`
+* `rsvg-convert` (to update PNGs generated from SVGs in `docs`)
 
 ______
 
@@ -37,38 +39,18 @@ Intel® DPDK is a set of software libraries and Ethernet drivers (native and vir
 
 ### Intel® DPDK vSwitch
 
-Intel® DPDK vSwitch (along with supporting applications) can be sourced in three different ways:
+Intel® DPDK vSwitch (along with supporting applications) can be sourced in two different ways:
 
 * By cloning or downloading this repository
 * By downloading the latest stable release from [01.org][01org-downloads]
 
 This guide will assume the latter option has been chosen: please adjust the provided commands accordingly.
 
-### OFTest (Optional)
-
-OFTest is a test framework designed to "exercise a candidate OpenFlow switch (the device/switch under test, DUT or SUT)". It is an optional component that can be used to evaluate the functionality of Intel® DPDK vSwitch. You can find information, including download links, for OFTest on the [OFTest GitHub page][oftest-github].
-
-OFTest requires a number of additional utilities to be installed prior to use - refer to the *Pre-requisites* section of the [Project Floodlight Getting Started Guide][oft-gsg]
-
-### MEMNIC (Optional)
-
-MEMNIC is a memory copy-based virtual network interface which can be used for network communication between host and guest. MEMNIC uses the standard unmodified IVSHMEM (Inter VM Shared Memory in QEMU) mechanism to share packets between host and guests applications. You can find information, including download links, for MEMNIC on the [MEMNIC dpdk.org page][memnic-dpdk-org].
-
-Clone the MEMNIC repo and checkout tag v1.0
-
-```bash
-git clone http://dpdk.org/git/memnic $MEMNIC_DIR
-cd $MEMNIC_DIR
-git checkout v1.0
-```
-
-Note: Only MEMNIC v1.0 has been validated. Using a different code base may cause undesired behaviours.
-
 ______
 
 ## Extract
 
-Before compiling, extract the source files for Intel® DPDK, Intel® DPDK vSwitch and (optionally) OFTest. This can be done as follows:
+Before compiling, extract the source files for Intel® DPDK and Intel® DPDK vSwitch. This can be done as follows:
 
 ```bash
 mkdir ~/ovs_dpdk
@@ -79,13 +61,11 @@ tar -xvzg <dpdk_vswitch_release_pkg>.tar.gz  -C ovdk
 mv <dpdk_extract_dir> DPDK
 ```
 
-If you intend to test OpenFlow compliance with OFTest, you should also extract this now.
-
 ______
 
 ## Compile
 
-There are two approaches possible for compiling Intel® DPDK vSwitch, its supporting applications and its dependencies: *automatically*, via the provided top-level makefile, or manually.
+There are two possible approaches to compiling Intel® DPDK vSwitch, its supporting applications and its dependencies: *automatically*, via the provided top-level makefile, or manually.
 
 ### Top-level Makefile
 
@@ -96,7 +76,7 @@ Intel® DPDK vSwitch provides a top-level makefile capable of building each comp
 * `clean`
 * `check`
 * `xxx`, where `xxx` is one of the following: `ovs`, `dpdk`, `qemu`
-* `xxx-deps`, where `xxx` is one of the following: `ovs`, `qemu`, `ivshm`, `kni`
+* `xxx-deps`, where `xxx` is one of the following: `ovs`, `qemu`, `ivshm`
 * `config-xxx`, where `xxx` is one of the following: `ovs`, `dpdk`, `qemu`
 * `clean-xxx`, where `xxx` is one of the following: `ovs`, `dpdk`, `qemu`
 
@@ -133,7 +113,7 @@ make install T="$RTE_TARGET"
 cd -
 ```
 
-**Note:** To enable the new Intel® DPDK 1.6.0 IVSHM feature, Intel® DPDK has to be compiled using the `ivshmem` target. This requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [intel.com][intel-dpdkgsg] - for additional information on performing this step.
+**Note:** To enable the new IVSHM feature introduced with Intel® DPDK 1.6.0, Intel® DPDK has to be compiled using the `ivshmem` target. This requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [intel.com][intel-dpdkgsg] - for additional information on performing this step.
 
 #### Open vSwitch
 
@@ -252,11 +232,10 @@ You can refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting
 
 ______
 
+© 2014, Intel Corporation. All Rights Reserved
+
 [01org-downloads]: https://01.org/packet-processing/downloads
 [01org-dpdk]: https://01.org/packet-processing/overview/dpdk-detail
-[oftest-github]: https://github.com/floodlight/oftest
 [intel-dpdk]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/packet-processing-is-enhanced-with-software-from-intel-dpdk.html
 [intel-dpdkgsg]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/intel-dpdk-getting-started-guide.html
 [intel-ark]: http://ark.intel.com/
-[oft-gsg]: http://docs.projectfloodlight.org/display/OFTest/Longer+Start
-[memnic-dpdk-org]: http://dpdk.org/browse/memnic

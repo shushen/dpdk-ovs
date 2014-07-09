@@ -1,10 +1,10 @@
 Intel® DPDK vSwitch supports the offload of virtio-net device servicing in the guest, reducing context switching and packet copies in the virtual dataplane when using the vhost-net module.
 
-This section contains instructions on how to compile and run a sample application that demonstrates performance of an Intel® DPDK-accelerated version of Userspace Vhost for IO virtualization. For more information on the Userspace Vhost implementation refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Sample Applications User Guide*][intel-dpdksample].
+This section contains instructions on how to compile and run a sample application that demonstrates performance of an Intel® DPDK-accelerated version of Userspace vHost for IO virtualization. For more information on the Userspace vHost implementation refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Sample Applications User Guide*][intel-dpdksample].
 
 ## Overview
 
-This guide covers a Phy->VM->Phy configuration using KNI vports:
+This guide covers a Phy->VM->Phy configuration using Userspace vHost vports:
 
 ```
                                                          __
@@ -29,7 +29,7 @@ This guide covers a Phy->VM->Phy configuration using KNI vports:
     |       |      +-=------------------+      |       |   |  host
     |       :                                  v       |   |
     |   +--------------+            +--------------+   |   |
-    |   |   phy port   |  ovs_dpdk  |   phy port   |   |   |
+    |   |   phy port   |  ovs-dpdk  |   phy port   |   |   |
     +---+--------------+------------+--------------+---+ __|
                ^                           :
                |                           |
@@ -83,7 +83,7 @@ rm /dev/vhost-net
 
 ### Install fuse library
 
-Intel® DPDK vSwitch now includes the `fuse` library at compile time. This library must exist on the system or the application will fail to compile. This can be installed through the distributions repository or it can be [built from source][fuse-source]
+Intel® DPDK vSwitch now includes the `fuse` library at compile time. This library must exist on the system or the application will fail to compile. This can be installed through the distributions repository or it can be [built from source][fuse-source].
 
 ______
 
@@ -125,15 +125,17 @@ Add a bridge to the switch:
 Add ports to the bridge:
 
 ```bash
-./utilities/ovs-vsctl --no-wait add-port br0 port16 -- set Interface port16 \
-  type=dpdkphy ofport_request=16 option:port=1
-./utilities/ovs-vsctl --no-wait add-port br0 port17 -- set Interface port17 \
-  type=dpdkphy ofport_request=17 option:port=2
-./utilities/ovs-vsctl --no-wait add-port br0 port80 -- set Interface port80 \
-  type=dpdkvhost ofport_request=80
-./utilities/ovs-vsctl --no-wait add-port br0 port81 -- set Interface port81 \
-  type=dpdkvhost ofport_request=81
+./utilities/ovs-vsctl --no-wait add-port br0 port1 -- set Interface port1 \
+  type=dpdkphy ofport_request=1 option:port=0
+./utilities/ovs-vsctl --no-wait add-port br0 port2 -- set Interface port2 \
+  type=dpdkphy ofport_request=2 option:port=1
+./utilities/ovs-vsctl --no-wait add-port br0 port3 -- set Interface port3 \
+  type=dpdkvhost ofport_request=3
+./utilities/ovs-vsctl --no-wait add-port br0 port4 -- set Interface port4 \
+  type=dpdkvhost ofport_request=4
 ```
+
+Note the additional `option` parameter required for `dpdkphy` type ports.
 
 Confirm the ports have been successfully added:
 
@@ -149,28 +151,28 @@ You should see something like this:
         Port "br0"
             Interface "br0"
                 type: internal
-        Port "port16"
-            Interface "port16"
+        Port "port1"
+            Interface "port1"
+                type: dpdkphy
+                options: {port="0"}
+        Port "port2"
+            Interface "port2"
                 type: dpdkphy
                 options: {port="1"}
-        Port "port17"
-            Interface "port17"
-                type: dpdkphy
-                options: {port="2"}
-        Port "port80"
-            Interface "port80"
+        Port "port3"
+            Interface "port3"
                 type: dpdkvhost
-        Port "port81"
-            Interface "port81"
+        Port "port4"
+            Interface "port4"
                 type: dpdkvhost
 ```
 
-Start `ovs_dpdk`:
+Start `ovs-dpdk`:
 
 ```bash
-./datapath/dpdk/build/ovs_dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- -p 0x03 -h 2 \
-  --stats=5 --client_switching_core=1 --config="(0,0,2),(1,0,3)"
+./datapath/dpdk/build/ovs-dpdk -c 0x0F -n 4 --proc-type primary \
+  --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- \
+  --stats_core=0 --stats=5
 ```
 
 Note the additional `--socket-mem` option. This ensures the DPDK app does not use all available hugepage memory on the system.
@@ -192,13 +194,13 @@ Delete the default flow entries from the bridge:
 ./utilities/ovs-ofctl del-flows br0
 ```
 
-Add flow entries to switch packets from `port16` (Phy 0) to `port80` (vHost 0) on the ingress path, and from `port81` (vHost 1) to `port17` (Phy 1) on the egress path:
+Add flow entries to switch packets from `port1` (Phy 0) to `port3` (vHost 0) on the ingress path, and from `port4` (vHost 1) to `port3` (Phy 1) on the egress path:
 
 ```bash
-./utilities/ovs-ofctl add-flow br0 in_port=16,dl_type=0x0800,nw_src=1.1.1.1,\
-nw_dst=6.6.6.2,idle_timeout=0,action=output:80
-./utilities/ovs-ofctl add-flow br0 in_port=81,dl_type=0x0800,nw_src=1.1.1.1,\
-nw_dst=6.6.6.2,idle_timeout=0,action=output:17
+./utilities/ovs-ofctl add-flow br0 in_port=1,dl_type=0x0800,nw_src=10.1.1.1,\
+nw_dst=10.1.1.254,idle_timeout=0,action=output:3
+./utilities/ovs-ofctl add-flow br0 in_port=4,dl_type=0x0800,nw_src=10.1.1.1,\
+nw_dst=10.1.1.254,idle_timeout=0,action=output:2
 ```
 
 ______
@@ -213,37 +215,36 @@ Intel® DPDK source code must be copied to each guest required. The simplest way
 rm -rf /tmp/qemu_share
 mkdir -p /tmp/qemu_share
 mkdir -p /tmp/qemu_share/DPDK
-mkdir -p /tmp/qemu_share/kni_client
 chmod 777 /tmp/qemu_share
 cp -aL <DPDK_DIR>/* /tmp/qemu_share/DPDK
 ```
 
 ## Create VM
 
-**Note:** QEMU will fail if `ovs_dpdk` is not already running. The following command line will launch QEMU with two vhost enabled virtio devices. It is important to note that the tap device names should be **identical** to the ovs_dpdk port names:
+**Note:** QEMU will fail if `ovdk-dpdk` is not already running. The following command line will launch QEMU with two vhost enabled virtio devices. It is important to note that the tap device names should be **identical** to the ovdk-dpdk port names:
 
 ```bash
-./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4 \
-  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 512M -smp 2 \
-  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid \
-  -drive file=fat:rw:/tmp/qemu_share,snapshot=off \
-  -monitor unix:/tmp/vm1monitor,server,nowait \
-  -net none -no-reboot -mem-path /dev/hugepages -mem-prealloc \
-  -netdev type=tap,id=net1,script=no,downscript=no,ifname=port80,vhost=on \
+./qemu/x86_64-softmmu/qemu-system-x86_64 -c 0x30 --proc-type secondary -n 4  \
+  -- -cpu host -boot c -hda <qemu_imagename.qcow2> -snapshot -m 4096M -smp 2 \
+  --enable-kvm -name 'client 1' -nographic -vnc :1 -pidfile /tmp/vm1.pid     \
+  -drive file=fat:rw:/tmp/qemu_share,snapshot=off                            \
+  -monitor unix:/tmp/vm1monitor,server,nowait                                \
+  -net none -no-reboot -mem-path /dev/hugepages -mem-prealloc                \
+  -netdev type=tap,id=net1,script=no,downscript=no,ifname=port3,vhost=on     \
   -device virtio-net-pci,netdev=net1,mac=00:00:00:00:00:01,csum=off,gso=off,\
-guest_tso4=off,guest_tso6=off,guest_ecn=off \
-  -netdev type=tap,id=net2,script=no,downscript=no,ifname=port81,vhost=on \
+guest_tso4=off,guest_tso6=off,guest_ecn=off                                  \
+  -netdev type=tap,id=net2,script=no,downscript=no,ifname=port4,vhost=on     \
   -device virtio-net-pci,netdev=net2,mac=00:00:00:00:00:02,csum=off,gso=off,\
 guest_tso4=off,guest_tso6=off,guest_ecn=off
 ```
 
-**Note:** Userspace Vhost devices can also be launched with an unmodified QEMU version by excluding the Intel® DPDK related options before the "--".
+**Note:** Userspace vHost devices can also be launched with an unmodified QEMU version by excluding the Intel® DPDK related options before the "--".
 
 ______
 
 ## Guest Configuration
 
-The following configuration must be performed on each Vhost client.
+The following configuration must be performed on each vHost client.
 
 ### Copy Files
 
@@ -259,9 +260,9 @@ cp –a /mnt/vhost/* /root/vhost
 ### Build DPDK on the Guest
 
 ```bash
-export RTE_SDK=/root/vhost/DPDK
-export RTE_TARGET=x86_64-ivshmem-linuxapp-gcc
 cd /root/vhost/DPDK
+export RTE_SDK=$(pwd)
+export RTE_TARGET=x86_64-ivshmem-linuxapp-gcc
 make uninstall
 make install T=x86_64-ivshmem-linuxapp-gcc
 ```
@@ -311,6 +312,8 @@ ______
 Start transmission of packets from the packet generator. If setup correctly, packets can be seen returning to the transmitting port from the DUT.
 
 ______
+
+© 2014, Intel Corporation. All Rights Reserved
 
 [doc-installation]: 01_Installation.md
 [intel-dpdksample]: http://www.intel.com/content/www/us/en/intelligent-systems/intel-technology/intel-dpdk-sample-applications-user-guide.html
