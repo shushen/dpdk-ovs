@@ -642,7 +642,7 @@ get_printable_mac_addr(uint8_t port)
 	if (unlikely(addresses[port][0] == '\0')) {
 		rte_eth_macaddr_get(port, &mac);
 		while(j < NUM_BYTES_MAC_ADDR) {
-			rte_snprintf(&addresses[port][0] + i,
+			snprintf(&addresses[port][0] + i,
 			             MAC_ADDR_STR_INT_L + NEWLINE_CHAR_OFFSET,
 			             "%02x:",
 			             mac.addr_bytes[j]);

@@ -56,38 +56,38 @@ create_vport_client(struct vport_info *vport, const char *port_name)
 	char ring_name[RTE_RING_NAMESIZE];
 
 	vport->type = OVDK_VPORT_TYPE_CLIENT;
-	rte_snprintf(vport->name, sizeof(vport->name), port_name);
+	snprintf(vport->name, sizeof(vport->name), port_name);
 
 	client = &vport->client;
 
 	/* Create rings and store their names */
-	rte_snprintf(ring_name, sizeof(ring_name), "%sRX", port_name);
-	rte_snprintf(client->port_reader_client_params.rx_ring_name,
+	snprintf(ring_name, sizeof(ring_name), "%sRX", port_name);
+	snprintf(client->port_reader_client_params.rx_ring_name,
 	             sizeof(client->port_reader_client_params.rx_ring_name),
 	             ring_name);
 	create_ring(ring_name);
-	rte_snprintf(client->ring_names.rx, sizeof(client->ring_names.rx), ring_name);
+	snprintf(client->ring_names.rx, sizeof(client->ring_names.rx), ring_name);
 
-	rte_snprintf(ring_name, sizeof(ring_name), "%sTX", port_name);
-	rte_snprintf(client->port_writer_client_params.tx_ring_name,
+	snprintf(ring_name, sizeof(ring_name), "%sTX", port_name);
+	snprintf(client->port_writer_client_params.tx_ring_name,
 	             sizeof(client->port_writer_client_params.tx_ring_name),
 	             ring_name);
 	create_ring(ring_name);
-	rte_snprintf(client->ring_names.tx, sizeof(client->ring_names.tx), ring_name);
+	snprintf(client->ring_names.tx, sizeof(client->ring_names.tx), ring_name);
 
-	rte_snprintf(ring_name, sizeof(ring_name), "%sFREE", port_name);
-	rte_snprintf(client->port_reader_client_params.free_ring_name,
+	snprintf(ring_name, sizeof(ring_name), "%sFREE", port_name);
+	snprintf(client->port_reader_client_params.free_ring_name,
 	             sizeof(client->port_reader_client_params.free_ring_name),
 	             ring_name);
 	create_ring(ring_name);
-	rte_snprintf(client->ring_names.free, sizeof(client->ring_names.free), ring_name);
+	snprintf(client->ring_names.free, sizeof(client->ring_names.free), ring_name);
 
-	rte_snprintf(ring_name, sizeof(ring_name), "%sALLOC", port_name);
-	rte_snprintf(client->port_reader_client_params.alloc_ring_name,
+	snprintf(ring_name, sizeof(ring_name), "%sALLOC", port_name);
+	snprintf(client->port_reader_client_params.alloc_ring_name,
 	             sizeof(client->port_reader_client_params.alloc_ring_name),
 	             ring_name);
 	create_ring(ring_name);
-	rte_snprintf(client->ring_names.alloc, sizeof(client->ring_names.alloc), ring_name);
+	snprintf(client->ring_names.alloc, sizeof(client->ring_names.alloc), ring_name);
 }
 
 static const struct rte_memzone *

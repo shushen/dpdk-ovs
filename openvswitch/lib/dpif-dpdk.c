@@ -504,8 +504,8 @@ memnic_rename_shm_object(uint32_t vportid, const char *port_name)
 
     /* Calculate names of old shm (created in datapath) and new shm name
      * from the port name */
-    rte_snprintf(old_name, sizeof(old_name), MEMNIC_SHM_NAME_FMT, vportid);
-    rte_snprintf(new_name, sizeof(new_name), "%s/%s", SHM_DIR, port_name);
+    snprintf(old_name, sizeof(old_name), MEMNIC_SHM_NAME_FMT, vportid);
+    snprintf(new_name, sizeof(new_name), "%s/%s", SHM_DIR, port_name);
 
     /* Do the shm object renaming */
     if (rename(old_name, new_name) < 0) {

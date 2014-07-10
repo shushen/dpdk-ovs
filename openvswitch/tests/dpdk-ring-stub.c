@@ -459,7 +459,7 @@ ring_create(const char *template, uint8_t lcore_id)
 	char ring_name[OVDK_MAX_NAME_SIZE] = {0};
 	unsigned socket_id = rte_socket_id();
 
-	rte_snprintf(ring_name, sizeof(ring_name), template, lcore_id);
+	snprintf(ring_name, sizeof(ring_name), template, lcore_id);
 	ring = rte_ring_create(ring_name, VSWITCHD_RINGSIZE, socket_id,
 	                       NO_FLAGS);
 	if (ring == NULL)

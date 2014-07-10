@@ -114,7 +114,7 @@ save_ivshmem_cmdline_to_file(const char *cmdline, const char *metadata_name)
 	FILE *file = NULL;
 	char path[PATH_MAX] = {0};
 
-	rte_snprintf(path, sizeof(path), QEMU_CMD_FILE_FMT, metadata_name);
+	snprintf(path, sizeof(path), QEMU_CMD_FILE_FMT, metadata_name);
 
 	file = fopen(path, "w");
 	if (file == NULL) {

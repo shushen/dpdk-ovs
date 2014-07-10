@@ -360,7 +360,7 @@ ring_lookup(const char *template, unsigned lcore_id)
     struct rte_ring *ring = NULL;
     char ring_name[OVDK_MAX_NAME_SIZE] = {0};
 
-    rte_snprintf(ring_name, sizeof(ring_name), template, lcore_id);
+    snprintf(ring_name, sizeof(ring_name), template, lcore_id);
     ring = rte_ring_lookup(ring_name);
 
     /* Return ring even if NULL. The NULL case is checked after all calls to

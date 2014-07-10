@@ -147,9 +147,9 @@ host_memory_map (struct virtio_net *dev, struct virtio_memory *mem, pid_t pid, u
 	char *end = NULL;
 
 	/* Path where mem files are located. */
-	rte_snprintf (procdir, PATH_MAX, "/proc/%u/fd/", pid);
+	snprintf (procdir, PATH_MAX, "/proc/%u/fd/", pid);
 	/* Maps file used to locate mem file. */
-	rte_snprintf (mapfile, PATH_MAX, "/proc/%u/maps", pid);
+	snprintf (mapfile, PATH_MAX, "/proc/%u/maps", pid);
 
 	fmap = fopen(mapfile, "r");
 	if (fmap == NULL) {
@@ -235,7 +235,7 @@ host_memory_map (struct virtio_net *dev, struct virtio_memory *mem, pid_t pid, u
 
 	/* Read the fd directory contents. */
 	while (NULL != (dptr = readdir(dp))) {
-		rte_snprintf (memfile, PATH_MAX, "/proc/%u/fd/%s", pid, dptr->d_name);
+		snprintf (memfile, PATH_MAX, "/proc/%u/fd/%s", pid, dptr->d_name);
 		resolved_path[0] = '\0';
 		if (realpath(memfile, resolved_path) == NULL)
 			if (errno != ENOENT) /* OK if ENOENT (file does not exist) */

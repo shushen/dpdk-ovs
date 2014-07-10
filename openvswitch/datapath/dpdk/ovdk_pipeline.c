@@ -75,7 +75,7 @@
 #define PKT_BURST_SIZE                  32u
 #define EXCEPTION_PKT_BURST_SIZE        32u
 #define VSWITCHD_RINGSIZE               2048
-#define PIPELINE_NAME_PREFIX            "ovdk_pipeline_"
+#define PIPELINE_NAME_PREFIX            "ovdk_pipeline_%02u"
 #define OVDK_PIPELINE_FLUSH_INTERVAL    32
 #define DPIF_SOCKNAME                   "\0dpif-dpdk"
 
@@ -174,7 +174,7 @@ create_ring(const char *name)
 	unsigned lcore_id = rte_lcore_id();
 	unsigned socket_id = rte_socket_id();
 
-	rte_snprintf(ring_name, sizeof(ring_name), name, lcore_id);
+	snprintf(ring_name, sizeof(ring_name), name, lcore_id);
 	ring = rte_ring_create(ring_name, VSWITCHD_RINGSIZE, socket_id,
 	                       NO_FLAGS);
 	if (ring == NULL)
@@ -221,7 +221,7 @@ ovdk_pipeline_init(void)
 	/*
 	 * Store parameters used to configure the pipeline in 'ovdk_pipeline'.
 	 */
-	rte_snprintf(pipeline_name, sizeof(pipeline_name),
+	snprintf(pipeline_name, sizeof(pipeline_name),
 	             PIPELINE_NAME_PREFIX, lcore_id);
 	ovdk_pipeline[lcore_id].params.name = pipeline_name;
 	ovdk_pipeline[lcore_id].params.socket_id = socket_id;
@@ -308,25 +308,24 @@ ovdk_pipeline_init(void)
 	 * and a list of actions to execute on that packet.
 	 */
 
-	rte_snprintf(port_packet_params.rx_ring_name,
+	snprintf(port_packet_params.rx_ring_name,
 	             sizeof(port_packet_params.rx_ring_name),
 	             VSWITCHD_PACKET_RING_NAME,
 	             lcore_id);
 
-	rte_snprintf(port_packet_params.free_ring_name,
+	snprintf(port_packet_params.free_ring_name,
 	             sizeof(port_packet_params.free_ring_name),
 	             VSWITCHD_PACKET_FREE_RING_NAME,
 	             lcore_id);
 
-	rte_snprintf(port_packet_params.alloc_ring_name,
+	snprintf(port_packet_params.alloc_ring_name,
 	             sizeof(port_packet_params.alloc_ring_name),
 	             VSWITCHD_PACKET_ALLOC_RING_NAME,
 	             lcore_id);
 
-	rte_snprintf(port_packet_params.mp,
+	snprintf(port_packet_params.mp,
 	             sizeof(port_packet_params.mp),
-	             PKTMBUF_POOL_NAME,
-	             lcore_id);
+	             PKTMBUF_POOL_NAME);
 
 	port_in_packet_params = (struct rte_pipeline_port_in_params) {
 		.ops = &rte_port_ivshm_reader_ops,
@@ -374,7 +373,7 @@ ovdk_pipeline_init(void)
 	 * be installed in the dataplane flow table.
 	 */
 
-	rte_snprintf(port_exception_params.tx_ring_name,
+	snprintf(port_exception_params.tx_ring_name,
 	             sizeof(port_exception_params.tx_ring_name),
 	             VSWITCHD_EXCEPTION_RING_NAME,
 	             lcore_id);

@@ -55,7 +55,7 @@ struct rte_mempool *pf_pktmbuf_pool;
 
 /* Number of descriptors per cacheline. */
 #define DESC_PER_CACHELINE (CACHE_LINE_SIZE / sizeof(struct vring_desc))
-#define MAX_PRINT_BUFF         6072  /* Size of buffers used for rte_snprintfs for printing packets */
+#define MAX_PRINT_BUFF         6072  /* Size of buffers used for snprintfs for printing packets */
 #define MAX_MRG_PKT_BURST      16    /* Max burst for merge buffers. This is used for legacy virtio. */
 #define BURST_TX_WAIT_US       15    /* Defines how long we wait between retries on TX */
 #define BURST_TX_RETRIES       4     /* Number of retries on TX. */
@@ -76,17 +76,17 @@ uint32_t burst_tx_retry_num = BURST_TX_RETRIES;
 	char packet[MAX_PRINT_BUFF];										\
 																		\
 	if ((header))														\
-	rte_snprintf(packet, MAX_PRINT_BUFF,								\
+	snprintf(packet, MAX_PRINT_BUFF,								\
 		"(%"PRIu64") Header size %d: ", (device->device_fh), (size));	\
 	else																\
-	rte_snprintf(packet, MAX_PRINT_BUFF,								\
+	snprintf(packet, MAX_PRINT_BUFF,								\
 		"(%"PRIu64") Packet size %d: ", (device->device_fh), (size));	\
 	for (index = 0; index < (size); index++) {							\
-		rte_snprintf(packet + strnlen(packet, MAX_PRINT_BUFF),			\
+		snprintf(packet + strnlen(packet, MAX_PRINT_BUFF),			\
 			MAX_PRINT_BUFF - strnlen(packet, MAX_PRINT_BUFF),			\
 			"%02hhx ", pkt_addr[index]);								\
 	}																	\
-	rte_snprintf(packet + strnlen(packet, MAX_PRINT_BUFF),				\
+	snprintf(packet + strnlen(packet, MAX_PRINT_BUFF),				\
 			MAX_PRINT_BUFF - strnlen(packet, MAX_PRINT_BUFF), "\n");	\
 																		\
 	LOG_DEBUG(APP, "%s", packet);						             	\

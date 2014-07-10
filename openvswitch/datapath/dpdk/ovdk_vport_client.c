@@ -90,17 +90,17 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 
 	port_writer_params->tx_burst_sz = PORT_CLIENT_TX_BURST_SIZE;
 
-	rte_snprintf(port_reader_params->mp,
+	snprintf(port_reader_params->mp,
 	             RTE_MEMPOOL_NAMESIZE,
 	             PKTMBUF_POOL_NAME);
 
 	/* Init RX ring */
-	rte_snprintf(port_ring_names->rx,
+	snprintf(port_ring_names->rx,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_RX_RING_NAME,
 	             vport_info->vportid);
 
-	rte_snprintf(port_reader_params->rx_ring_name,
+	snprintf(port_reader_params->rx_ring_name,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_RX_RING_NAME,
 	             vport_info->vportid);
@@ -118,12 +118,12 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	ret = NULL;
 
 	/* Init TX ring */
-	rte_snprintf(port_ring_names->tx,
+	snprintf(port_ring_names->tx,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_TX_RING_NAME,
 	             vport_info->vportid);
 
-	rte_snprintf(port_writer_params->tx_ring_name,
+	snprintf(port_writer_params->tx_ring_name,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_TX_RING_NAME,
 	             vport_info->vportid);
@@ -142,12 +142,12 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	ret = NULL;
 
 	/* Init free ring */
-	rte_snprintf(port_ring_names->free,
+	snprintf(port_ring_names->free,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_FREE_RING_NAME,
 	             vport_info->vportid);
 
-	rte_snprintf(port_reader_params->free_ring_name,
+	snprintf(port_reader_params->free_ring_name,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_FREE_RING_NAME,
 	             vport_info->vportid);
@@ -166,12 +166,12 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	ret = NULL;
 
 	/* Init alloc ring */
-	rte_snprintf(port_ring_names->alloc,
+	snprintf(port_ring_names->alloc,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_ALLOC_RING_NAME,
 	             vport_info->vportid);
 
-	rte_snprintf(port_reader_params->alloc_ring_name,
+	snprintf(port_reader_params->alloc_ring_name,
 	             RTE_RING_NAMESIZE,
 	             PORT_CLIENT_ALLOC_RING_NAME,
 	             vport_info->vportid);

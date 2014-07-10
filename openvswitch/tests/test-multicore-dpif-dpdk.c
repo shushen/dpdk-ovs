@@ -289,7 +289,7 @@ test_multicore_dpif_dpdk_getstats(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	for (pipeline_id = 0; pipeline_id < NUM_CORES; pipeline_id++) {
 		if (1 & (pipeline_mask >> pipeline_id)) {
 
-			rte_snprintf(name, sizeof(name), name, i++);
+			snprintf(name, sizeof(name), name, i++);
 
 			/* If there are more than 32 pipelines active, we add additional
 			 * ports as Vhost ports, as the maximum KNI ports we can add is 32.
@@ -348,7 +348,7 @@ test_multicore_dpif_dpdk_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	for (pipeline_id = 0; pipeline_id < NUM_CORES; pipeline_id++) {
 		if (1 & (pipeline_mask >> pipeline_id)) {
 
-			rte_snprintf(name, sizeof(name), "kni_example_%02u", i++);
+			snprintf(name, sizeof(name), "kni_example_%02u", i++);
 			/* build fake successful replys */
 			multiqueue_success_replys();
 
