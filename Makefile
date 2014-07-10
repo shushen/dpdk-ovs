@@ -59,7 +59,6 @@ export DOC_DIR := $(ROOT_DIR)/docs
 export OVS_DIR := $(ROOT_DIR)/openvswitch
 export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
-export MEMNIC_PATCH := $(ROOT_DIR)/guest/memnic/memnic_set_mac_address.patch
 #End Directories####################
 
 #WRL Build Variables################
@@ -85,10 +84,10 @@ ivshm-deps: dpdk
 
 #Targets for Configuration###########
 #These do not include a make and can therefore be used with tools.
-.PHONY: config patch-memnic clean-patch-memnic config-dpdk config-ovs config-qemu
+.PHONY: config config-dpdk config-ovs config-qemu
 config: config-dpdk config-ovs config-qemu
 
-config-dpdk: patch-memnic
+config-dpdk:
 	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) config T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 config-ovs:
@@ -99,8 +98,8 @@ config-qemu:
 #End Targets for Configuration#######
 
 #Targets for Clean##################
-.PHONY: clean clean-qemu clean-ivshm clean-ovs clean-dpdk clean-patch-memnic
-clean: config-dpdk clean-ivshm clean-ovs clean-qemu clean-patch-memnic clean-dpdk
+.PHONY: clean clean-qemu clean-ivshm clean-ovs clean-dpdk
+clean: config-dpdk clean-ivshm clean-ovs clean-qemu clean-dpdk
 
 clean-dpdk:
 	cd $(DPDK_DIR) && $(MAKE) clean && cd $(ROOT_DIR)
@@ -143,21 +142,3 @@ ivshm: ovs
 docs:
 	$(MAKE) -C $(DOC_DIR)
 #End Simple Targets#################
-
-#MEMNIC patching#######################
-patch-memnic:
-	@if patch -N -p1 -d $(MEMNIC_DIR) --dry-run --silent <$(MEMNIC_PATCH) 2>&1 >/dev/null; then \
-		echo "Applying MEMNIC patch"; \
-		patch -N -p1 -d $(MEMNIC_DIR) <$(MEMNIC_PATCH); \
-	else \
-		echo "MEMNIC patch doesn't apply. If the patch was already applied ignore this message."; \
-	fi
-
-clean-patch-memnic:
-	@if patch -R -N -p1 -d $(MEMNIC_DIR) --dry-run --silent <$(MEMNIC_PATCH) 2>&1 >/dev/null; then \
-		echo "Reversing MEMNIC patch"; \
-		patch -R -N -p1 -d $(MEMNIC_DIR) <$(MEMNIC_PATCH); \
-	else \
-		echo "MEMNIC patch doesn't reverse. If the patch was not already applied ignore this message."; \
-	fi
-#End MEMNIC patching###################
