@@ -42,6 +42,9 @@
 /* TODO: same value as VPORTS increase if required */
 #define OVDK_MAX_ACTIONS         48
 
+/* Default maximum packet size */
+#define OVDK_DEFAULT_MAX_FRAME_SIZE 1518
+
 /*
  * This is the maximum number of ports of each type that can be used in the
  * dataplane. It is an arbitrary limit that can be changed at compile time.

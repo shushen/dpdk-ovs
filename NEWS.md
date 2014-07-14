@@ -1,6 +1,7 @@
 # v1.2 - TBD
 
 - Added DPI support
+- Added Jumbo Frame Support
 
 # v1.1 - August 2014
 

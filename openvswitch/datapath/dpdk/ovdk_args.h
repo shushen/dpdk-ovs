@@ -40,6 +40,7 @@ void ovdk_args_usage(const char *name);
 int ovdk_args_parse_app_args(int argc, char *argv[]);
 uint64_t ovdk_args_get_portmask(void);
 int ovdk_args_get_stats_interval(void);
+uint32_t ovdk_args_get_max_frame_size(void);
 int ovdk_args_get_stats_core(void);
 unsigned ovdk_args_get_log_level(void);
 

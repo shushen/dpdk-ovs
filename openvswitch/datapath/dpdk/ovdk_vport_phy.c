@@ -38,6 +38,7 @@
 #include "ovdk_vport_phy.h"
 #include "ovdk_mempools.h"
 #include "ovdk_stats.h"
+#include "ovdk_args.h"
 
 #define PORT_RX_RING_SIZE       512
 #define PORT_TX_RING_SIZE       512
@@ -157,6 +158,11 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 		          port_id);
 
 	vport_info->type = OVDK_VPORT_TYPE_PHY;
+
+	if (ovdk_args_get_max_frame_size() > OVDK_DEFAULT_MAX_FRAME_SIZE) {
+		port_conf.rxmode.max_rx_pkt_len = ovdk_args_get_max_frame_size();
+		port_conf.rxmode.jumbo_frame = 1;
+	}
 
 	/* Init port */
 	ret = rte_eth_dev_configure(

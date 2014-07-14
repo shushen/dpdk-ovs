@@ -50,6 +50,8 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
 
 **  Note ** Higher log levels also report all lower-level messages.
 
+* `-J FRAMESIZE`
+  FRAMESIZE is an integer representing the maximum framesize supported by ovs-dpdk.
 
 ### Example Command
 

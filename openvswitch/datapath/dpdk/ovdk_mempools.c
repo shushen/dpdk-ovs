@@ -36,6 +36,7 @@
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
 
+#include "ovdk_args.h"
 #include "ovdk_mempools.h"
 #include "ovdk_datapath_messages.h"
 
@@ -47,8 +48,6 @@
 #define PKTMBUF_MAX_RING_SIZE   2048
 /*TODO Max number of mbufs */
 #define PKTMBUF_MAX_MBUFS       128000
-#define PKTMBUF_SIZE            (MAX_PACKET_SIZE + MBUF_OVERHEAD + \
-              RTE_MAX(sizeof(struct ovdk_message),sizeof(struct ovdk_upcall)))
 #define PKTMBUF_CACHE_SIZE      128
 
 #define NO_FLAGS                0
@@ -61,6 +60,15 @@ ovdk_mempools_init(void)
 {
 	struct rte_mempool *pktmbuf_pool = NULL;
 	struct rte_mempool *ctrlmbuf_pool = NULL;
+	uint32_t max_packet_size = OVDK_DEFAULT_MAX_FRAME_SIZE;
+	uint32_t pktmbuf_size = 0;
+	uint32_t max_frame_size = ovdk_args_get_max_frame_size();
+
+	if (max_packet_size < max_frame_size)
+		max_packet_size = max_frame_size;
+
+	pktmbuf_size = max_packet_size + MBUF_OVERHEAD +
+	    RTE_MAX(sizeof(struct ovdk_message), sizeof(struct ovdk_upcall));
 
 	RTE_LOG(INFO, APP, "Creating control mbuf pool '%s' [%u mbufs] ...\n",
 	        CTRLMBUF_POOL_NAME, CTRLMBUF_MAX_MBUFS);
@@ -75,10 +83,10 @@ ovdk_mempools_init(void)
 	if (sizeof(struct ovdk_upcall) >= RTE_PKTMBUF_HEADROOM)
 		rte_panic("Upcall exceed mbuf headroom\n");
 
-	RTE_LOG(INFO, APP, "Creating packet mbuf pool '%s' [%u mbufs] ...\n",
-	        PKTMBUF_POOL_NAME, PKTMBUF_MAX_MBUFS);
+	RTE_LOG(INFO, APP, "Creating packet mbuf pool '%s' [%u mbufs] [size %u]...\n",
+	        PKTMBUF_POOL_NAME, PKTMBUF_MAX_MBUFS, pktmbuf_size);
 	pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, PKTMBUF_MAX_MBUFS,
-	        PKTMBUF_SIZE, PKTMBUF_CACHE_SIZE,
+	        pktmbuf_size, PKTMBUF_CACHE_SIZE,
 	        sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
 	        NULL, rte_pktmbuf_init, NULL, SOCKET0, NO_FLAGS );
 	if (pktmbuf_pool == NULL)

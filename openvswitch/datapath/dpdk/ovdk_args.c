@@ -42,14 +42,15 @@
 #include <rte_log.h>
 
 #include "ovdk_args.h"
+#include "ovdk_config.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 #define PARAM_STATS_INTERVAL "stats_int"
 #define PARAM_STATS_CORE "stats_core"
 
-#define LOG_LEVEL_BASE 10
-#define PORTMASK_BASE  16
+#define LOG_LEVEL_BASE         10
+#define PORTMASK_BASE          16
 
 static const char *progname;
 static uint64_t port_mask = 0;
@@ -58,6 +59,9 @@ static int stats_core = -1;
 /* Default log level - used if '-v' parameter not supplied */
 static unsigned log_level = RTE_LOG_ERR;
 
+static uint32_t max_frame_size = OVDK_DEFAULT_MAX_FRAME_SIZE;
+
+static int parse_str_to_uint32t(const char *str, uint32_t *num);
 static int parse_portmask(const char *portmask);
 static int parse_log_level(const char *level_arg);
 
@@ -85,8 +89,9 @@ ovdk_args_usage(const char *name)
 	    "                              ** Higher log levels print all "
 	                                   "lower level logs **\n"
 	    "  --stats_int INT             print stats every INT (default: 0)\n"
-	    "  --stats_core CORE           id of core used to print stats\n",
-	    name, name);
+	    "  --stats_core CORE           id of core used to print stats\n"
+	    "  -J FRAME_SIZE: maximum frame size (Default %d)\n",
+	    name, name, OVDK_DEFAULT_MAX_FRAME_SIZE);
 }
 
 /*
@@ -109,7 +114,7 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 
 	progname = argv[0];
 
-	while ((opt = getopt_long(argc, argvopt, "p:v:", lgopts,
+	while ((opt = getopt_long(argc, argvopt, "p:v:J:", lgopts,
 	                          &option_index)) != EOF) {
 		switch (opt) {
 		case 'p':
@@ -124,6 +129,12 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 				ovdk_args_usage(progname);
 				rte_exit(EXIT_FAILURE, "Invalid log level"
 				         " specified '%s'\n", optarg);
+			}
+			break;
+		case 'J':  /* Frame size */
+			if (parse_str_to_uint32t(optarg, &max_frame_size)) {
+				ovdk_args_usage(progname);
+				return -1;
 			}
 			break;
 		case 0:
@@ -170,6 +181,27 @@ parse_portmask(const char *portmask)
 	return 0;
 }
 
+/**
+ * Take a string and try to convert it to uint32_t.
+ * Return 0 if success -1 otherwise.
+ */
+static int
+parse_str_to_uint32t(const char *str, uint32_t *num)
+{
+	char *end = NULL;
+	unsigned long temp;
+
+	if (str == NULL || *str == '\0')
+		return -1;
+
+	temp = strtoul(str, &end, 10);
+	if (end == NULL || *end != '\0' || temp == 0)
+		return -1;
+
+	*num = (uint32_t) temp;
+	return 0;
+}
+
 /*
  * Parse and validate the supplied log level argument.
  */
@@ -213,3 +245,7 @@ ovdk_args_get_stats_core(void) {
 	return stats_core;
 }
 
+uint32_t
+ovdk_args_get_max_frame_size(void) {
+	return max_frame_size;
+}
