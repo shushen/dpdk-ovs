@@ -40,7 +40,7 @@
 #include <rte_launch.h>
 #include <rte_debug.h>
 
-#include "jobs.h"
+#include "ovdk_jobs.h"
 
 #define JOBLIST_REFS_NAME "MProc_joblist_refs"
 

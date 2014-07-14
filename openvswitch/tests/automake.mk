@@ -75,6 +75,7 @@ TESTSUITE_AT += \
 	tests/ovdk-vport.at \
 	tests/dpif-dpdk.at \
 	tests/multicore-dpif-dpdk.at
+	tests/ovdk-jobs.at
 endif
 
 TESTSUITE = $(srcdir)/tests/testsuite
@@ -302,14 +303,6 @@ tests_test_ovsdb_SOURCES = \
 EXTRA_DIST += tests/uuidfilt.pl tests/ovsdb-monitor-sort.pl
 tests_test_ovsdb_LDADD = ovsdb/libovsdb.a lib/libopenvswitch.a $(SSL_LIBS)
 
-# used for ivshm-mngr integration tests
-noinst_PROGRAMS += tests/dummy-vports-info-mock
-tests_dummy_vports_info_mock_SOURCES = tests/dummy-vports-info-mock.c
-tests_dummy_vports_info_mock_SOURCES += tests/dpdk-vport-stub.c
-tests_dummy_vports_info_mock_SOURCES += datapath/dpdk/ovs-vport.c
-tests_dummy_vports_info_mock_CFLAGS = -iquote ./datapath/dpdk
-tests_dummy_vports_info_mock_LDADD = $(dpdk_libs)
-
 # idltest schema and IDL
 OVSIDL_BUILT += tests/idltest.c tests/idltest.h tests/idltest.ovsidl
 IDLTEST_IDL_FILES = tests/idltest.ovsschema tests/idltest.ann
@@ -430,6 +423,22 @@ tests_test_ovdk_vport_CFLAGS = $(AM_CFLAGS)
 tests_test_ovdk_vport_CFLAGS += -D_FILE_OFFSET_BITS=64
 tests_test_ovdk_vport_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
 tests_test_ovdk_vport_LDADD += -lfuse
+
+noinst_PROGRAMS += tests/test-ovdk-jobs
+tests_test_ovdk_jobs_SOURCES = tests/test-ovdk-jobs.c
+tests_test_ovdk_jobs_SOURCES += datapath/dpdk/ovdk_jobs.c
+tests_test_ovdk_jobs_CFLAGS = -iquote ./datapath/dpdk
+tests_test_ovdk_jobs_LDADD = $(dpdk_libs)
+tests_test_ovdk_jobs_LDADD += lib/libopenvswitch.a
+
+# used for ivshm-mngr integration tests
+noinst_PROGRAMS += tests/dummy-vports-info-mock
+tests_dummy_vports_info_mock_SOURCES = tests/dummy-vports-info-mock.c
+tests_dummy_vports_info_mock_SOURCES += tests/dpdk-vport-stub.c
+tests_dummy_vports_info_mock_SOURCES += datapath/dpdk/ovs-vport.c
+tests_dummy_vports_info_mock_CFLAGS = -iquote ./datapath/dpdk
+tests_dummy_vports_info_mock_LDADD = $(dpdk_libs)
+
 endif
 
 # Python tests.
