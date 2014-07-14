@@ -55,7 +55,7 @@ mkdir ~/ovs_dpdk
 cd ~/ovs_dpdk
 mkdir ovdk
 unzip <dpdk_release_pkg>.tar.gz
-tar -xvzg <dpdk_vswitch_release_pkg>.tar.gz  -C ovdk
+tar -xvzg <dpdk_vswitch_release_pkg>.tar.gz -C ovdk
 mv <dpdk_extract_dir> DPDK
 ```
 
@@ -111,7 +111,7 @@ make install T="$RTE_TARGET"
 cd -
 ```
 
-**Note:** To enable the new IVSHM feature introduced with Intel® DPDK 1.6.0, Intel® DPDK has to be compiled using the `ivshmem` target. This requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [dpdk.org][dpdkorg-dpdkgsg] - for additional information on performing this step.
+**Note:** Generally speaking, Intel® DPDK has to be compiled using the `ivshmem` target. However, this requirement may differ depending on the environment in which the system is built. Please refer to sections two and three of the *Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide* - which can be found on [dpdk.org][dpdkorg-dpdkgsg] - for additional information on performing this step.
 
 #### Open vSwitch
 
@@ -127,7 +127,7 @@ cd -
 
 ```bash
 cd ovdk/qemu
-./configure --enable-kvm --dpdk-dir=$(RTE_SDK) --target-list=x86_64-softmmu --disable-pie
+./configure --enable-kvm --dpdk-dir=$(RTE_SDK) --target-list=x86_64-softmmu
 cd -
 ```
 

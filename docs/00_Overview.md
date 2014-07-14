@@ -1,6 +1,6 @@
 [Intel® DPDK vSwitch][dpdk-ovs-github] is a fork of the open source Open vSwitch multilayer virtual switch found at [openvswitch.org][ovs].
 
-Intel and Wind River teams re-created the kernel forwarding module (data plane) by building the switching logic on top of the Intel® DPDK library to significantly boost packet switching throughput. The Forwarding engine incorporates Intel® DPDK Huge Page Tables. The Open vSwitch control daemon is modified to connect to Intel® DPDK Huge Page Tables. The forwarding module runs in Linux user space with BSD license rights. Intel® DPDK vSwitch implements a subset of the switching functionality of Open vSwitch.
+Intel® and Wind River teams re-created the kernel forwarding module (data plane) by building the switching logic on top of the Intel® DPDK library to significantly boost packet switching throughput. The Forwarding engine incorporates Intel® DPDK Huge Page Tables. The Open vSwitch control daemon is modified to connect to Intel® DPDK Huge Page Tables. The forwarding module runs in Linux user space with BSD license rights. Intel® DPDK vSwitch implements a subset of the switching functionality of Open vSwitch.
 
 ______
 

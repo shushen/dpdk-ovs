@@ -150,7 +150,7 @@ To add a new interface to the above datapath:
   ovsdpdk1,type=dpdkphy
 ```
 
-To add a new *flow* to the above datapath, with the following spec
+To add a new flow to the above datapath, with the following spec:
 
 * Traffic: `IPv4`, `TCP`
 * Source MAC: `00:00:00:00:00:01`
@@ -228,7 +228,7 @@ Please note that not all options provided by the utility have been validated. Se
 
 ### Example Command
 
-Add a new *flow* to an existing bridge - `br0` - with two existing OpenFlow ports - numbers `1` and `2` - where the flow has the following spec:
+Add a new flow to an existing bridge - `br0` - with two existing OpenFlow ports - numbers `1` and `2` - where the flow has the following spec:
 
 * Source IP: `1.1.1.1`
 * Destination IP: `2.2.2.2`
