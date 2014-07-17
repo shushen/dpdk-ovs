@@ -32,10 +32,13 @@
 obj-m += fd_link.o
 
 all:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(CURDIR) modules
+
+install:
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(CURDIR) modules_install
 
 clean:
-	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(CURDIR) clean
 
 check:
 	$(info "This target is not implemented")
