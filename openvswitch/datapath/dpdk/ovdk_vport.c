@@ -421,17 +421,17 @@ ovdk_vport_get_port_name(uint32_t vportid, char *port_name)
 int
 ovdk_vport_port_verify(uint32_t vportid)
 {
-        int pmask_val = -1;
-        int ret = VALID_PORTMASK;
+	int pmask_val = -1;
+	int ret = VALID_PORTMASK;
 
-        if (vportid < OVDK_MAX_PHYPORTS)
-                pmask_val = (phy_portmask & (1 << vportid));
-                if (pmask_val == 0)
-                        ret = ENODEV;
-        else
-                if (vportid > OVDK_MAX_VPORTS)
-                        ret = ENODEV;
+	if (vportid < OVDK_MAX_PHYPORTS)
+		pmask_val = (phy_portmask & (1 << vportid));
+		if (pmask_val == 0)
+			ret = ENODEV;
+	else
+		if (vportid > OVDK_MAX_VPORTS)
+			ret = ENODEV;
 
-        return ret;
+	return ret;
 }
 

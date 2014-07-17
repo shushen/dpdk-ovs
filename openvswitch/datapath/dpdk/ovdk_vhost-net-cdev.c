@@ -48,20 +48,20 @@
 #include "rte_port_vhost.h"
 #include "ovdk_vhost-net-cdev.h"
 
-#define FUSE_OPT_DUMMY 		"\0\0"
-#define FUSE_OPT_FORE 		"-f\0\0"
-#define FUSE_OPT_NOMULTI 	"-s\0\0"
+#define FUSE_OPT_DUMMY   "\0\0"
+#define FUSE_OPT_FORE    "-f\0\0"
+#define FUSE_OPT_NOMULTI "-s\0\0"
 
 /* Macros for printing using RTE_LOG */
 #define RTE_LOGTYPE_VHOST_CONFIG RTE_LOGTYPE_USER2
 
-const uint32_t	default_major = 231;
-const uint32_t	default_minor = 1;
-const char		cuse_device_name[]	= "/dev/cuse";
-const char		default_cdev[] = "vhost-net";
+const uint32_t          default_major = 231;
+const uint32_t          default_minor = 1;
+const char              cuse_device_name[] = "/dev/cuse";
+const char              default_cdev[] = "vhost-net";
 
-static struct fuse_session			*session;
-static struct vhost_net_device_ops	const *ops;
+static struct fuse_session *session;
+static struct vhost_net_device_ops const *ops;
 
 /*
  * Returns vhost_device_ctx from given fuse_req_t. The index is populated later when
@@ -118,61 +118,61 @@ vhost_net_release(fuse_req_t req, struct fuse_file_info *fi)
  * Boilerplate code for CUSE IOCTL
  * Implicit arguments: ctx, req, result.
  */
-#define VHOST_IOCTL(func) do {								\
-	result = (func)(ctx);									\
-	fuse_reply_ioctl(req, result, NULL, 0);					\
-} while(0)													\
+#define VHOST_IOCTL(func) do {                     \
+	result = (func)(ctx);                      \
+	fuse_reply_ioctl(req, result, NULL, 0);    \
+} while(0)                                         \
 
 /*
  * Boilerplate IOCTL RETRY
  * Implicit arguments: req.
  */
-#define VHOST_IOCTL_RETRY(size_r, size_w) do {									\
-	struct iovec iov_r = { arg, (size_r) };										\
-	struct iovec iov_w = { arg, (size_w) };										\
-	fuse_reply_ioctl_retry(req, &iov_r, (size_r)?1:0, &iov_w, (size_w)?1:0);	\
-} while(0)																		\
+#define VHOST_IOCTL_RETRY(size_r, size_w) do {        \
+	struct iovec iov_r = { arg, (size_r) };       \
+	struct iovec iov_w = { arg, (size_w) };       \
+	fuse_reply_ioctl_retry(req, &iov_r, (size_r)?1:0, &iov_w, (size_w)?1:0); \
+} while(0)                                            \
 
 /*
  * Boilerplate code for CUSE Read IOCTL
  * Implicit arguments: ctx, req, result, in_bufsz, in_buf.
  */
-#define VHOST_IOCTL_R(type, var, func) do {				\
-	if (!in_bufsz) {									\
-		VHOST_IOCTL_RETRY(sizeof(type), 0);				\
-	} else {											\
-		(var) = *(const type * ) in_buf;				\
-		result = func(ctx, &(var));						\
-		fuse_reply_ioctl(req, result, NULL, 0);			\
-	}													\
-} while(0)												\
+#define VHOST_IOCTL_R(type, var, func) do {            \
+	if (!in_bufsz) {                               \
+		VHOST_IOCTL_RETRY(sizeof(type), 0);    \
+	} else {                                       \
+		(var) = *(const type * ) in_buf;       \
+		result = func(ctx, &(var));            \
+		fuse_reply_ioctl(req, result, NULL, 0);\
+	}                                              \
+} while(0)                                             \
 
 /*
- *	Boilerplate code for CUSE Write IOCTL
+ * Boilerplate code for CUSE Write IOCTL
  * Implicit arguments: ctx, req, result, out_bufsz.
  */
-#define	VHOST_IOCTL_W(type, var, func) do {						\
-	if (!out_bufsz) {											\
-		VHOST_IOCTL_RETRY(0, sizeof(type));						\
-	} else {													\
-		result = (func)(ctx, &(var));							\
-		fuse_reply_ioctl(req, result, &(var), sizeof(type));	\
-	}															\
-} while(0)														\
+#define	VHOST_IOCTL_W(type, var, func) do {            \
+	if (!out_bufsz) {                              \
+		VHOST_IOCTL_RETRY(0, sizeof(type));    \
+	} else {                                       \
+		result = (func)(ctx, &(var));          \
+		fuse_reply_ioctl(req, result, &(var), sizeof(type));\
+	}                                              \
+} while(0)                                             \
 
 /*
  * Boilerplate code for CUSE Read/Write IOCTL
  * Implicit arguments: ctx, req, result, in_bufsz, in_buf.
  */
-#define VHOST_IOCTL_RW(type1, var1, type2, var2, func) do {			\
-	if (!in_bufsz) {												\
-		VHOST_IOCTL_RETRY(sizeof(type1), sizeof(type2));			\
-	} else {														\
-		(var1) = *(const type1* ) (in_buf);							\
-		result = (func)(ctx, (var1), &(var2));						\
-		fuse_reply_ioctl(req, result, &(var2), sizeof(type2));		\
-	}																\
-} while(0)															\
+#define VHOST_IOCTL_RW(type1, var1, type2, var2, func) do {           \
+	if (!in_bufsz) {                                              \
+		VHOST_IOCTL_RETRY(sizeof(type1), sizeof(type2));      \
+	} else {                                                      \
+		(var1) = *(const type1* ) (in_buf);                   \
+		result = (func)(ctx, (var1), &(var2));                \
+		fuse_reply_ioctl(req, result, &(var2), sizeof(type2));\
+	}                                                             \
+} while(0)                                                            \
 
 /*
  * The IOCTLs are handled using CUSE/FUSE in userspace. Depending on
@@ -363,7 +363,7 @@ register_cuse_device(const char *base_name, int index, struct vhost_net_device_o
 /*
  * The CUSE session is launched allowing the application to receive open, release and ioctl calls.
  */
-void 
+void
 cuse_session_loop(void)
 {
 	fuse_session_loop(session);
