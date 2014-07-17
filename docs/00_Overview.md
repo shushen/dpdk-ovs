@@ -12,7 +12,7 @@ Intel® DPDK vSwitch is a proofpoint Virtual Switch implemented using Intel® DPDK
 
 [Open vSwitch][ovs] is a production quality, multilayer virtual switch licensed under the open source Apache 2.0 license. The Open vSwitch source code has been modified and provided here to enable fast packet switching on Intel® Architecture and improve small-packet performance.
 
-![Architecture Overview](ovdk_architecture_overview.svg "Architecture Overview")
+![Architecture Overview](ovdk_architecture_overview.png?raw=true "Architecture Overview")
 
 ____
 
