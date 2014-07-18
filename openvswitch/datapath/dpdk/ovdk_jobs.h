@@ -32,8 +32,8 @@
  *
  */
 
-#ifndef _JOBS_H_
-#define _JOBS_H_
+#ifndef _OVDK_JOBS_H_
+#define _OVDK_JOBS_H_
 
 #include <rte_lcore.h>
 #include <rte_prefetch.h>
@@ -43,43 +43,43 @@
 
 typedef void (lcore_job_t)(void *);
 
-struct job {
+struct ovdk_job {
 	lcore_job_t *func;
 	void *arg;
 };
 
-struct joblist {
+struct ovdk_joblist {
 	volatile int online; /* if 0, loop exit is requested */
 
 	unsigned nb_jobs;
-	struct job jobs[MAXJOBS_PER_LCORE];
+	struct ovdk_job jobs[MAXJOBS_PER_LCORE];
 } __rte_cache_aligned;
 
-extern struct joblist **joblist_refs;
+extern struct ovdk_joblist **ovdk_joblist_refs;
 
 /*
  * Initialization
  */
-void jobs_init(void);
+void ovdk_jobs_init(void);
 
 /*
  * Job management
  */
-void jobs_clear_lcore(unsigned lcore_id);
-void jobs_clear_all(void);
-int jobs_add_to_lcore(lcore_job_t *f, void *arg, unsigned lcore_id);
+void ovdk_jobs_clear_lcore(unsigned lcore_id);
+void ovdk_jobs_clear_all(void);
+int ovdk_jobs_add_to_lcore(lcore_job_t *f, void *arg, unsigned lcore_id);
 
 /*
  * Job execution
  */
-int jobs_launch_slave_lcore(unsigned lcore_id);
-void jobs_launch_slaves_all(void);
-int jobs_stop_slave_lcore(unsigned lcore_id);
-void jobs_stop_slaves_all(void);
-#define JOBS_LCORE_IS_ONLINE(lcore_id) \
+int ovdk_jobs_launch_slave_lcore(unsigned lcore_id);
+void ovdk_jobs_launch_slaves_all(void);
+int ovdk_jobs_stop_slave_lcore(unsigned lcore_id);
+void ovdk_jobs_stop_slaves_all(void);
+#define OVDK_JOBS_LCORE_IS_ONLINE(lcore_id) \
 	(rte_eal_get_lcore_state((lcore_id)) == RUNNING)
-#define JOBS_LCORE_HAS_JOBS(lcore_id) \
-	(joblist_refs[(lcore_id)]->nb_jobs > 0)
+#define OVDK_JOBS_LCORE_HAS_JOBS(lcore_id) \
+	(ovdk_joblist_refs[(lcore_id)]->nb_jobs > 0)
 
 /**
  * Runs a single job iteration on master lcore
@@ -89,15 +89,15 @@ void jobs_stop_slaves_all(void);
  * Note: Call this function only on master lcore.
  * Note: Looping logic has to be done by the caller.
  * Note: The online flag is not used on master lcore. If this lcore
- *       shall stop processing, stop calling jobs_run_master_lcore().
+ *       shall stop processing, stop calling ovdk_jobs_run_master_lcore().
  * Note: Job execution throughput is expected to be lower on
  *       master lcore. Please avoid running performance critical
  *       jobs this lcore.
  */
 static inline void __attribute__((always_inline))
-jobs_run_master_lcore(void)
+ovdk_jobs_run_master_lcore(void)
 {
-	struct joblist *joblist = joblist_refs[rte_lcore_id()];
+	struct ovdk_joblist *joblist = ovdk_joblist_refs[rte_lcore_id()];
 	static unsigned i = ((unsigned) ((signed) -1));
 
 	if (likely(joblist->nb_jobs > 0)) {
@@ -106,4 +106,4 @@ jobs_run_master_lcore(void)
 	}
 }
 
-#endif /* _JOBS_H_ */
+#endif /* _OVDK_JOBS_H_ */

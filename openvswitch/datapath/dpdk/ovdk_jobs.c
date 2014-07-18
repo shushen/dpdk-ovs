@@ -42,7 +42,7 @@
 
 #include "ovdk_jobs.h"
 
-#define JOBLIST_REFS_NAME "MProc_joblist_refs"
+#define JOBLIST_REFS_NAME "OVDK_joblist_refs"
 
 #define ASSERT_IS_MASTER_LCORE(lcore_id) \
 	do { \
@@ -65,39 +65,39 @@
 	} while(0)
 #define ASSERT_JOBLIST_EXISTS(lcore_id) \
 	do { \
-		if (!joblist_refs[(lcore_id)]) \
+		if (!ovdk_joblist_refs[(lcore_id)]) \
 			rte_panic("No job list allocated for lcore %u\n", \
 			          (lcore_id)); \
 	} while(0)
 
-struct joblist **joblist_refs;
+struct ovdk_joblist **ovdk_joblist_refs;
 
 /**
  * Initialization
  */
 void
-jobs_init(void)
+ovdk_jobs_init(void)
 {
 	unsigned i;
 
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 
-	joblist_refs = rte_calloc(JOBLIST_REFS_NAME, RTE_MAX_LCORE,
+	ovdk_joblist_refs = rte_calloc(JOBLIST_REFS_NAME, RTE_MAX_LCORE,
 	                          sizeof(struct joblist *), CACHE_LINE_SIZE);
-	if (!joblist_refs)
+	if (!ovdk_joblist_refs)
 		rte_exit(EXIT_FAILURE, "Cannot allocate joblist reference "
 		         "table\n");
 
 	RTE_LCORE_FOREACH(i) {
-		joblist_refs[i] = rte_malloc_socket(NULL,
-		                                    sizeof(struct joblist),
+		ovdk_joblist_refs[i] = rte_malloc_socket(NULL,
+		                                    sizeof(struct ovdk_joblist),
 		                                    CACHE_LINE_SIZE,
 		                                    rte_lcore_to_socket_id(i));
-		if (!joblist_refs[i])
+		if (!ovdk_joblist_refs[i])
 			rte_exit(EXIT_FAILURE,
 			         "Cannot allocate joblist for lcore %u\n", i);
-		joblist_refs[i]->nb_jobs = 0;
-		joblist_refs[i]->online = 0;
+		ovdk_joblist_refs[i]->nb_jobs = 0;
+		ovdk_joblist_refs[i]->online = 0;
 	}
 }
 
@@ -105,27 +105,27 @@ jobs_init(void)
  * Clears the job list of an lcore
  */
 void
-jobs_clear_lcore(unsigned lcore_id)
+ovdk_jobs_clear_lcore(unsigned lcore_id)
 {
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 	ASSERT_JOBLIST_EXISTS(lcore_id);
 	ASSERT_SLAVE_LCORE_STOPPED(lcore_id);
 
-	joblist_refs[lcore_id]->nb_jobs = 0;
+	ovdk_joblist_refs[lcore_id]->nb_jobs = 0;
 }
 
 /**
  * Clears the job list of all lcores
  */
 void
-jobs_clear_all(void)
+ovdk_jobs_clear_all(void)
 {
 	unsigned i;
 
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 
 	RTE_LCORE_FOREACH(i) {
-		jobs_clear_lcore(i);
+		ovdk_jobs_clear_lcore(i);
 	}
 }
 
@@ -134,12 +134,12 @@ jobs_clear_all(void)
  * the job list of an lcore. On success 0 is returned.
  *
  * Note: Be sure that the depending lcore is in stopped
- * state (see jobs_stop_lcore()) while using this function.
+ * state (see ovdk_jobs_stop_lcore()) while using this function.
  */
 int
-jobs_add_to_lcore(lcore_job_t *f, void *arg, unsigned lcore_id)
+ovdk_jobs_add_to_lcore(lcore_job_t *f, void *arg, unsigned lcore_id)
 {
-	struct joblist *joblist;
+	struct ovdk_joblist *joblist;
 	unsigned i;
 
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
@@ -148,7 +148,7 @@ jobs_add_to_lcore(lcore_job_t *f, void *arg, unsigned lcore_id)
 	if (f == NULL)
 		rte_panic("Tried to add a null pointer as job reference\n");
 
-	joblist = joblist_refs[lcore_id];
+	joblist = ovdk_joblist_refs[lcore_id];
 	if (joblist->nb_jobs >= MAXJOBS_PER_LCORE)
 		return -ENOBUFS;
 
@@ -166,7 +166,7 @@ static int _slave_lcore_loop(void *arg);
  * This function will return 0 on success.
  */
 int
-jobs_launch_slave_lcore(unsigned lcore_id)
+ovdk_jobs_launch_slave_lcore(unsigned lcore_id)
 {
 	enum rte_lcore_state_t state;
 
@@ -178,20 +178,20 @@ jobs_launch_slave_lcore(unsigned lcore_id)
 	if (state == RUNNING)
 		return 0; /* lcore already launched */
 
-	joblist_refs[lcore_id]->online = 1; /* enable processing flag */
-	return rte_eal_remote_launch(_slave_lcore_loop, joblist_refs[lcore_id],
+	ovdk_joblist_refs[lcore_id]->online = 1; /* enable processing flag */
+	return rte_eal_remote_launch(_slave_lcore_loop, ovdk_joblist_refs[lcore_id],
 	                             lcore_id);
 }
 
 void
-jobs_launch_slaves_all(void)
+ovdk_jobs_launch_slaves_all(void)
 {
 	unsigned i;
 
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 
 	RTE_LCORE_FOREACH_SLAVE(i) {
-		if (jobs_launch_slave_lcore(i) < 0)
+		if (ovdk_jobs_launch_slave_lcore(i) < 0)
 			rte_panic("Could not launch lcore %u\n", i);
 	}
 }
@@ -199,13 +199,13 @@ jobs_launch_slaves_all(void)
 /**
  * Stops a slave lcore thread
  * This core will actually put into blocked state by DPDK
- * until it get started up again (see: jobs_launch_lcore()).
+ * until it get started up again (see: ovdk_jobs_launch_lcore()).
  *
  * This function will return when the according lcore thread
  * stopped.
  */
 int
-jobs_stop_slave_lcore(unsigned lcore_id)
+ovdk_jobs_stop_slave_lcore(unsigned lcore_id)
 {
 	enum rte_lcore_state_t state;
 
@@ -213,7 +213,7 @@ jobs_stop_slave_lcore(unsigned lcore_id)
 	ASSERT_JOBLIST_EXISTS(lcore_id);
 	ASSERT_IS_SLAVE_LCORE(lcore_id);
 
-	joblist_refs[lcore_id]->online = 0; /* request lcore exit */
+	ovdk_joblist_refs[lcore_id]->online = 0; /* request lcore exit */
 	state = rte_eal_get_lcore_state(lcore_id);
 	if (state == RUNNING)
 		return rte_eal_wait_lcore(lcore_id); /* wait for lcore exit */
@@ -221,14 +221,14 @@ jobs_stop_slave_lcore(unsigned lcore_id)
 }
 
 void
-jobs_stop_slaves_all(void)
+ovdk_jobs_stop_slaves_all(void)
 {
 	unsigned i;
 
 	ASSERT_IS_MASTER_LCORE(rte_lcore_id());
 
 	RTE_LCORE_FOREACH_SLAVE(i) {
-		if (jobs_stop_slave_lcore(i) < 0)
+		if (ovdk_jobs_stop_slave_lcore(i) < 0)
 			rte_panic("Could not stop lcore %u\n", i);
 	}
 }
@@ -236,14 +236,14 @@ jobs_stop_slaves_all(void)
 
 /**
  * Job execution loop on slave lcore
- * This function gets assigned to a slave lcore via jobs_launch_slave_lcore().
+ * This function gets assigned to a slave lcore via ovdk_jobs_launch_slave_lcore().
  * It executes the assigned job functions until exit is requested
- * (see jobs_stop_lcore()).
+ * (see ovdk_jobs_stop_lcore()).
  */
 static int
 _slave_lcore_loop(void *arg)
 {
-	struct joblist *joblist = arg;
+	struct ovdk_joblist *joblist = arg;
 	unsigned i;
 
 	rte_prefetch0(joblist);
