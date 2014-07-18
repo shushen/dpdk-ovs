@@ -1,4 +1,4 @@
-# v1.1 - June 2014
+# v1.1 - July 2014
 
 - Added multicore support - datapath may run on multiple pipelines/cores,
   with added load-balancing for handling vswitchd commands (round-robin).

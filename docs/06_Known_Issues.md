@@ -101,6 +101,8 @@ ______
 
 Not all functionality that is supported by Open vSwitch is supported by the Intel® DPDK vSwitch.
 
+ovs-dpctl show command displaying incorrect statistics.
+
 ______
 
 ## ovs-ivshm-mngr
@@ -109,4 +111,15 @@ The IVSHM manager utility must be executed once the switch is up and running and
 
 ______
 
+## ovs-client
+
+IVSHM clients running in the host fail. The following dpdk patch fixes this issue [www.dpdk.org/ml/archives/dev/2014-June/003591.html][mail-003591]
+
+IVSHM VM to VM may fail intermittently. The following dpdk patch fixes this issue [www.dpdk.org/ml/archives/dev/2014-June/003591.html][mail-003591]
+
+______
+
 © 2014, Intel Corporation. All Rights Reserved
+
+[mail-003591]: http://www.dpdk.org/ml/archives/dev/2014-June/003591.html
+

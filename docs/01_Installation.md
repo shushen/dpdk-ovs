@@ -127,7 +127,7 @@ cd -
 
 ```bash
 cd ovdk/qemu
-./configure --enable-kvm --dpdk-dir=$(RTE_SDK) --target-list=x86_64-softmmu
+./configure --enable-kvm --target-list=x86_64-softmmu
 cd -
 ```
 

@@ -57,7 +57,7 @@ Three different utilities are necessary to build Open vSwitch: Intel® DPDK, QEM
 
     ```bash
     cd $(OVS_DIR)/qemu
-    ./configure --enable-kvm --dpdkdir=$(DPDK_DIR) --target-list=x86_64-softmmu
+    ./configure --enable-kvm --target-list=x86_64-softmmu
     make
     ```
 
