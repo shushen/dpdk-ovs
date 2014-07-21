@@ -118,5 +118,6 @@ m4_include([tests/dpif-dpdk.at])
 m4_include([tests/multicore-dpif-dpdk.at])
 m4_include([tests/netdev-dpdk.at])
 m4_include([tests/ovdk-datapath-flow-actions.at])
+m4_include([tests/ovdk-vport.at])
 endif
 

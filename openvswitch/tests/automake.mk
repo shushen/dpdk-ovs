@@ -72,7 +72,8 @@ TESTSUITE_AT += \
 	tests/netdev-dpdk.at \
 	tests/dpif-dpdk-flow-table.at \
 	tests/ovdk-datapath-flow-actions.at \
-	tests/dpif-dpdk.at
+	tests/ovdk-vport.at \
+	tests/dpif-dpdk.at \
 	tests/multicore-dpif-dpdk.at
 endif
 
@@ -407,6 +408,28 @@ tests_test_ovdk_datapath_flow_actions_CFLAGS += -D_FILE_OFFSET_BITS=64
 tests_test_ovdk_datapath_flow_actions_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
 tests_test_ovdk_datapath_flow_actions_LDADD += $(dpdk_libs)
 tests_test_ovdk_datapath_flow_actions_LDADD += -lfuse
+
+noinst_PROGRAMS += tests/test-ovdk-vport
+tests_test_ovdk_vport_SOURCES = tests/test-ovdk-vport.c
+tests_test_ovdk_vport_SOURCES += tests/ovdk-vport-phy-stub.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovs-vport.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_args.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_vport.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_stats.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_mempools.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_hash.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_vport_client.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_vport_bridge.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_flow.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_vport_vhost.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_virtio-net.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/ovdk_vhost-net-cdev.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/rte_port_vhost.c
+tests_test_ovdk_vport_SOURCES += datapath/dpdk/rte_port_ivshm.c
+tests_test_ovdk_vport_CFLAGS = $(AM_CFLAGS)
+tests_test_ovdk_vport_CFLAGS += -D_FILE_OFFSET_BITS=64
+tests_test_ovdk_vport_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+tests_test_ovdk_vport_LDADD += -lfuse
 endif
 
 # Python tests.
