@@ -76,7 +76,7 @@ ______
 
 ## Guest Applications
 
-* `ovs_client` application: Sample application to demonstrate ivshmem method. This code is provided in `guest/ivshm`
+* `ovs_client` application: Sample application to demonstrate ivshmem method. This code is provided in `guest/ovs_client`
 
 More detailed information can be found in the [Sample Applications][doc-sample-apps] section.
 
