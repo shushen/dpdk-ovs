@@ -276,12 +276,12 @@ summate_stats(struct ovdk_port_stats *total_stats,
     if (total_stats && stats) {
         total_stats->rx += stats->rx;
         total_stats->tx += stats->tx;
-        total_stats->rx_bytes += stats->rx_bytes;
-        total_stats->tx_bytes += stats->tx_bytes;
+        total_stats->rx_bytes = UINT64_MAX;
+        total_stats->tx_bytes = UINT64_MAX;
         total_stats->rx_drop  += stats->rx_drop;
         total_stats->tx_drop  += stats->tx_drop;
-        total_stats->rx_error += stats->rx_error;
-        total_stats->tx_error += stats->tx_error;
+        total_stats->rx_error = UINT64_MAX;
+        total_stats->tx_error = UINT64_MAX;
     }
 }
 
@@ -401,6 +401,11 @@ static int
 dpif_dpdk_get_stats(const struct dpif *dpif_ OVS_UNUSED,
                     struct dpif_dp_stats *stats)
 {
+    struct flow key;
+    uint64_t handle = 0;
+    uint16_t index = UINT16_MAX;
+    int error = 0;
+
     DPDK_DEBUG()
 
     if (stats == NULL){
@@ -411,6 +416,11 @@ dpif_dpdk_get_stats(const struct dpif *dpif_ OVS_UNUSED,
     stats->n_missed = 0;
     stats->n_lost = 0;
     stats->n_flows = 0;
+
+    /* Calculate number of flows */
+    while (dpif_dpdk_flow_table_entry_next(&key, &handle, &index) == -EAGAIN) {
+        stats->n_flows++;
+    }
 
     return 0;
 }
