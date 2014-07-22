@@ -59,18 +59,20 @@ static int parse_portmask(const char *portmask);
 /*
  * Display usage instructions.
  */
-static void
-usage(void)
+void
+ovdk_args_usage(const char *name)
 {
 	printf(
-	    "%s [EAL options] -- -p PORTMASK --stats_core STATS_CORE "
-	    "--stats_int UPDATE_TIME\n"
-	    " -p PORTMASK: hexadecimal bitmask of ports to use\n"
-	    " --stats_core CORE_ID: the core used to display stats\n"
-	    " --stats_int UPDATE_TIME:\n"
-	    "   Interval (in seconds) at which stats are updated. Set to 0"
-	    " to disable (default)\n"
-	    , progname);
+	    "%s: Intel DPDK vSwitch datapath application\n"
+	    "usage: %s [EAL] -- [ARG...]\n"
+	    "\n"
+	    "Required Arguments:\n"
+	    "  -p PORTMASK                 hex bitmask of phy ports to use\n"
+	    "\n"
+	    "Optional Arguments:\n"
+	    "  --stats_int SECS            print stats every SECS seconds (default: 0)\n"
+	    "  --stats_core CORE           id of core used to print stats\n",
+	    name, name);
 }
 
 /*
@@ -98,7 +100,7 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 		switch (opt) {
 		case 'p':
 			if (parse_portmask(optarg) != 0) {
-				usage();
+				ovdk_args_usage(progname);
 				rte_exit(EXIT_FAILURE, "Invalid option"
 				         " specified '%c'\n", opt);
 			}
@@ -113,7 +115,7 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 			break;
 		case '?':
 		default:
-			usage();
+			ovdk_args_usage(progname);
 			if (optopt)
 				rte_exit(EXIT_FAILURE, "Invalid option '-%c'"
 				         "\n", optopt);

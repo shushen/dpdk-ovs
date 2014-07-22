@@ -76,6 +76,9 @@ main(int argc, char **argv)
 	if (old_action.sa_handler != SIG_IGN)
 		sigaction (SIGINT, &new_action, NULL);
 
+	/* Enable correct usage message */
+	rte_set_application_usage_hook(ovdk_args_usage);
+
 	/* Init EAL */
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0)

@@ -36,6 +36,7 @@
 #ifndef __OVDK_ARGS_H__
 #define __OVDK_ARGS_H__
 
+void ovdk_args_usage(const char *name);
 int ovdk_args_parse_app_args(int argc, char *argv[]);
 uint64_t ovdk_args_get_portmask(void);
 int ovdk_args_get_stats_interval(void);
