@@ -53,14 +53,6 @@ ______
 
 * Some Intel® DPDK dpif unit tests create files in `/tmp`. These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
 
-* Some packets will cause the following error message:
-
-    ```bash
-    2000-01-01T00:00:00Z|00000|dpif(dispatcher)|WARN|dpdk@ovs-dpdk: recv failed (Invalid argument)
-    ```
-
-    This is due to missing support for the "send to userspace" action in the datapath, and will be resolved in a future update.
-
 ______
 
 ## Intel® DPDK vSwitch Sample Guest Application
