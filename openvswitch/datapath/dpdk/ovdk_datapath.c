@@ -144,9 +144,9 @@ ring_create(const char *template)
 	ring = rte_ring_create(ring_name, VSWITCHD_RINGSIZE, socket_id,
 	                       NO_FLAGS);
 	if (ring == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot create ring %s", ring_name);
+		rte_exit(EXIT_FAILURE, "Cannot create ring '%s'", ring_name);
 
-	RTE_LOG(INFO, APP, "Created %s\n", ring_name);
+	RTE_LOG(INFO, APP, "Created ring '%s'\n", ring_name);
 	return ring;
 }
 
@@ -177,8 +177,7 @@ alloc_mbufs(struct rte_ring *alloc_ring)
 
 	while (rte_ring_count(alloc_ring) < VSWITCHD_ALLOC_THRESHOLD) {
 		for (i = 0; i < VSWITCHD_PKT_BURST_SIZE; i++) {
-			if ((buf[i] = rte_ctrlmbuf_alloc(ctrlmbuf_pool))
-				    == NULL)
+			if ((buf[i] = rte_ctrlmbuf_alloc(ctrlmbuf_pool)) == NULL)
 				break;
 		}
 		if (i)
@@ -206,7 +205,7 @@ ovdk_datapath_init(void)
 
 	ctrlmbuf_pool = rte_mempool_lookup(CTRLMBUF_POOL_NAME);
 	if (ctrlmbuf_pool == NULL)
-		rte_panic("Unable to lookup ctrlmbuf pool %s\n",
+		rte_panic("Unable to lookup ctrlmbuf pool '%s'\n",
 		          CTRLMBUF_POOL_NAME);
 
 	return 0;
@@ -236,7 +235,7 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 
 	ret = ovdk_vport_port_verify(vportid);
 	if (ret != 0) {
-		RTE_LOG(WARNING, APP, "Invalid port ID for new port '%u', "
+		RTE_LOG(WARNING, APP, "Invalid port ID for new port ''%"PRIu32"', "
 		        "error '%d'\n", vportid, ret);
 		reply.error = ret;
 		ovdk_datapath_send_reply(&reply);
@@ -253,9 +252,9 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Added vport id '%u', '%s' "
-		        "as in-port on lcore_id '%d'\n",
-		        __func__,__LINE__,vportid, vport_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as in-port ''%"PRIu32"' "
+		        "on lcore_id '%d'\n",
+		        __func__, __LINE__, vport_name, vportid, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
@@ -267,9 +266,9 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Added vport id '%u', '%s' "
-		        "as out-port on lcore_id '%d'\n",
-		        __func__,__LINE__,vportid, vport_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as out-port ''%"PRIu32"' "
+		        "on lcore_id '%d'\n",
+		        __func__, __LINE__, vport_name, vportid, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -307,9 +306,9 @@ ovdk_datapath_vport_del(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "Deleted vport id '%u', '%s' "
-		        "as in-port on lcore_id '%d'\n",
-		        vportid, request->port_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Deleted in-port ''%"PRIu32"' ('%s') "
+		        "on lcore_id '%d'\n",
+		        __func__, __LINE__, vportid, request->port_name, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
@@ -321,9 +320,9 @@ ovdk_datapath_vport_del(struct ovdk_vport_message *request)
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "Deleted vport id '%u', '%s' "
-		        "as out-port on lcore_id '%d'\n",
-		        vportid, request->port_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Deleted out-port ''%"PRIu32"' ('%s') "
+		        "on lcore_id '%d'\n",
+		        __func__, __LINE__, vportid, request->port_name, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -344,7 +343,7 @@ ovdk_datapath_vport_get(struct ovdk_vport_message *request)
 	struct ovdk_port_stats *stats = NULL;
 	int ret = 0;
 
-	RTE_LOG(DEBUG, APP, "%s(%d): %p\n",__func__,__LINE__, request);
+	RTE_LOG(DEBUG, APP, "%s(%d): %p\n", __func__, __LINE__, request);
 
 	reply.type = OVDK_VPORT_CMD_FAMILY;
 
@@ -372,8 +371,8 @@ ovdk_datapath_flow_mod_del(struct ovdk_flow_message *request,
 
 	/* Try and delete the existing flow. */
 	ret = ovdk_pipeline_flow_del(&request->key,
-                                  &del_key_found,
-                                  &(reply->flow_msg.stats));
+	                             &del_key_found,
+	                             &(reply->flow_msg.stats));
 	if (ret) {
 		RTE_LOG(WARNING, APP, "Unable to delete flow, error '%d'\n", ret);
 		return ret;
@@ -405,10 +404,8 @@ ovdk_datapath_flow_mod_del(struct ovdk_flow_message *request,
 		 * ovdk_pipeline_flow_del() call
 		 */
 		/* Need to put stats from del flow into new flow */
-		if (!request->clear) {
+		if (!request->clear)
 			*update_stats = 1;
-
-		}
 	}
 
 	return ret;
@@ -436,8 +433,8 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
 	if (request->flags & NLM_F_REPLACE)
 	{
 		/* Try to remove existing flow with same key*/
-		ret = ovdk_datapath_flow_mod_del(request, &reply,
-                                         &local_stats, &update_stats);
+		ret = ovdk_datapath_flow_mod_del(
+		        request, &reply, &local_stats, &update_stats);
 		if (ret) {
 			RTE_LOG(WARNING, APP, "Unable to modify existing flow, "
 			        "error '%d'\n", ret);
@@ -462,8 +459,8 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
 		 */
 		ovdk_pipeline_flow_set_stats(&local_stats, flow_handle);
 		if (reply.flow_msg.stats.used != 0)
-			reply.flow_msg.stats.used = ovs_flow_used_time(rte_rdtsc(),
-		                                             reply.flow_msg.stats.used);
+			reply.flow_msg.stats.used = ovs_flow_used_time(
+			        rte_rdtsc(), reply.flow_msg.stats.used);
 	}
 	if (update_stats == 0) {
 		/* Stats for a new flow are zero */
@@ -477,8 +474,8 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
 		/* Return stats for modified flow in reply message */
 		reply.flow_msg.stats = local_stats;
 		if (reply.flow_msg.stats.used != 0)
-			reply.flow_msg.stats.used = ovs_flow_used_time(rte_rdtsc(),
-                                                     reply.flow_msg.stats.used);
+			reply.flow_msg.stats.used = ovs_flow_used_time(
+			        rte_rdtsc(), reply.flow_msg.stats.used);
 	}
 
 	RTE_LOG(DEBUG, APP, "Added flow, flow handle '0x%lX'\n", flow_handle);
@@ -519,8 +516,8 @@ ovdk_datapath_flow_del(struct ovdk_flow_message *request)
 	/* Convert the flow's used stats from cycles to seconds in the reply
 	 * message
 	 */
-	reply.flow_msg.stats.used = ovs_flow_used_time(rte_rdtsc(),
-	                                      reply.flow_msg.stats.used);
+	reply.flow_msg.stats.used = ovs_flow_used_time(
+	        rte_rdtsc(), reply.flow_msg.stats.used);
 
 	reply.error = 0;
 	ovdk_datapath_send_reply(&reply);
@@ -545,6 +542,7 @@ ovdk_datapath_flow_get(struct ovdk_flow_message *request)
 	if ((struct ovdk_pipeline_entry *) request->flow_handle == NULL) {
 		reply.error = EINVAL;
 		ovdk_datapath_send_reply(&reply);
+
 		return;
 	}
 
@@ -577,7 +575,7 @@ ovdk_datapath_send_reply(struct ovdk_message *reply)
 
 	/* Preparing the buffer to send */
 	mbuf = rte_ctrlmbuf_alloc(ctrlmbuf_pool);
-	if (!mbuf) {
+	if (mbuf == NULL) {
 		RTE_LOG(WARNING, APP, "Unable to allocate an mbuf\n");
 		ovdk_stats_vswitch_control_tx_drop_increment(1);
 		return;
