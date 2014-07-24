@@ -229,7 +229,6 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
     int i = 0;
     int error = 0;
     int initial_error = 0;
-    bool error_encountered = false;
 
     dpif_dpdk_vport_msg_init(&request);
     request.cmd = OVS_VPORT_CMD_DEL;
@@ -243,13 +242,16 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
                 /* Flag the error, but don't return the error code yet */
                 VLOG_ERR("Failed to remove port %"PRIu32" from pipeline %d, "
                          "error '%d'", port_no, i, error);
+            } else {
+                VLOG_DBG("Removed vportid %d from pipeline %d", port_no, i);
             }
-            if (unlikely(!error_encountered)) {
-                error_encountered = true;
+
+            if (!initial_error) {
                 initial_error = error; /* First error value will be returned */
             }
         }
     }
+
     /* NOTE: if an error is encountered during the transaction with a datapath
      * pipeline, the 'deleted' port could still potentially be present on
      * that pipeline. Delete the entry from the vport table anyway. The
@@ -257,17 +259,17 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
      * would not actually be present in any of the pipelines from which it was
      * successfully deleted.
      */
-
     /* Temporarily removing this call, see errata for more details.
      *
      * error = dpif_dpdk_vport_table_entry_reset(port_no);
      */
-
-    if (initial_error) {
-        return initial_error;
-    } else {
-        return error;
+    error = 0;  /* temporary code needed due removal of call above */
+    if (error) {
+        VLOG_ERR("Failed to remove port %"PRIu32" from vport table, error '%d'",
+                 port_no, error);
     }
+
+    return initial_error || error;
 }
 
 /* NOTE: currently, the only port stats supported are rx, rx_drop, tx and
@@ -656,7 +658,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
 
     if (request.type == OVDK_VPORT_TYPE_MEMNIC) {
         error = memnic_rename_shm_object(reply.vportid,
-                                        netdev_get_name(netdev));
+                                         netdev_get_name(netdev));
     }
 
     if (unlikely(error)) {
