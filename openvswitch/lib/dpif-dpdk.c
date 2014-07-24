@@ -404,7 +404,6 @@ dpif_dpdk_get_stats(const struct dpif *dpif_ OVS_UNUSED,
     struct flow key;
     uint64_t handle = 0;
     uint16_t index = UINT16_MAX;
-    int error = 0;
 
     DPDK_DEBUG()
 

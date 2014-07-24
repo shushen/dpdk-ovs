@@ -265,12 +265,12 @@ multiqueue_getstats_check_stats(struct ovdk_port_stats stats)
 
 	assert(stats.rx == expected_rx_val);
 	assert(stats.tx == expected_tx_val);
-	assert(stats.rx_bytes == expected_rx_val);
-	assert(stats.tx_bytes == expected_tx_val);
+	assert(stats.rx_bytes == UINT64_MAX);
+	assert(stats.tx_bytes == UINT64_MAX);
 	assert(stats.rx_drop == expected_rx_val);
 	assert(stats.tx_drop == expected_tx_val);
-	assert(stats.rx_error == expected_rx_val);
-	assert(stats.tx_error == expected_tx_val);
+	assert(stats.rx_error == UINT64_MAX);
+	assert(stats.tx_error == UINT64_MAX);
 }
 
 

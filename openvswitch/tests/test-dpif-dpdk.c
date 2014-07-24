@@ -1436,12 +1436,12 @@ test_dpif_dpdk_port_get_stats(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(result == 0);
 	assert(stats.rx == 0xDEADBEEF);
 	assert(stats.tx == 0xDEADBEEF);
-	assert(stats.rx_bytes == 0xDEADBEEF);
-	assert(stats.tx_bytes == 0xDEADBEEF);
+	assert(stats.rx_bytes == UINT64_MAX);
+	assert(stats.tx_bytes == UINT64_MAX);
 	assert(stats.rx_drop == 0xDEADBEEF);
 	assert(stats.tx_drop == 0xDEADBEEF);
-	assert(stats.rx_error == 0xDEADBEEF);
-	assert(stats.tx_error == 0xDEADBEEF);
+	assert(stats.rx_error == UINT64_MAX);
+	assert(stats.tx_error == UINT64_MAX);
 }
 
 void
