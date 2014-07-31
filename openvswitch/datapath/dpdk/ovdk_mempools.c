@@ -35,6 +35,7 @@
 #include <rte_config.h>
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
+#include <rte_errno.h>
 
 #include "ovdk_args.h"
 #include "ovdk_mempools.h"
@@ -70,28 +71,28 @@ ovdk_mempools_init(void)
 	pktmbuf_size = max_packet_size + MBUF_OVERHEAD +
 	    RTE_MAX(sizeof(struct ovdk_message), sizeof(struct ovdk_upcall));
 
-	RTE_LOG(INFO, APP, "Creating control mbuf pool '%s' [%u mbufs] ...\n",
+	RTE_LOG(INFO, APP, "Creating ctrlmbuf pool '%s' [%u mbufs] ...\n",
 	        CTRLMBUF_POOL_NAME, CTRLMBUF_MAX_MBUFS);
 	ctrlmbuf_pool = rte_mempool_create(CTRLMBUF_POOL_NAME,
 	        CTRLMBUF_MAX_MBUFS, CTRLMBUF_SIZE, CTRLMBUF_CACHE_SIZE,
 	        0, NULL, NULL, rte_ctrlmbuf_init, NULL, SOCKET0, NO_FLAGS);
 	if (ctrlmbuf_pool == NULL)
-		rte_panic("Cannot create pktmbuf mempool %s\n",
-		          CTRLMBUF_POOL_NAME);
+		rte_panic("Cannot create ctrlmbuf mempool '%s' (%s)\n",
+		          CTRLMBUF_POOL_NAME, rte_strerror(rte_errno));
 
 	/* make sure the upcall does not the exceed mbuf headroom */
 	if (sizeof(struct ovdk_upcall) >= RTE_PKTMBUF_HEADROOM)
 		rte_panic("Upcall exceed mbuf headroom\n");
 
-	RTE_LOG(INFO, APP, "Creating packet mbuf pool '%s' [%u mbufs] [size %u]...\n",
+	RTE_LOG(INFO, APP, "Creating pktmbuf pool '%s' [%u mbufs] [size %u]...\n",
 	        PKTMBUF_POOL_NAME, PKTMBUF_MAX_MBUFS, pktmbuf_size);
 	pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, PKTMBUF_MAX_MBUFS,
 	        pktmbuf_size, PKTMBUF_CACHE_SIZE,
 	        sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
 	        NULL, rte_pktmbuf_init, NULL, SOCKET0, NO_FLAGS );
 	if (pktmbuf_pool == NULL)
-		rte_panic("Cannot create pktmbuf mempool %s\n",
-		          PKTMBUF_POOL_NAME);
+		rte_panic("Cannot create pktmbuf mempool '%s' (%s)\n",
+		          PKTMBUF_POOL_NAME, rte_strerror(rte_errno));
 
 	return 0;
 }

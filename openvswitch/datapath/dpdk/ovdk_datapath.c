@@ -64,11 +64,12 @@
  */
 
 #include <config.h>
+#include <linux/netlink.h>
 
 #include <rte_config.h>
 #include <rte_string_fns.h>
 #include <rte_cycles.h>
-#include <linux/netlink.h>
+#include <rte_errno.h>
 
 #include "ovdk_datapath.h"
 #include "ovdk_mempools.h"
@@ -215,8 +216,8 @@ ovdk_datapath_init(void)
 
 	ctrlmbuf_pool = rte_mempool_lookup(CTRLMBUF_POOL_NAME);
 	if (ctrlmbuf_pool == NULL)
-		rte_panic("Unable to lookup ctrlmbuf pool '%s'\n",
-		          CTRLMBUF_POOL_NAME);
+		rte_panic("Unable to lookup ctrlmbuf pool '%s' (%s)\n",
+		          CTRLMBUF_POOL_NAME, rte_strerror(rte_errno));
 
 	return 0;
 }

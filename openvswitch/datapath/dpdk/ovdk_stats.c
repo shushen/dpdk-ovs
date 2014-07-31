@@ -48,6 +48,7 @@
 #include <rte_mbuf.h>
 #include <rte_string_fns.h>
 #include <rte_ethdev.h>
+#include <rte_errno.h>
 
 #include "ovdk_stats.h"
 #include "ovdk_mempools.h"
@@ -750,8 +751,8 @@ ovdk_stats_init(void)
 	mz = rte_memzone_reserve(MZ_STATS_INFO, VPORT_STATS_SIZE,
 	                         rte_socket_id(), NO_FLAGS);
 	if (mz == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot reserve memory zone for"
-		         " statistics\n");
+		rte_panic("Cannot reserve memory zone for statistics (%s)\n",
+		          rte_strerror(rte_errno));
 
 	memset(mz->addr, 0, VPORT_STATS_SIZE);
 

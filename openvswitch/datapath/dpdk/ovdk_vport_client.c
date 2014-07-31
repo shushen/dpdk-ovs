@@ -33,7 +33,7 @@
  */
 
 #include <rte_config.h>
-#include <rte_string_fns.h>
+#include <rte_errno.h>
 
 #include "rte_port_ivshm.h"
 #include "ovdk_vport_client.h"
@@ -106,14 +106,13 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	             vport_info->vportid);
 
 	ret = rte_ring_create(
-		port_reader_params->rx_ring_name,
-		PORT_CLIENT_RX_RING_SIZE,
-		rte_socket_id(),
-		RING_F_SC_DEQ);
-
-	if (ret == NULL) {
-		rte_panic("Cannot create RX ring %u\n", vport_info->vportid);
-	}
+	        port_reader_params->rx_ring_name,
+	        PORT_CLIENT_RX_RING_SIZE,
+	        rte_socket_id(),
+	        RING_F_SC_DEQ);
+	if (ret == NULL)
+		rte_panic("Cannot create RX ring for port '%"PRIu32"' (%s)\n",
+		          vport_info->vportid, rte_strerror(rte_errno));
 
 	ret = NULL;
 
@@ -129,15 +128,13 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	             vport_info->vportid);
 
 	ret = rte_ring_create(
-		port_writer_params->tx_ring_name,
-		PORT_CLIENT_TX_RING_SIZE,
-		rte_socket_id(),
-		0);
-
-	if (ret == NULL) {
-		rte_panic("Cannot create TX ring for port %u\n",
-		          vport_info->vportid);
-	}
+	        port_writer_params->tx_ring_name,
+	        PORT_CLIENT_TX_RING_SIZE,
+	        rte_socket_id(),
+	        0);
+	if (ret == NULL)
+		rte_panic("Cannot create TX ring for port '%"PRIu32"' (%s)\n",
+		          vport_info->vportid, rte_strerror(rte_errno));
 
 	ret = NULL;
 
@@ -153,15 +150,13 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	             vport_info->vportid);
 
 	ret = rte_ring_create(
-		port_reader_params->free_ring_name,
-		PORT_CLIENT_FREE_RING_SIZE,
-		rte_socket_id(),
-		RING_F_SC_DEQ);
-
-	if (ret == NULL) {
-		rte_panic("Cannot create free ring for port %u\n",
-		          vport_info->vportid);
-	}
+	        port_reader_params->free_ring_name,
+	        PORT_CLIENT_FREE_RING_SIZE,
+	        rte_socket_id(),
+	        RING_F_SC_DEQ);
+	if (ret == NULL)
+		rte_panic("Cannot create free ring for port '%"PRIu32"' (%s)\n",
+		          vport_info->vportid, rte_strerror(rte_errno));
 
 	ret = NULL;
 
@@ -177,15 +172,14 @@ ovdk_vport_client_port_init(struct vport_info *vport_info)
 	             vport_info->vportid);
 
 	ret = rte_ring_create(
-		port_reader_params->alloc_ring_name,
-		PORT_CLIENT_ALLOC_RING_SIZE,
-		rte_socket_id(),
-		RING_F_SP_ENQ);
+	        port_reader_params->alloc_ring_name,
+	        PORT_CLIENT_ALLOC_RING_SIZE,
+	        rte_socket_id(),
+	        RING_F_SP_ENQ);
+	if (ret == NULL)
+		rte_panic("Cannot create alloc ring for port '%"PRIu32"' (%s)\n",
+		          vport_info->vportid, rte_strerror(rte_errno));
 
-	if (ret == NULL) {
-		rte_panic("Cannot create alloc ring for port%u\n",
-		          vport_info->vportid);
-	}
 
 	/* Assign values to in and out port structures */
 	port_in_params->ops = &rte_port_ivshm_reader_ops;

@@ -33,6 +33,7 @@
  */
 
 #include <rte_config.h>
+#include <rte_errno.h>
 
 #include "ovdk_vport_bridge.h"
 #include "ovdk_mempools.h"
@@ -49,7 +50,8 @@ ovdk_vport_bridge_port_init(struct vport_info *vport_info)
 
 	mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);
 	if (mp == NULL)
-		rte_panic("Cannot find mempool %s\n", PKTMBUF_POOL_NAME);
+		rte_panic("Cannot find mempool '%s' (%s)\n", PKTMBUF_POOL_NAME,
+		          rte_strerror(rte_errno));
 
 	/* Check for null type before use*/
 	if(vport_info == NULL)

@@ -34,6 +34,7 @@
 
 #include <rte_config.h>
 #include <rte_ethdev.h>
+#include <rte_errno.h>
 
 #include "ovdk_vport_phy.h"
 #include "ovdk_mempools.h"
@@ -114,9 +115,9 @@ ovdk_vport_phy_init(void)
 	total_ports = rte_eth_dev_count();
 	if (total_ports == 0)
 		rte_exit(EXIT_FAILURE, "No supported Ethernet devices found - "
-			"check that the IGB and/or IXGBE PMDs have been enabled in "
-			"the config file and Ethernet devices have been bound to "
-			"one of said drivers.\n");
+		         "check that the IGB and/or IXGBE PMDs have been "
+		         "enabled in the config file and Ethernet devices have "
+		         "been bound to one of said drivers.\n");
 }
 
 /*
@@ -150,11 +151,12 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 
 	mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);
 	if (mp == NULL)
-		rte_panic("Cannot find mempool %s\n", PKTMBUF_POOL_NAME);
+		rte_panic("Cannot find mempool '%s' (%s)\n", PKTMBUF_POOL_NAME,
+		          rte_strerror(rte_errno));
 
 	/* Check for null type before use*/
 	if(vport_info == NULL)
-		rte_panic("Cannot init NIC port %d, invalid vport info\n",
+		rte_panic("Cannot init NIC port '%d', invalid vport info\n",
 		          port_id);
 
 	vport_info->type = OVDK_VPORT_TYPE_PHY;
@@ -166,44 +168,46 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 
 	/* Init port */
 	ret = rte_eth_dev_configure(
-		port_id,
-		1,             /* Currently only one rx queue is supported */
-		RTE_MAX_LCORE, /* Output queue for every core */
-		&port_conf);
+	        port_id,
+	        1,             /* Currently only one rx queue is supported */
+	        RTE_MAX_LCORE, /* Output queue for every core */
+	        &port_conf);
 	if (ret < 0)
-		rte_panic("Cannot init NIC port %u (%d)\n", port_id, ret);
+		rte_panic("Cannot init NIC port '%u' (%s)\n", port_id,
+		          rte_strerror(rte_errno));
 
 	rte_eth_promiscuous_enable(port_id);
 
 	/* Init RX queues */
 	ret = rte_eth_rx_queue_setup(
-		port_id,
-		0,
-		PORT_RX_RING_SIZE,
-		rte_eth_dev_socket_id(port_id),
-		&rx_conf,
-		mp);
+	        port_id,
+	        0,
+	        PORT_RX_RING_SIZE,
+	        rte_eth_dev_socket_id(port_id),
+	        &rx_conf,
+	        mp);
 	if (ret < 0)
-		rte_panic("Cannot init RX for port %u (%d)\n",
-		          (unsigned) port_id, ret);
+		rte_panic("Cannot init RX for port '%u' (%s)\n", port_id,
+		          rte_strerror(rte_errno));
 
 	for (lcore_id = 0; lcore_id < RTE_MAX_LCORE; lcore_id++) {
 		/* Init TX queues - One for every lcore*/
 		ret = rte_eth_tx_queue_setup(
-			port_id,
-			lcore_id,
-			PORT_TX_RING_SIZE,
-			rte_eth_dev_socket_id(port_id),
-			&tx_conf);
+		        port_id,
+		        lcore_id,
+		        PORT_TX_RING_SIZE,
+		        rte_eth_dev_socket_id(port_id),
+		        &tx_conf);
 		if (ret < 0)
-			rte_panic("Cannot init TX for port %d (%d)\n",
-			          port_id, ret);
+			rte_panic("Cannot init TX for port %d (%s)\n", port_id,
+			          rte_strerror(rte_errno));
 	}
 
 	/* Start port */
 	ret = rte_eth_dev_start(port_id);
 	if (ret < 0)
-		rte_panic("Cannot start port %d (%d)\n", port_id, ret);
+		rte_panic("Cannot start port %d (%s)\n", port_id,
+		          rte_strerror(rte_errno));
 
 	port_reader_params = &vport_info->phy.port_reader_ethdev_params;
 	port_reader_params->port_id = port_id;
