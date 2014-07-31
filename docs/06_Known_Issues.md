@@ -95,8 +95,6 @@ ______
 
 Not all functionality that is supported by Open vSwitch is supported by the Intel® DPDK vSwitch.
 
-ovs-dpctl show command displaying incorrect statistics.
-
 ______
 
 ## ovs-ivshm-mngr
