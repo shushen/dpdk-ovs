@@ -53,6 +53,8 @@ ______
 
 * Some Intel® DPDK dpif unit tests create files in `/tmp`. These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
 
+* Port deletion in the datapath is not fully supported.
+
 ______
 
 ## Intel® DPDK vSwitch Sample Guest Application

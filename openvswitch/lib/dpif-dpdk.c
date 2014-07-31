@@ -257,7 +257,11 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
      * would not actually be present in any of the pipelines from which it was
      * successfully deleted.
      */
-    error = dpif_dpdk_vport_table_entry_reset(port_no);
+
+    /* Temporarily removing this call, see errata for more details.
+     *
+     * error = dpif_dpdk_vport_table_entry_reset(port_no);
+     */
 
     if (initial_error) {
         return initial_error;
