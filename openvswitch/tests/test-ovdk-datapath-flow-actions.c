@@ -353,22 +353,27 @@ int
 main(int argc, char *argv[])
 {
 	unsigned lcore_id = rte_lcore_id();
+	int eal_args = 0;
 
 	set_program_name(argv[0]);
-
 	vlog_set_levels(NULL, VLF_ANY_FACILITY, VLL_EMER);
 	vlog_set_levels(NULL, VLF_CONSOLE, VLL_DBG);
 
-	time_alarm(30);
+	time_alarm(30);  /* Allow a long time for DPDK to start */
 
-	rte_eal_init(argc, argv);
+	/* Initialise system */
+	eal_args = rte_eal_init(argc, argv);
+	assert(eal_args > 0);
+	eal_args += 1;  /* we *always* pass in '--' as a parameter */
+
+	/* Initialise mempools and datapath */
 	ovdk_mempools_init();
 	ovdk_datapath_init();
 	ovdk_stats_init();
 	assert(mempools_lookup() == 0);
 	assert(vswitchd_rings_lookup(lcore_id) == 0);
 
-	run_command(argc - 6, argv + 6, commands);
+	run_command(argc - eal_args, argv + eal_args, commands);
 
 	return 0;
 }

@@ -1607,6 +1607,7 @@ int
 main(int argc, char *argv[])
 {
 	int err = 0;
+	int eal_args = 0;
 
 	set_program_name(argv[0]);
 	vlog_set_levels(NULL, VLF_ANY_FACILITY, VLL_EMER);
@@ -1615,15 +1616,17 @@ main(int argc, char *argv[])
 	time_alarm(30);  /* Allow a long time for DPDK to start */
 
 	/* Initialise system */
-	rte_eal_init(argc, argv);
-	/* Init rings and fake mempool with 1280 mbufs & populate pipeline_mask */
+	eal_args = rte_eal_init(argc, argv);
+	assert(eal_args > 0);
+	eal_args += 1;  /* we *always* pass in '--' as a parameter */
+
+	/* Init rings and fake mempool with mbufs & populate pipeline_mask */
 	init_test_rings(1280, &pipeline_mask);
 
 	err = dpif_create_and_open("br0", "dpdk", &dpif_p);
 	assert(err == 0);
 
-	/* Assume only three EAL parameters */
-	run_command(argc - 6, argv + 6, commands);
+	run_command(argc - eal_args, argv + eal_args, commands);
 
 	/* Cleanup system */
 	dpif_p->dpif_class->destroy(dpif_p);
