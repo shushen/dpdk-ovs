@@ -35,7 +35,7 @@ TEST_DPIF_DPDK([port tests], [
     execute])
 
 TEST_DPIF_DPDK([flow tests], [
-    flow_put,
+    flow-put,
     flow-del,
     flow-del-null-key,
     flow-del-null-dpif-flow-del,
@@ -49,4 +49,3 @@ TEST_DPIF_DPDK([flow tests], [
     flow-dump-done,
     flow-dump-done-null-state,
     flow-flush])
-
