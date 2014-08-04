@@ -97,6 +97,8 @@ struct flow_miss {
     struct xlate_out xout;
 
     struct list upcalls;
+
+    bool put;
 };
 
 struct flow_miss_batch {

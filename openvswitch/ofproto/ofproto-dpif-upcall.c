@@ -97,7 +97,7 @@ struct udpif {
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 static void recv_upcalls(struct udpif *);
-static void handle_miss_upcalls(struct udpif *, struct list *upcalls);
+static void handle_miss_upcalls(struct handler *, struct udpif *, struct list *upcalls);
 static void miss_destroy(struct flow_miss *);
 static void *udpif_dispatcher(void *);
 static void *udpif_miss_handler(void *);
@@ -409,7 +409,7 @@ udpif_miss_handler(void *arg)
         }
         ovs_mutex_unlock(&handler->mutex);
 
-        handle_miss_upcalls(handler->udpif, &misses);
+        handle_miss_upcalls(handler, handler->udpif, &misses);
     }
 }
 
@@ -686,7 +686,7 @@ execute_flow_miss(struct flow_miss *miss, struct dpif_op *ops, size_t *n_ops)
 }
 
 static void
-handle_miss_upcalls(struct udpif *udpif, struct list *upcalls)
+handle_miss_upcalls(struct handler *handler,struct udpif *udpif, struct list *upcalls)
 {
     struct dpif_op *opsp[FLOW_MISS_MAX_BATCH];
     struct dpif_op ops[FLOW_MISS_MAX_BATCH];
@@ -695,6 +695,7 @@ handle_miss_upcalls(struct udpif *udpif, struct list *upcalls)
     size_t n_upcalls, n_ops, i;
     struct flow_miss *miss;
     unsigned int reval_seq;
+    (void ) handler; /* unused parameter */
 
     /* Construct the to-do list.
      *
