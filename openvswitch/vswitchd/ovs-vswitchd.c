@@ -51,6 +51,37 @@
 #include "vlog.h"
 #include "lib/vswitch-idl.h"
 
+#ifdef HAVE_DPI
+#include "dpi.h"
+#include "flow.h"
+
+/* Number of registers holding DPI results (from regs[0] to regs[N-1]) */
+long dpi_nregs = 2; /* default value */
+
+/* DPI plugin parameters related variables */
+char *dpi_argv[256];
+int dpi_argc = 0;
+/* string holding all DPI arguments separated by ',' */
+char dpi_parameters[2048] = "";
+
+/** Parse DPI engine arguments (engine,arg1,arg2,...) into (argc, argv) */
+static int parse_dpi_args(char *args, char *subargv[])
+{
+    int subargc, i;
+
+    for (i = 0, subargc = 0, subargv[0] = args; ; i++) {
+        if (args[i] == ',') {
+            args[i] = '\0';
+            subargv[subargc + 1] = &args[i + 1];
+            subargc++;
+        } else if (args[i] == '\0') {
+            return ++subargc;
+        }
+    }
+
+}
+#endif /* HAVE_DPI */
+
 VLOG_DEFINE_THIS_MODULE(vswitchd);
 
 /* --mlockall: If set, locks all process memory into physical RAM, preventing
@@ -81,6 +112,17 @@ main(int argc, char *argv[])
     proctitle_init(argc, argv);
     set_program_name(argv[0]);
     remote = parse_options(argc, argv, &unixctl_path);
+#ifdef HAVE_DPI
+    dpi_argc = parse_dpi_args(dpi_parameters, dpi_argv);
+    if (dpi_init_once(dpi_argc, dpi_argv)) {
+        RESET_DPI_ENABLED();
+        VLOG_INFO("dpi global init failed");
+    } else {
+        VLOG_INFO("dpi global init done");
+        SET_DPI_ENABLED();
+    }
+#endif /* HAVE_DPI */
+
     signal(SIGPIPE, SIG_IGN);
     sighup = signal_register(SIGHUP);
     process_init();
@@ -139,6 +181,11 @@ main(int argc, char *argv[])
     }
     bridge_exit();
     unixctl_server_destroy(unixctl);
+#ifdef HAVE_DPI
+    if (IS_DPI_ENABLED()) {
+        dpi_exit_once();
+    }
+#endif /* HAVE_DPI */
 
     return 0;
 }
@@ -154,6 +201,8 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         OPT_BOOTSTRAP_CA_CERT,
         OPT_ENABLE_DUMMY,
         OPT_DISABLE_SYSTEM,
+        OPT_DPI_NREGS,
+        OPT_DPI_ENGINE_OPTIONS,
         DAEMON_OPTION_ENUMS
     };
     static const struct option long_options[] = {
@@ -168,6 +217,8 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},
         {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},
+        {"dpi-nregs", required_argument, NULL, OPT_DPI_NREGS},
+        {"dpi-engine", required_argument, NULL, OPT_DPI_ENGINE_OPTIONS},
         {NULL, 0, NULL, 0},
     };
     char *short_options = long_options_to_short_options(long_options);
@@ -216,6 +267,25 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             dp_blacklist_provider("system");
             break;
 
+#ifdef HAVE_DPI
+        case OPT_DPI_NREGS:
+            dpi_nregs = strtol(optarg, (char **) NULL, 10);
+            if (dpi_nregs > FLOW_N_REGS) {
+                VLOG_FATAL("Allowed value range for %s: 0-%d\n",
+                    long_options[OPT_DPI_NREGS].name, FLOW_N_REGS);
+                abort();
+            }
+            break;
+
+        case OPT_DPI_ENGINE_OPTIONS:
+            if (strlen(optarg) >= sizeof(dpi_argv)) {
+                VLOG_FATAL("%s string too large\n", optarg);
+                abort();
+            }
+            strncpy(dpi_parameters, optarg, sizeof(dpi_argv));
+            break;
+#endif /* HAVE_DPI */
+
         case '?':
             exit(EXIT_FAILURE);
 
@@ -223,6 +293,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             abort();
         }
     }
+
     free(short_options);
 
     argc -= optind;
@@ -256,6 +327,13 @@ usage(void)
            "  --unixctl=SOCKET        override default control socket name\n"
            "  -h, --help              display this help message\n"
            "  -V, --version           display version information\n");
+
+#ifdef HAVE_DPI
+    printf("\nDPI options:\n"
+           "--dpi-nregs=N Number of OpenFlow registers holding DPI results\n"
+           "--dpi-engine=path-to-engine,arg1,arg2,arg3,..."
+                "DPI engine and its arguments\n");
+#endif /* HAVE_DPI */
     exit(EXIT_SUCCESS);
 }
 
