@@ -229,6 +229,12 @@ lib_libopenvswitch_a_SOURCES = \
 	lib/vswitch-idl.c \
 	lib/vswitch-idl.h
 
+if HAVE_DPI
+lib_libopenvswitch_a_SOURCES += \
+	lib/dpi.h \
+	lib/dpi.c
+endif
+
 nodist_lib_libopenvswitch_a_SOURCES = \
 	lib/dirs.c
 CLEANFILES += $(nodist_lib_libopenvswitch_a_SOURCES)

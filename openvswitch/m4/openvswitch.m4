@@ -539,3 +539,15 @@ AC_DEFUN([OVS_CHECK_DPDK],
    if test "${RTE_SDK+set}" != set; then
       AC_MSG_ERROR([Please set RTE_SDK.])
    fi])
+
+dnl Checks for '--with-nodpi'.
+AC_DEFUN([OVS_CHECK_DPI],
+   [AC_ARG_WITH([nodpi],
+               [AS_HELP_STRING([--with-nodpi],[Disable DPI Support])],
+               [HAVE_DPI=no],
+               [HAVE_DPI=yes])
+   AM_CONDITIONAL([HAVE_DPI], [test "$HAVE_DPI" = yes])
+   if test "$HAVE_DPI" = yes; then
+      AC_DEFINE([HAVE_DPI], [1],
+                [Define to 1 if DPI is enabled.])
+   fi])
