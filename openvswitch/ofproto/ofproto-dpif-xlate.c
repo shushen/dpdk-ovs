@@ -2584,6 +2584,13 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
     memset(&wc->masks.in_port, 0xff, sizeof wc->masks.in_port);
     memset(&wc->masks.skb_priority, 0xff, sizeof wc->masks.skb_priority);
     memset(&wc->masks.dl_type, 0xff, sizeof wc->masks.dl_type);
+#ifdef HAVE_DPI
+    memset(&wc->masks.nw_src, 0xffffffff, sizeof wc->masks.nw_src);
+    memset(&wc->masks.nw_dst, 0xffffffff, sizeof wc->masks.nw_dst);
+    memset(&wc->masks.nw_proto, 0xff, sizeof wc->masks.nw_proto);
+    memset(&wc->masks.tp_src, 0xffff, sizeof wc->masks.tp_src);
+    memset(&wc->masks.tp_dst, 0xffff, sizeof wc->masks.tp_dst);
+#endif /* HAVE_DPI */
     wc->masks.nw_frag |= FLOW_NW_FRAG_MASK;
 
     tnl_may_send = tnl_xlate_init(&ctx.base_flow, flow, wc);

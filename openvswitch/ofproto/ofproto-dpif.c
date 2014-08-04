@@ -3282,6 +3282,12 @@ handle_flow_miss_with_facet(struct flow_miss *miss, struct facet *facet,
         return;
     }
 
+    /* DPI: do not install the flow in the datapath*/
+    if (miss->upcall_type == DPIF_UC_MISS
+        && miss->put_or_skip) {
+        return;
+    }
+
     subfacet = subfacet_create(facet, miss);
     if (subfacet->path != want_path) {
         struct flow_miss_op *op = &ops[(*n_ops)++];

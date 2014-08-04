@@ -34,6 +34,10 @@
 #include "poll-loop.h"
 #include "vlog.h"
 
+#ifdef HAVE_DPI
+#include "dpi.h"
+#endif /* HAVE_DPI */
+
 #define MAX_QUEUE_LENGTH 512
 
 VLOG_DEFINE_THIS_MODULE(ofproto_dpif_upcall);
@@ -50,7 +54,9 @@ COVERAGE_DEFINE(fmb_queue_revalidated);
 struct handler {
     struct udpif *udpif;               /* Parent udpif. */
     pthread_t thread;                  /* Thread ID. */
-
+#ifdef HAVE_DPI
+    void *dpi_opaque;                  /* per thread DPI opaque data */
+#endif /* HAVE_DPI */
     struct ovs_mutex mutex;            /* Mutex guarding the following. */
 
     /* Atomic queue of unprocessed miss upcalls. */
@@ -385,6 +391,16 @@ udpif_miss_handler(void *arg)
     struct handler *handler = arg;
 
     set_subprogram_name("miss_handler");
+
+#ifdef HAVE_DPI
+    if (IS_DPI_ENABLED()) {
+        handler->dpi_opaque = dpi_init_perthread();
+        if (!handler->dpi_opaque) {
+            VLOG_INFO("dpi_init_perthread failed");
+       }
+    }
+#endif /* HAVE_DPI */
+
     for (;;) {
         size_t i;
 
@@ -411,6 +427,11 @@ udpif_miss_handler(void *arg)
 
         handle_miss_upcalls(handler, handler->udpif, &misses);
     }
+#ifdef HAVE_DPI
+    if (IS_DPI_ENABLED()) {
+        dpi_exit_perthread(handler->dpi_opaque);
+    }
+#endif /* HAVE_DPI */
 }
 
 static void
@@ -686,7 +707,7 @@ execute_flow_miss(struct flow_miss *miss, struct dpif_op *ops, size_t *n_ops)
 }
 
 static void
-handle_miss_upcalls(struct handler *handler,struct udpif *udpif, struct list *upcalls)
+handle_miss_upcalls(struct handler *handler, struct udpif *udpif, struct list *upcalls)
 {
     struct dpif_op *opsp[FLOW_MISS_MAX_BATCH];
     struct dpif_op ops[FLOW_MISS_MAX_BATCH];
@@ -695,7 +716,9 @@ handle_miss_upcalls(struct handler *handler,struct udpif *udpif, struct list *up
     size_t n_upcalls, n_ops, i;
     struct flow_miss *miss;
     unsigned int reval_seq;
-    (void ) handler; /* unused parameter */
+#ifndef HAVE_DPI
+    (void ) handler; /* parameter used by DPI only */
+#endif /* HAVE_DPI */
 
     /* Construct the to-do list.
      *
@@ -750,6 +773,20 @@ handle_miss_upcalls(struct handler *handler,struct udpif *udpif, struct list *up
 
         flow_extract(dupcall->packet, flow.skb_priority, flow.pkt_mark,
                      &flow.tunnel, &flow.in_port, &miss->flow);
+#ifdef HAVE_DPI
+        /* flow->regs[] updated based on DPI classification */
+        if (IS_DPI_ENABLED()) {
+            error = dpi_process(handler->dpi_opaque,
+                        dupcall->packet, 
+                        &miss->put_or_skip,
+                        &miss->flow.regs[0],
+                        sizeof(miss->flow.regs[0]) * dpi_nregs); 
+            if (error) {
+                VLOG_ERR("dpi_process");
+                /* XXX: continue anyway or drop? */
+            }
+        }
+#endif /* HAVE_DPI */
 
         /* Add other packets to a to-do list. */
         hash = flow_hash(&miss->flow, 0);
