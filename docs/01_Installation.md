@@ -4,28 +4,31 @@ ______
 
 ## Build Requirements
 
-To compile Intel® DPDK vSwitch, you will need the following software:
+To compile Intel® DPDK vSwitch for stock Fedora 20, you will need the following software:
 
 * `gcc`
-* `make`
-* GNU Autotools, i.e. `autoconf`, `autom4te`, `automake`
-* `patch`
-* `kernel-devel.$(uname -r)`
-* `kernel`
+* `kernel-devel-$(uname -r)`
+* `kernel-modules-extra-$(uname -r)`
 * `autoconf`
 * `automake`
+* `fuse-devel`
+* `pixman-devel`
+* `pciutils` (for Intel DPDK's `dpdk_nic_bind.py` script)
+* `rsvg-convert` (to update PNGs generated from SVGs in `docs`)
+
+In addition, one or more of the following packages may be required:
+
+* `make`
+* Additional GNU Autotools, i.e. `autom4te`
+* `patch`
 * `zlib-devel`
 * `libtool`
 * `glib-devel`
 * `glib2-devel`
 * `expect`
 * `fuse`
-* `fuse-devel`
 * `openssl`
-* `kernel-modules-extra`
-* `pixman-devel`
 * `libfdt-devel`
-* `rsvg-convert` (to update PNGs generated from SVGs in `docs`)
 
 ______
 
