@@ -182,8 +182,8 @@ flow_key_extract(uint32_t in_port, struct rte_mbuf *pkt)
 			icmp = (struct icmp_hdr *)pkt_data;
 			pkt_data += sizeof(struct icmp_hdr);
 
-			key->tran_dst_port = icmp->icmp_code;
-			key->tran_src_port = icmp->icmp_type;
+			key->tran_dst_port = rte_cpu_to_be_16(icmp->icmp_code);
+			key->tran_src_port = rte_cpu_to_be_16(icmp->icmp_type);
 			break;
 		default:
 			key->tran_dst_port = 0;
