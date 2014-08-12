@@ -94,7 +94,6 @@ void
 ovdk_vport_init(void) {
 	int i = 0;
 	int j = 0;
-	int offset = 0;
 	const struct rte_memzone *vport_mz = NULL;
 	int max_phyports = 0;
 	int initialized_phyports = 0;
@@ -128,8 +127,6 @@ ovdk_vport_init(void) {
 	}
 	RTE_LOG(INFO, APP, "Initialized %d physical ports\n",
 	        initialized_phyports);
-
-	offset += OVDK_MAX_PHYPORTS;
 
 	/* Init virtual ports */
 
