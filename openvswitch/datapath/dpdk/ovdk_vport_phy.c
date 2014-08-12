@@ -131,7 +131,7 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 
 	/* Check for null type before use*/
 	if(vport_info == NULL)
-		rte_panic("Cannot init client port %d, invalid vport info\n",
+		rte_panic("Cannot init NIC port %d, invalid vport info\n",
 		          port_id);
 
 	vport_info->type = OVDK_VPORT_TYPE_PHY;
@@ -169,14 +169,13 @@ ovdk_vport_phy_port_init(struct vport_info *vport_info,
 			&tx_conf);
 		if (ret < 0)
 			rte_panic("Cannot init TX for port %d (%d)\n",
-				  port_id, ret);
+			          port_id, ret);
 	}
 
 	/* Start port */
 	ret = rte_eth_dev_start(port_id);
 	if (ret < 0)
 		rte_panic("Cannot start port %d (%d)\n", port_id, ret);
-
 
 	port_reader_params = &vport_info->phy.port_reader_ethdev_params;
 	port_reader_params->port_id = port_id;
