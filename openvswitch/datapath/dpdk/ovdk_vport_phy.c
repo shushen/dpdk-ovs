@@ -39,8 +39,8 @@
 #include "ovdk_mempools.h"
 #include "ovdk_stats.h"
 
-#define PORT_RX_RING_SIZE       512
-#define PORT_TX_RING_SIZE       512
+#define PORT_RX_RING_SIZE       2048
+#define PORT_TX_RING_SIZE       2048
 
 /*
  * RX and TX Prefetch, Host, and Write-back threshold values should be
