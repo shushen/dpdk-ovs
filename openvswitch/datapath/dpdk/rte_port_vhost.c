@@ -58,7 +58,7 @@ struct rte_mempool *pf_pktmbuf_pool;
 #define MAX_PRINT_BUFF         6072  /* Size of buffers used for snprintfs for printing packets */
 #define MAX_MRG_PKT_BURST      16    /* Max burst for merge buffers. This is used for legacy virtio. */
 #define BURST_TX_WAIT_US       15    /* Defines how long we wait between retries on TX */
-#define BURST_TX_RETRIES       4     /* Number of retries on TX. */
+#define BURST_TX_RETRIES       256   /* Number of retries on TX. */
 
 /* Specify timeout (in useconds) between retries on TX. */
 uint32_t burst_tx_delay_time = BURST_TX_WAIT_US;
