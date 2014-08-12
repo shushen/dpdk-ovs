@@ -37,7 +37,8 @@
 
 #include "ovdk_vport_info.h"
 
-int ovdk_vport_phy_init(void);
+void ovdk_vport_phy_init(void);
+int ovdk_vport_phy_get_max_available_phy_ports(void);
 int ovdk_vport_phy_port_init(struct vport_info *vport_info,
                              unsigned port_id);
 

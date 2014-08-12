@@ -97,6 +97,8 @@ ovdk_vport_init(void) {
 	int offset = 0;
 	const struct rte_memzone *vport_mz = NULL;
 	int max_phyports = 0;
+	int initialized_phyports = 0;
+
 	phy_portmask = ovdk_args_get_portmask();
 
 	vport_mz = rte_memzone_reserve(OVDK_MZ_VPORT_INFO,
@@ -111,28 +113,40 @@ ovdk_vport_init(void) {
 		vport_info[i].vportid = i;
 	}
 
-	max_phyports = ovdk_vport_phy_init();
-	if (max_phyports < 0)
-		rte_panic("Problem initialising NIC");
+	ovdk_vport_phy_init();
+	max_phyports = ovdk_vport_phy_get_max_available_phy_ports();
 
 	/* Init phy ports */
-	RTE_LOG(INFO, APP, "Initializing %d physical ports\n", max_phyports);
-	for (i = 0; i < max_phyports; i++)
+
+	RTE_LOG(INFO, APP, "Initializing physical ports\n");
+	for (i = 0; i < max_phyports; i++) {
+		/* Skip ports that are not enabled */
+		if (!(phy_portmask & (1 << i)))
+			continue;
 		ovdk_vport_phy_port_init(&vport_info[i],i);
+		initialized_phyports += 1;
+	}
+	RTE_LOG(INFO, APP, "Initialized %d physical ports\n",
+	        initialized_phyports);
 
 	offset += OVDK_MAX_PHYPORTS;
 
-	/* Init client ports */
-	for(i = OVDK_VPORT_TYPE_CLIENT; i < (OVDK_VPORT_TYPE_CLIENT + OVDK_MAX_CLIENTS); i++) {
+	/* Init virtual ports */
+
+	RTE_LOG(INFO, APP, "Initializing client ports\n");
+	for(i = OVDK_VPORT_TYPE_CLIENT; i < (OVDK_VPORT_TYPE_CLIENT + OVDK_MAX_CLIENTS); i++)
 		ovdk_vport_client_port_init(&vport_info[i]);
-	}
+	RTE_LOG(INFO, APP, "Initialized %d client ports\n", OVDK_MAX_CLIENTS);
 
-	for (i = OVDK_VPORT_TYPE_VHOST; i < (OVDK_VPORT_TYPE_VHOST + OVDK_MAX_VHOSTS); i++) {
+	RTE_LOG(INFO, APP, "Initializing vhost ports\n");
+	for (i = OVDK_VPORT_TYPE_VHOST; i < (OVDK_VPORT_TYPE_VHOST + OVDK_MAX_VHOSTS); i++)
 		ovdk_vport_vhost_port_init(&vport_info[i]);
-	}
+	RTE_LOG(INFO, APP, "Initialized %d vhost ports\n", OVDK_MAX_VHOSTS);
 
+	RTE_LOG(INFO, APP, "Initializing bridge ports\n");
 	for (i = OVDK_VPORT_TYPE_BRIDGE; i < OVDK_VPORT_TYPE_BRIDGE + OVDK_MAX_BRIDGES; i++)
 		ovdk_vport_bridge_port_init(&vport_info[i]);
+	RTE_LOG(INFO, APP, "Initialized %d bridge ports\n", OVDK_MAX_BRIDGES);
 
 
 	for (i = 0; i < OVDK_MAX_VPORTS; i++) {

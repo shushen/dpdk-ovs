@@ -42,12 +42,19 @@
 
 int ovdk_vport_phy_init(void);
 int ovdk_vport_phy_port_init(struct vport_info *vport_info OVS_UNUSED,
-							unsigned port_id OVS_UNUSED);
+                             unsigned port_id OVS_UNUSED);
+int ovdk_vport_phy_get_max_available_phy_ports(void);
 
 int
 ovdk_vport_phy_init(void)
 {
 	return 0;
+}
+
+int
+ovdk_vport_phy_get_max_available_phy_ports(void)
+{
+	return OVDK_MAX_PHYPORTS - 1;
 }
 
 int

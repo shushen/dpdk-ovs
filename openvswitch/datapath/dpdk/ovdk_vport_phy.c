@@ -93,24 +93,46 @@ static struct rte_eth_txconf tx_conf = {
 	.tx_rs_thresh = TX_RS_THRESH,
 };
 
-/* total number of active phy ports */
+/* Total number of active phy ports */
 int total_ports = 0;
 
-/**
- * Initialise all 1G and 10G NICs available
+/*
+ * Initialise all available phy ports.
  */
-int
+void
 ovdk_vport_phy_init(void)
 {
-	if (rte_eal_pci_probe() < 0 )
-		return -1;
+	int ret = 0;
 
-	/* get total number of ports */
+	/* Scan PCI bus for recognised devices */
+	ret = rte_eal_pci_probe();
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Could not probe PCI (%d)\n", ret);
+
+	/* Get number of ports found in scan */
 	total_ports = rte_eth_dev_count();
+	if (total_ports == 0)
+		rte_exit(EXIT_FAILURE, "No supported Ethernet devices found - "
+			"check that the IGB and/or IXGBE PMDs have been enabled in "
+			"the config file and Ethernet devices have been bound to "
+			"one of said drivers.\n");
+}
 
+/*
+ * Return the total amount of phy ports on the system.
+ *
+ * This will always return 0 until the phy ports have been initialised, as
+ * there will be no "active" phy ports.
+ */
+int
+ovdk_vport_phy_get_max_available_phy_ports(void)
+{
 	return total_ports;
 }
 
+/*
+ * Initialise a given phy port.
+ */
 int
 ovdk_vport_phy_port_init(struct vport_info *vport_info,
                          unsigned port_id)
