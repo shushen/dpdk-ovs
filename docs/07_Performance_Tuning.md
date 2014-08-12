@@ -63,4 +63,73 @@ ______
 
 ______
 
+## Userspace vHost Tuning
+
+As vHost has small buffers it can be heavily effected by packet drops. To help mitigate this, you can change the number of times the vHost port will retry before dropping. You may also need to change the number of retries which the application in the guest will attempt as well as the host ovs-dpdk application's values.
+
+
+###On The Host
+Open `openvswitch/datatpath/dpdk/ovdk_vport_vhost.c`
+
+And make the following change:
+```diff
+- OVDK_VHOST_RETRY_NUM	4
++ OVDK_VHOST_RETRY_NUM	64
+```
+
+_Note: The values which are provided are samples, you will need to test to see which values are optimal for your system_
+_Note: You will have to recompile OpenvSwitch after making this change._
+
+###On The Guest
+We use the `test_pmd` DPDK sample application here as an example as it is also used in the [example Userspace vHost configuration][doc-sample-vhost]. This step should be done before building the test-pmd application, or the test-pmd application should be rebuilt after this change has been made.
+
+Open `$RTE_SDK/app/test-pmd/macfwd-retry.c` on the guest.
+
+And make the following change:
+```diff
+-#define BURST_TX_WAIT_US 10
+-#define BURST_TX_RETRIES 5
++#define BURST_TX_WAIT_US 15
++#define BURST_TX_RETRIES 512
+```
+
+_Note: The values which are provided are samples, you will need to test to see which values are optimal for your system_
+
+______
+
+## IVSHM Tuning
+
+Depending on the speed of your virtual machines, you may also need to tune IVSHM. 
+
+The simplest ways to do this are:
+
+1. Increase the buffer size
+2. Increase the number of retries on the free queue.
+
+###Increase the buffer size
+To increase the buffer size for IVSHM you will need to change the following #defines in `openvswitch/datapath/dpdk/ovdk_vport_client.c`.
+
+```C
+#define PORT_CLIENT_RX_RING_SIZE       4096$
+#define PORT_CLIENT_TX_RING_SIZE       4096$
+#define PORT_CLIENT_FREE_RING_SIZE     4096$
+#define PORT_CLIENT_ALLOC_RING_SIZE    512$
+```
+
+It is important to note when changing these values that the alloc ring is kept constantly full, and it used by the vSwitch itself for communication with the datapath. Thus, it should be kept as small as possible to avoid unnecessary memory hogging.
+
+### Increase the number/time of retries on the free queue 
+
+To increase the number of retries and the time between retries, you will need to change the following two #defines in `openvswitch/datapath/dpdk/rte_port_ivshm.c`.
+
+```C
+#define IVSHM_BURST_TX_WAIT_US  15 
+#define IVSHM_BURST_TX_RETRIES  256
+```
+
+As before, this is a compile time parameter, so the code will need to be recompiled after your change is made.
+______
+
 © 2014, Intel Corporation. All Rights Reserved
+
+[doc-sample-vhost]: 04_Sample_Configurations/02_Userspace-vHost.md
