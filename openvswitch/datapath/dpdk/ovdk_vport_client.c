@@ -42,10 +42,10 @@
 
 #define PORT_CLIENT_RX_BURST_SIZE      32
 #define PORT_CLIENT_TX_BURST_SIZE      32
-#define PORT_CLIENT_RX_RING_SIZE       2048
-#define PORT_CLIENT_TX_RING_SIZE       2048
-#define PORT_CLIENT_FREE_RING_SIZE     2048
-#define PORT_CLIENT_ALLOC_RING_SIZE    128
+#define PORT_CLIENT_RX_RING_SIZE       4096
+#define PORT_CLIENT_TX_RING_SIZE       4096
+#define PORT_CLIENT_FREE_RING_SIZE     4096
+#define PORT_CLIENT_ALLOC_RING_SIZE    256 
 
 #define PORT_CLIENT_RX_RING_NAME       "ovdk_ivshm_rx_ring_%u"
 #define PORT_CLIENT_TX_RING_NAME       "ovdk_ivshm_tx_ring_%u"
