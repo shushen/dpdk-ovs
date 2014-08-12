@@ -86,15 +86,15 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 	int option_index, opt;
 	char **argvopt = argv;
 	static struct option lgopts[] = {
-			{PARAM_STATS_INTERVAL, 1, 0, 0},
-			{PARAM_STATS_CORE, 1, 0, 0},
-			{NULL, 0, 0, 0}
+		{PARAM_STATS_INTERVAL, required_argument, NULL, 0},
+		{PARAM_STATS_CORE, required_argument, NULL, 0},
+		{NULL, 0, NULL, 0}
 	};
 
 	progname = argv[0];
 
-	while ((opt = getopt_long(argc, argvopt, "p:", lgopts,
-	                          &option_index)) != EOF) {
+	while ((opt = getopt_long(argc, argvopt, "p:", lgopts, &option_index))
+	       != EOF) {
 		switch (opt) {
 		case 'p':
 			if (parse_portmask(optarg) != 0) {
@@ -111,10 +111,15 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 			                 PARAM_STATS_CORE, 10) == 0)
 				stats_core = atoi(optarg);
 			break;
+		case '?':
 		default:
 			usage();
-			rte_exit(EXIT_FAILURE, "Invalid option"
-			         " specified '%c'\n", opt);
+			if (optopt)
+				rte_exit(EXIT_FAILURE, "Invalid option '-%c'"
+				         "\n", optopt);
+			else
+				rte_exit(EXIT_FAILURE, "Invalid option '--%s'"
+				         "\n", argv[optind - 1]);
 		}
 	}
 
