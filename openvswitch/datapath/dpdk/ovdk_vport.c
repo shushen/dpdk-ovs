@@ -220,16 +220,19 @@ ovdk_vport_get_vportid(uint32_t port_in_id, uint32_t *vportid)
 
 	lcore_id = rte_lcore_id();
 
-	if (port_in_id >= RTE_PIPELINE_PORT_IN_MAX)
+	if (port_in_id >= RTE_PIPELINE_PORT_IN_MAX) {
+		RTE_LOG(ERR, APP, "Port in ID is greater than the maximum"
+		        "allowable value (%"PRIu32")\n", port_in_id);
 		return -1;
-
+	}
 	if (vportid == NULL)
 		return -1;
 
 	temp_vportid = vportid_map[lcore_id][port_in_id];
-
-	if (temp_vportid == INVALID_VPORTID)
+	if (temp_vportid == INVALID_VPORTID) {
+		RTE_LOG(ERR, APP, "Invalid vportid found in vport table\n");
 		return -1;
+	}
 
 	*vportid = temp_vportid;
 

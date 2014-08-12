@@ -1265,7 +1265,7 @@ prepend_upcall(struct rte_mbuf *mbuf, uint8_t cmd)
 	error = ovdk_vport_get_vportid(upcall.key.in_port, &vportid);
 	if (error) {
 		RTE_LOG(ERR, APP, "Failed to get vportid when prepending "
-		                  "upcall\n");
+		        "upcall (key.in_port = %d)\n", upcall.key.in_port);
 		return -1;
 	}
 
