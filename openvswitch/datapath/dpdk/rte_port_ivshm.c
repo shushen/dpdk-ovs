@@ -52,12 +52,6 @@
 #define ALLOC_BURST_SIZE         64
 #define FREE_BURST_SIZE          256
 
-/*
- * The number of Tx retries and delay between them
- */
-#define IVSHM_BURST_TX_WAIT_US	15
-#define IVSHM_BURST_TX_RETRIES	256
-
 /* Define prototypes for free functions so that they
  * can be used in other functions within this file
  */
@@ -346,8 +340,8 @@ rte_port_ivshm_writer_create(void *params, int socket_id)
 
 	port->tx_burst_sz = conf->tx_burst_sz;
 	port->tx_buf_count = 0;
-	port->tx_burst_retry_num = IVSHM_BURST_TX_RETRIES;
-	port->tx_burst_delay_time = IVSHM_BURST_TX_WAIT_US;
+	port->tx_burst_retry_num = 10;
+	port->tx_burst_delay_time = 1;
 
 	return port;
 }
