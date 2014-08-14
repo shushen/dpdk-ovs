@@ -67,7 +67,7 @@ There are two possible approaches to compiling Intel® DPDK vSwitch, its support
 
 ### Top-level Makefile
 
-Intel® DPDK vSwitch provides a top-level makefile capable of building each component of Intel in the correct order and fashion. This makefile provides a number of targets:
+Intel® DPDK vSwitch provides a top-level makefile capable of building each component in the correct order and fashion. This makefile provides a number of targets:
 
 * `all`
 * `config`
@@ -87,7 +87,7 @@ cd ovdk                     # DPDK vSwitch sub-directory
 make config && make
 ```
 
-**Note:** The top-level makefile Intel® DPDK vSwitch has been validated in a limited number of environments, and may be subject to portability issues. Please follow the manual steps below if you encounter such issues.
+**Note:** Intel® DPDK vSwitch has been validated in a limited number of environments, and may be subject to portability issues. Please follow the manual steps below if you encounter such issues.
 
 ### Manually
 
@@ -226,7 +226,7 @@ For example:
 ./DPDK/tools/dpdk_nic_bind.py --bind igb_uio 81:00.0 81:00.1
 ```
 
-You can refer to the [*Intel® Data Plane Development Kitt (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] - for full instructions on performing this step.
+You can refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] - for full instructions on performing this step.
 
 ______
 

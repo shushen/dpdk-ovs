@@ -118,7 +118,7 @@ Start `ovs-dpdk`:
 
 ```bash
 ./datapath/dpdk/build/ovs-dpdk -c 0x0F -n 4 --proc-type primary \
-  --base-virtaddr=<virt_addr> -- --stats_core=0 --stats=5 -p 0x03
+  --base-virtaddr=<virt_addr> -- --stats_core=0 --stats_int=5 -p 0x03
 ```
 
 Start the Open vSwitch daemon:
@@ -219,6 +219,11 @@ export CC=gcc
 make uninstall
 make install T=x86_64-ivshmem-linuxapp-gcc
 ```
+
+### Mount/Enable Hugepages on the Guest
+mkdir -p /dev/hugepages
+sudo mount -t hugetlbfs nodev /dev/hugepages
+echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048/nr_hugepages [Assuming that hugepages haven't been enabled in the guest's kernel boot parameters]
 
 ### Build `ovs_client` app
 

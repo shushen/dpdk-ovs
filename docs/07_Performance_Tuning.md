@@ -30,26 +30,14 @@ You must then reboot your system for these changes to take effect.
 
 ______
 
-## Command Line Affinitisation
-
-For `ovs-dpdk`, substitute in this command:
-
-```bash
-./datapath/dpdk/build/ovs-dpdk -c 0x0c -n 4 --proc-type=primary -- \
---stats_core=6 --stats=1
-```
-
-Then for `ovs_client`, substitute in this command:
-
-```bash
-./ovs_client -c 0x01 -n 4 -- -n 1
-```
-
-**Note:** For all Intel® DPDK-enabled applications, the core mask option (`-c`) must be set so that no two processes have overlapping core masks.
-
-______
-
 ## Affinitising the Host Cores
+
+A DPDK application is implicitly affinitised, as prescribed by the `CORE_MASK` argument supplied on the application's command-line.
+**Note:** For all Intel® DPDK-enabled applications, the core mask option (`-c`) must be set such that no two processes have overlapping core masks - failure to do so could result in undesired behaviour, and performance degradation due to corruption of an lcore's local mbuf cache.
+
+Non-DPDK processes may be affinitised using `taskset`.
+
+Sample host-process core affinity:
 
 | Process | Core | Core Mask | Comments |
 |:-------:|:----:|:---------:|:--------:|
@@ -65,7 +53,7 @@ ______
 
 ## Userspace vHost Tuning
 
-As vHost has small buffers it can be heavily effected by packet drops. To help mitigate this, you can change the number of times the vHost port will retry before dropping. You may also need to change the number of retries which the application in the guest will attempt as well as the host ovs-dpdk application's values.
+As vHost has small buffers it can be heavily affected by packet drops. To help mitigate this, you can change the number of times the vHost port will retry before dropping. You may also need to change the number of retries which the application in the guest will attempt as well as the host ovs-dpdk application's values.
 
 
 ###On The Host
@@ -78,7 +66,7 @@ And make the following change:
 ```
 
 _Note: The values which are provided are samples, you will need to test to see which values are optimal for your system_
-_Note: You will have to recompile OpenvSwitch after making this change._
+_Note: You will have to recompile Open vSwitch after making this change._
 
 ###On The Guest
 We use the `test_pmd` DPDK sample application here as an example as it is also used in the [example Userspace vHost configuration][doc-sample-vhost]. This step should be done before building the test-pmd application, or the test-pmd application should be rebuilt after this change has been made.
@@ -118,12 +106,12 @@ To increase the buffer size for IVSHM you will need to change the following #def
 
 It is important to note when changing these values that the alloc ring is kept constantly full, and it used by the vSwitch itself for communication with the datapath. Thus, it should be kept as small as possible to avoid unnecessary memory hogging.
 
-### Increase the number/time of retries on the free queue 
+### Increase the number of/interval between retries on the free queue
 
-To increase the number of retries and the time between retries, you will need to change the following two #defines in `openvswitch/datapath/dpdk/rte_port_ivshm.c`.
+To increase the number of retries and the time between retries, you will need to change the following two `#defines` in `openvswitch/datapath/dpdk/rte_port_ivshm.c`.
 
 ```C
-#define IVSHM_BURST_TX_WAIT_US  15 
+#define IVSHM_BURST_TX_WAIT_US  15
 #define IVSHM_BURST_TX_RETRIES  256
 ```
 

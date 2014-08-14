@@ -18,28 +18,30 @@ The Environment Abstraction Layer (EAL) arguments are required for all DPDK-enha
 
 Of these, the `--base_addr` argument is particularly important. The purpose of this argument is to provide the EAL with a hint of where hugepages should be mapped to. Problems have been seen where secondary processes fail due to collisions with a primary process' virtual address space. A good example of this behaviour is `ovs-dpctl` running as a secondary process. When `ovs-dpctl` starts, it loads all required shared libraries and these get mapped into their own virtual address space. Later in the execution, `ovs-dpctl` calls `rte_eal_init()` which attaches the running process to the primary process' hugepages. If these happened to be mapped to the same virtual addresses used by the shared libraries, these libraries will become unavailable due to its virtual address space being overwritten.
 
-The process of finding a valid virtual address to use with `--base_addr` is one based on trial and error. The virtual addresses can be taken from EAL's output to `stdout`. Once a "valid" virtual address is found it can be re-used over and over with guaranties that it will work.
+The process of finding a valid virtual address to use with `--base_addr` is one based on trial and error. The virtual addresses can be taken from EAL's output to `stdout`. Once a "valid" virtual address is found it can be re-used over and over with guarantees that it will work.
 
 Check the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] for more information about EAL arguments.
 
 After the EAL arguments, the following arguments (i.e. `[args...]` above) are supported:
 
-* `--stats`
-  If zero, statistics are not displayed. If nonzero, it represents the interval in seconds at which statistics are updated onscreen
+* `--stats_int`
+  If zero, statistics are not displayed. If nonzero, it represents the interval at which statistics are updated onscreen
 
 * `--stats_core`
   The ID of the core used to print statistics.
 
 * `-p PORTMASK`
-  PORTMASK Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID, that is, for a portmask of 0x3, ports 0 and 1 are configured.
+  PORTMASK Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID; that is, for a portmask of 0x3, ports 0 and 1 are configured.
 
 ### Example Command
 
-An example configuration, with two physical ports and stats disabled:
+An example configuration, with two physical ports and stats enabled:
 
 ```bash
-./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 -- -p 0x03 --stats_core=1 --stats=0
+./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 -- -p 0x03 --stats_core=0 --stats_int=1
 ```
+
+** Note ** If --stats_core is omitted, statistics are implicitly turned off.
 
 ______
 
@@ -49,7 +51,7 @@ The IVSHM manager utility is used to share the Intel® DPDK objects - created on
 
 The IVSHM manager provides a flexible and easy to use interface that allows multiple combinations regarding what Intel® DPDK objects are shared with the guests. Only the port names specified in `ovs-dpdk` are needed. The utility will query the `ovs-dpdk` internal configuration and collect all Intel® DPDK ring and memzone information associated with the ports being shared. Finally, it will create the metadata and a command line to be used when running QEMU processes (i.e. starting guests). These command lines will be printed to the screen and stored in temporary files - one per guest - under the `/tmp` directory (for automation purposes).
 
-There are a some points to note about the IVSHM manager utility. Firstly, it must always be executed after `ovs-dpdk` is up and running and all ports have been both added *and* configured. An attempt to run it before this may cause undesired behavior. Secondly, it must be run as an Intel® DPDK secondary process. Failing to do so will cause the utility to exit with an error.
+There are some points to note about the IVSHM manager utility. Firstly, it must always be executed after `ovs-dpdk` is up and running and all ports have been both added *and* configured. An attempt to run it before this may cause undesired behavior. Secondly, it must be run as an Intel® DPDK secondary process. Failing to do so will cause the utility to exit with an error.
 
 ### Args
 

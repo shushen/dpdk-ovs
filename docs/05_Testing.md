@@ -56,6 +56,12 @@ To list all available tests:
 make check TESTSUITEFLAGS=--list
 ```
 
+To run an individual test:
+
+```bash
+make check TESTSUITEFLAGS=<test_number>
+```
+
 For all other options, execute `--help`:
 
 ```bash
@@ -84,6 +90,18 @@ To clean logs and results of previous tests:
 
 ```bash
 ./testsuite -c [tests]
+```
+
+To list all available tests:
+
+```bash
+./testsuite TESTSUITEFLAGS=--list
+```
+
+To run an individual test:
+
+```bash
+./testsuite TESTSUITEFLAGS=<test_number>
 ```
 
 For all other options, execute `--help`:

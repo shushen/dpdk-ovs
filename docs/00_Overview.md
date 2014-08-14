@@ -29,7 +29,7 @@ Intel® DPDK vSwitch currently provides two methods of communicating from guest-t
 * Zero copy between guest and switch
 * Option when applications are trusted and highest small packet throughput required.
 * Option when applications do not need the Linux network stack
-* Opportunity to add VM to VM security through additional buffer allocation (via. `memcpy`)
+* Opportunity to add VM to VM security through additional buffer allocation (via `memcpy`)
 
 #### Userspace vHost
 
@@ -66,7 +66,7 @@ ______
 
 ### QEMU
 
-QEMU 1.6.2 has been modified by adding a modified Inter-VM Shared Memory (IVSHMEM) PCI device that allows for an Intel® DPDK hugepage to be shared with an Intel® DPDK application in the guest. This allows for very fast zero-copy communication with the accelerated OpenVSwitch. This code can be found in `qemu/hw/misc/ivshmem.c`
+QEMU 1.6.2 has been modified by adding a modified Inter-VM Shared Memory (IVSHMEM) PCI device that allows for an Intel® DPDK hugepage to be shared with an Intel® DPDK application in the guest. This allows for very fast zero-copy communication with the accelerated Open vSwitch. This code can be found in `qemu/hw/misc/ivshmem.c`
 
 ### Open vSwitch
 

@@ -4,6 +4,8 @@ ______
 
 ## Intel® DPDK vSwitch
 
+* To view a list of known bugs, or log a new one, please visit the [Issues][ovdk-issues] section of the Intel® DPDK vSwitch GitHub page.
+
 * This release supports Intel® DPDK v1.7.0 only. Intel® DPDK v1.6.0 is no longer supported.
 
 * Intel® Virtualization Technology for Directed I/O (Intel® VT-d) should be disabled in the BIOS settings, unless PCI passthrough is required, in which case the following options should be added to the kernel boot parameters:
@@ -47,13 +49,13 @@ ______
     Cause: Cannot allocate memory for port tx_q details
     ```
 
-    These error messages indicate that Intel® DPDK initialization failed because it did not detect any recognized physical ports. One possible cause is that the NIC is still driven by the default ixgbe driver. To resolve this issue, run `DPDK/tools/pci_unbind.py` before starting ovs-dpdk. (This process lets the Intel® DPDK poll mode driver take over the NIC.)
+    These error messages indicate that Intel® DPDK initialization failed because it did not detect any recognized physical ports. One possible cause is that the NIC is still driven by the default ixgbe driver. To resolve this issue, run `DPDK/tools/dpdk_nic_bind.py` before starting ovs-dpdk. (This process lets the Intel® DPDK poll mode driver take over the NIC.)
 
-    For example, `pci_unbind.py -b igb_uio <PCI ID of NIC port>` binds the NIC to the Intel® DPDK igb_uio driver.
+    For example, `dpdk_nic_bind.py -b igb_uio <PCI ID of NIC port>` binds the NIC to the Intel® DPDK igb_uio driver.
 
-* Some Intel® DPDK dpif unit tests create files in `/tmp`. These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
+* Some Intel® DPDK dpif unit tests create files in `/tmp` (specifically, dpdk_flow_table and dpif_dpdk_vport_table). These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
 
-* Port deletion in the datapath is not fully supported.
+* Port deletion in the datapath is not fully supported. For this release, a temporary workaround is in place which disables deletion such that ports which have been used cannot be used again. A more permanent solution for this issue is currently in progress.
 
 ______
 
@@ -69,7 +71,7 @@ Open vSwitch contains a number of unit tests that collectively form the OVS "tes
 
 Many of the tests also fail due to differences in the required parameters for utilities such as `ovs-dpctl` (that is, Intel® DPDK vSwitch's version of these utilities require EAL parameters). As a result, these tests should be used as guidelines only.
 
-In addition to the standard unit tests, Intel® DPDK vSwitch extends the testsuite with a number of "Intel® DPDK vSwitch"-specific unit tests. These tests require root privileges to run, due to the use of hugepages by the Intel® DPDK library. These tests are currently the only tests guaranteed to pass.
+In addition to the standard unit tests, Intel® DPDK vSwitch extends the testsuite with a number of "Intel® DPDK vSwitch"-specific unit tests. These tests require root privileges to run, due to the use of hugepages by the Intel® DPDK library. These tests are currently the only tests guaranteed to pass, with the exception of the `port-del` and `multicore-port-del` unit tests, as described earlier in this document.
 
 ______
 
@@ -114,4 +116,4 @@ ______
 © 2014, Intel Corporation. All Rights Reserved
 
 [mail-003591]: http://www.dpdk.org/ml/archives/dev/2014-June/003591.html
-
+[ovdk-issues]: https://github.com/01org/dpdk-ovs/issues

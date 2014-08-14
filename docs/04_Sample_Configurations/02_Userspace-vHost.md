@@ -172,7 +172,7 @@ Start `ovs-dpdk`:
 ```bash
 ./datapath/dpdk/build/ovs-dpdk -c 0x0F -n 4 --proc-type primary \
   --base-virtaddr=<virt_addr> --socket-mem 2048,2048 -- \
-  --stats_core=0 --stats=5 -p 0x03
+  --stats_core=0 --stats_int=5 -p 0x03
 ```
 
 Note the additional `--socket-mem` option. This ensures the DPDK app does not use all available hugepage memory on the system.
@@ -287,7 +287,7 @@ insmod /root/vhost/DPDK/x86_64-ivshmem-linuxapp-gcc/kmod/igb_uio.ko
 Once complete, bind the necessary vHost devices to this driver:
 
 ```bash
-/root/vhost/DPDK/tools/pci_unbind.py --bind igb_uio 0000:00:03.0 0000:00:04.0
+/root/vhost/DPDK/tools/dpdk_nic_bind.py -b igb_uio 0000:00:03.0 0000:00:04.0
 ```
 
 ### Execute `test-pmd` App
