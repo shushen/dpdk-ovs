@@ -1,14 +1,14 @@
-# v1.1 - July 2014
+# v1.1 - August 2014
 
-- Added multicore support - datapath may run on multiple pipelines/cores,
-  with added load-balancing for handling vswitchd commands (round-robin).
-- Added vswitchd command-line parameter to pin stats display to a specific
-  core.
-- Add support for portmask argument for physical devices
-- Port for use with the version of DPDK available from DPDK.org
-- QEMU
-  - Convert 'qemu' folder to a subtree
-  - Upgrade from v1.4.0 to v1.6.2, removing QEMU support for legacy VirtIO in the process
+- Updated to use version of Intel(R) DPDK v1.7.0 available from [DPDK.org](http://www.dpdk.org/)
+- Datapath:
+  - Added multicore support - datapath may run on multiple pipelines/cores, with added load-balancing (round-robin)
+  - Added support for `stats_core` argument to pin stats display to a specific core
+  - Added support for `-p` portmask argument for physical devices
+- QEMU:
+  - Convert `qemu` folder to a subtree
+  - Upgraded from v1.4.0 to v1.6.2, removing QEMU support for legacy VirtIO in the process
+- Bug fixes
 
 # v1.0 - May 2014
 
