@@ -15,6 +15,7 @@ ______
 Intel® DPDK vSwitch has been validated against the following Linux distributions:
 
 * Fedora 18
+* Fedora 20
 
 Additionally, Intel® DPDK vSwitch has been validated on the following processors:
 
