@@ -4,7 +4,7 @@ ______
 
 ## Build Requirements
 
-To compile Intel® DPDK vSwitch for stock Fedora 20, you will need the following software:
+To compile Intel® DPDK vSwitch for stock Fedora 18/20, you will need the following software:
 
 * `gcc`
 * `kernel-devel-$(uname -r)`
@@ -58,7 +58,7 @@ mkdir ~/ovs_dpdk
 cd ~/ovs_dpdk
 mkdir ovdk
 unzip <dpdk_release_pkg>.tar.gz
-tar -xvzg <dpdk_vswitch_release_pkg>.tar.gz -C ovdk
+tar -xvzf <dpdk_vswitch_release_pkg>.tar.gz -C ovdk
 mv <dpdk_extract_dir> DPDK
 ```
 
