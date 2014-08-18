@@ -50,15 +50,13 @@
  * dataplane. It is an arbitrary limit that can be changed at compile time.
  * The tradeoff here is the amount of memory needed for each port.
  */
-#define OVDK_MAX_MEMNICS         32
 #define OVDK_MAX_CLIENTS         32
 #define OVDK_MAX_PHYPORTS        32
 #define OVDK_MAX_VHOSTS          32
 #define OVDK_MAX_KNIS            32
 #define OVDK_MAX_BRIDGES         32
 #define OVDK_MAX_VETHS           4
-#define OVDK_MAX_VPORTS          ((OVDK_MAX_MEMNICS)  + \
-                                 (OVDK_MAX_CLIENTS)  + \
+#define OVDK_MAX_VPORTS          ((OVDK_MAX_CLIENTS)  + \
                                  (OVDK_MAX_PHYPORTS) + \
                                  (OVDK_MAX_VHOSTS) + \
                                  (OVDK_MAX_KNIS) + \
