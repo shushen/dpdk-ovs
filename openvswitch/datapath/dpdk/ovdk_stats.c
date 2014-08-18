@@ -108,6 +108,7 @@ static struct vport_statistics *vport_stats[OVDK_MAX_VPORTS] = {NULL};
 static struct vswitch_statistics *vswitch_stats = NULL;
 
 static const char *get_printable_mac_addr(uint8_t port);
+static void nic_stats_display(uint8_t port_id);
 
 /*
  * Set all statistic values to zero.
@@ -656,6 +657,39 @@ get_printable_mac_addr(uint8_t port)
 	return addresses[port];
 }
 
+
+
+static void
+nic_stats_display(uint8_t port_id)
+{
+	struct rte_eth_stats stats;
+
+	rte_eth_stats_get(port_id, &stats);
+
+	printf("  rx_packets: %10"PRIu64" rx_errors: %10"PRIu64""
+	       " rx_bytes: %10"PRIu64"\n",
+	       stats.ipackets,
+	       stats.ierrors,
+	       stats.ibytes);
+	printf("  tx_packets: %10"PRIu64" tx_errors: %10"PRIu64""
+	       " tx_bytes: %10"PRIu64"\n",
+	       stats.opackets,
+	       stats.oerrors,
+	       stats.obytes);
+
+	if ((stats.tx_pause_xon  | stats.rx_pause_xon | stats.tx_pause_xoff |
+	     stats.rx_pause_xoff) > 0) {
+		printf("  rx_xoff: %10"PRIu64" rx_xon: %10"PRIu64"\n",
+		       stats.rx_pause_xoff,
+		       stats.rx_pause_xon);
+		printf("  tx_xoff: %10"PRIu64" tx_xon: %10"PRIu64"\n",
+		       stats.tx_pause_xoff,
+		       stats.tx_pause_xon);
+	}
+}
+
+
+
 /*
  * This function displays the recorded statistics for each port
  * and for each client. It uses ANSI terminal codes to clear
@@ -684,29 +718,29 @@ ovdk_stats_display(void)
 	/* Clear screen and move to top left */
 	printf("%s%s", clr, topLeft);
 
-	printf("Physical Ports\n");
-	printf("-----\n");
+	printf("NIC Statistics\n"
+	       "--------------\n");
 	for (i = 0; i < OVDK_MAX_PHYPORTS; i++) {
 		error = ovdk_vport_get_port_name(i, name);
 		if (error || name[0] == '\0')
 			continue;
-		printf("Port %u: '%s'\n", i,
-				get_printable_mac_addr(i));
+		printf("Port %u: '%s'\n", i, get_printable_mac_addr(i));
+		nic_stats_display(i);
 	}
-	printf("\n\n");
 
 	printf("\nVport Statistics\n"
+	       "------------------\n"
 	       "=============   ============  ============  ============  ============\n"
 	       "Interface       rx_packets    rx_dropped    tx_packets    tx_dropped  \n"
 	       "-------------   ------------  ------------  ------------  ------------\n");
-	printf("%-*.*s ", 13, 13, "vSwitchD data");
+	printf("%-*.*s ", 13, 13, "vswitchd data");
 	printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 	       ovdk_stats_vswitch_data_rx_get(),
 	       ovdk_stats_vswitch_data_rx_drop_get(),
 	       ovdk_stats_vswitch_data_tx_get(),
 	       ovdk_stats_vswitch_data_tx_drop_get());
 
-	printf("%-*.*s ", 13, 13, "vSwitchD control");
+	printf("%-*.*s ", 13, 13, "vswitchd ctrl");
 	printf("%13"PRIu64" %13"PRIu64" %13"PRIu64" %13"PRIu64"\n",
 	       ovdk_stats_vswitch_control_rx_get(),
 	       ovdk_stats_vswitch_control_rx_drop_get(),
@@ -728,14 +762,11 @@ ovdk_stats_display(void)
 	}
 	printf("=============   ============  ============  ============  ============\n");
 
-	printf("\n Switch control rx dropped %lu\n", ovdk_stats_vswitch_control_rx_drop_get());
-	printf("\n Switch control tx dropped %lu\n", ovdk_stats_vswitch_control_tx_drop_get());
-	printf("\n Switch data rx dropped %lu\n", ovdk_stats_vswitch_data_rx_drop_get());
-	printf("\n Switch data tx dropped %lu\n", ovdk_stats_vswitch_data_tx_drop_get());
-	printf("\n Queue overruns    %lu\n",  overruns);
-	printf("\n Pkt Mempool count     %9u\n", rte_mempool_count(pktmbuf_pool));
-	printf("\n Ctrl Mempool count     %9u\n", rte_mempool_count(ctrlmbuf_pool));
-	printf("\n");
+	printf("\nAdditional Switch Statistics\n"
+	       "------------------------------\n");
+	printf("queue_overruns    %13lu\n", overruns);
+	printf("pkt_mempool count %13u\n", rte_mempool_count(pktmbuf_pool));
+	printf("ctl_mempool count %13u\n", rte_mempool_count(ctrlmbuf_pool));
 }
 
 /*
