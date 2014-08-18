@@ -1,3 +1,7 @@
+# v1.2 - TBD
+
+- Added DPI support
+
 # v1.1 - August 2014
 
 - Updated to use version of Intel(R) DPDK v1.7.0 available from [DPDK.org](http://www.dpdk.org/)
