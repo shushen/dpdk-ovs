@@ -295,7 +295,7 @@ Once complete, bind the necessary vHost devices to this driver:
 Having completed the above, run the `test-pmd` application.
 
 ```bash
-./testpmd -c 0x3 -n 4 --socket-mem 128 -- --burst=64 -i
+./testpmd -c 0x3 -n 4 --socket-mem 128 -- --burst=64 -i --txqflags=0xf00
 ```
 
 At the `testpmd` prompt, issue the following commands:
