@@ -98,9 +98,7 @@
 struct ovdk_datapath {
 	struct rte_ring *request_ring;
 	struct rte_ring *reply_ring;
-	struct rte_ring *packet_free_ring;
 	struct rte_ring *control_free_ring;
-	struct rte_ring *packet_alloc_ring;
 	struct rte_ring *control_alloc_ring;
 } __rte_cache_aligned;
 

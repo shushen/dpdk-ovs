@@ -1155,6 +1155,7 @@ action_execute(const struct ovdk_action *action, struct rte_mbuf *mbuf)
 		break;
 	case OVDK_ACTION_DROP:
 		/* Do nothing as the packet framework action will do the actual drop */
+		break;
 	case OVDK_ACTION_VSWITCHD:
 		ret = prepend_upcall(mbuf, PACKET_CMD_ACTION);
 		if (ret) {
