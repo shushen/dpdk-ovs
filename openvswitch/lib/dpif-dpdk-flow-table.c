@@ -24,7 +24,7 @@
 #include "ovs-thread.h"
 #include "datapath/dpdk/ovdk_config.h"
 
-#define FILENAME "/tmp/dpdk_flow_table"
+#define FILENAME "/tmp/dpif_dpdk_flow_table"
 #define FILESIZE (sizeof(struct dpif_dpdk_flow_table_entry) * \
                   OVDK_FLOW_TABLE_SIZE)
 #define INVALID -1
