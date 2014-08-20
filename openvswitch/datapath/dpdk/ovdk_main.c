@@ -64,22 +64,16 @@ static void do_process_packets(__rte_unused void *arg);
 static void configure_lcore(unsigned lcore_id);
 static inline void __attribute__((always_inline)) configure_lcores_all(void);
 static inline void __attribute__((always_inline)) master_lcore_loop(void);
-static void interrupt_func(int sig);
+static void configure_signal_handlers(void);
+static void handle_signal(int sig);
 int initialize_lcore(void *);
 
 int
 main(int argc, char **argv)
 {
-	struct sigaction new_action;
-	struct sigaction old_action;
 	int ret = 0;
 
-	new_action.sa_handler = interrupt_func;
-	sigemptyset(&new_action.sa_mask);
-	new_action.sa_flags = 0;
-	sigaction(SIGINT, NULL, &old_action);
-	if (old_action.sa_handler != SIG_IGN)
-		sigaction (SIGINT, &new_action, NULL);
+	configure_signal_handlers();
 
 	/* Enable correct usage message */
 	rte_set_application_usage_hook(ovdk_args_usage);
@@ -171,7 +165,7 @@ configure_lcore(unsigned lcore_id)
 
 	if (ovdk_args_get_stats_core() == lcore_id) {
 		ret = ovdk_jobs_add_to_lcore(do_display_stats, NULL,
-                                             lcore_id);
+		                             lcore_id);
 		if (ret < 0)
 			rte_panic("Could not display stats for core %d\n",
 		                  lcore_id);
@@ -219,9 +213,39 @@ int initialize_lcore( __rte_unused void *arg)
 }
 
 
+/*
+ * Configure signal handlers.
+ *
+ * Configure signal handlers for application.
+ */
 static void
-interrupt_func(int sig)
+configure_signal_handlers(void)
 {
+	struct sigaction new_action;
+	struct sigaction old_action;
+
+	/* create a new action handler */
+	new_action.sa_handler = handle_signal;
+	sigemptyset(&new_action.sa_mask);
+	new_action.sa_flags = 0;
+
+	/* but don't use if someone previously asked for signal to be ignored */
+	sigaction(SIGINT, NULL, &old_action);
+	if (old_action.sa_handler != SIG_IGN)
+		sigaction(SIGINT, &new_action, NULL);
+	sigaction(SIGHUP, NULL, &old_action);
+	if (old_action.sa_handler != SIG_IGN)
+		sigaction(SIGHUP, &new_action, NULL);
+	sigaction(SIGTERM, NULL, &old_action);
+	if (old_action.sa_handler != SIG_IGN)
+		sigaction(SIGTERM, &new_action, NULL);
+}
+
+/* Perform cleanup on master core. */
+static void
+handle_signal(int sig)
+{
+	RTE_LOG(INFO, APP, "Shutting down application...\n");
 	ovdk_vport_vhost_teardown_cuse();
 	ovdk_vport_vhost_pthread_kill();
 	_exit(sig);
