@@ -49,8 +49,8 @@ struct vhost_vring_file;
  */
 struct vhost_device_ctx
 {
-	pid_t		pid;	/* PID of process calling the IOCTL. */
-	uint64_t 	fh;		/* Populated with fi->fh to track the device index. */
+	pid_t pid;  /* PID of process calling the IOCTL. */
+	uint64_t fh;  /* Populated with fi->fh to track the device index. */
 };
 
 /*
@@ -58,29 +58,30 @@ struct vhost_device_ctx
  * functions are called in CUSE context and are used to configure devices.
  */
 struct vhost_net_device_ops {
-	int (* new_device) 		(struct vhost_device_ctx);
+	int (* new_device) (struct vhost_device_ctx);
 	void (* destroy_device) (struct vhost_device_ctx);
 
-	int (* get_features) 	(struct vhost_device_ctx, uint64_t *);
-	int (* set_features) 	(struct vhost_device_ctx, uint64_t *);
+	int (* get_features) (struct vhost_device_ctx, uint64_t *);
+	int (* set_features) (struct vhost_device_ctx, uint64_t *);
 
-	int (* set_mem_table) 	(struct vhost_device_ctx, const void *, uint32_t);
+	int (* set_mem_table) (struct vhost_device_ctx, const void *, uint32_t);
 
-	int (* set_vring_num) 	(struct vhost_device_ctx, struct vhost_vring_state *);
-	int (* set_vring_addr) 	(struct vhost_device_ctx, struct vhost_vring_addr *);
-	int (* set_vring_base) 	(struct vhost_device_ctx, struct vhost_vring_state *);
-	int (* get_vring_base) 	(struct vhost_device_ctx, uint32_t, struct vhost_vring_state *);
+	int (* set_vring_num) (struct vhost_device_ctx, struct vhost_vring_state *);
+	int (* set_vring_addr) (struct vhost_device_ctx, struct vhost_vring_addr *);
+	int (* set_vring_base) (struct vhost_device_ctx, struct vhost_vring_state *);
+	int (* get_vring_base) (struct vhost_device_ctx, uint32_t, struct vhost_vring_state *);
 
-	int (* set_vring_kick) 	(struct vhost_device_ctx, struct vhost_vring_file *);
-	int (* set_vring_call) 	(struct vhost_device_ctx, struct vhost_vring_file *);
+	int (* set_vring_kick) (struct vhost_device_ctx, struct vhost_vring_file *);
+	int (* set_vring_call) (struct vhost_device_ctx, struct vhost_vring_file *);
 
-	int (* set_backend) 	(struct vhost_device_ctx, struct vhost_vring_file *);
+	int (* set_backend) (struct vhost_device_ctx, struct vhost_vring_file *);
 
-	int (* set_owner) 		(struct vhost_device_ctx);
-	int (* reset_owner) 	(struct vhost_device_ctx);
+	int (* set_owner) (struct vhost_device_ctx);
+	int (* reset_owner) (struct vhost_device_ctx);
 };
 
-int register_cuse_device(const char *base_name, int index, struct vhost_net_device_ops const * const);
+int register_cuse_device(const char *base_name, int index,
+                         struct vhost_net_device_ops const * const);
 void cuse_session_loop(void);
 
 #endif /* _VHOST_NET_CDEV_H_ */
