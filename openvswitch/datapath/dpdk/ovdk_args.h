@@ -37,8 +37,8 @@
 #define __OVDK_ARGS_H__
 
 int ovdk_args_parse_app_args(int argc, char *argv[]);
-int ovdk_args_get_stats_interval(void);
 uint64_t ovdk_args_get_portmask(void);
+int ovdk_args_get_stats_interval(void);
 int ovdk_args_get_stats_core(void);
 
 #endif /* ifndef __OVDK_ARGS_H__ */

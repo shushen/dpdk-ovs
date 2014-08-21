@@ -63,11 +63,8 @@
 #include "ovdk_virtio-net.h"
 #include "ovdk_args.h"
 
-#define rpl_strnlen strnlen
-
-#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
-
-#define RTE_LOGTYPE_APP                 RTE_LOGTYPE_USER1
+#define rpl_strnlen                strnlen
+#define RTE_LOGTYPE_APP            RTE_LOGTYPE_USER1
 
 #define OVDK_MZ_VPORT_INFO_SIZE    sizeof(struct vport_info) * OVDK_MAX_VPORTS
 #define INVALID_VPORTID            (-1)

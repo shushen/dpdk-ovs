@@ -33,15 +33,12 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <getopt.h>
-#include <stdarg.h>
-#include <errno.h>
 #include <string.h>
 
-#include <rte_memory.h>
-#include <rte_string_fns.h>
+#include <rte_config.h>
+#include <rte_common.h>
 
 #include "ovdk_args.h"
 
@@ -53,31 +50,35 @@
 #define PORTMASK_BASE 16
 
 static const char *progname;
-static int stats_interval = 0;
 static uint64_t port_mask = 0;
-static int parse_portmask(const char *portmask);
+static int stats_interval = 0;
 static int stats_core = -1;
 
-/**
- * Prints out usage information to stdout
+static int parse_portmask(const char *portmask);
+
+/*
+ * Display usage instructions.
  */
 static void
 usage(void)
 {
 	printf(
-	    "%s [EAL options] -- -p PORTMASK --stats_core STATS_CORE --stats_int UPDATE_TIME\n"
+	    "%s [EAL options] -- -p PORTMASK --stats_core STATS_CORE "
+	    "--stats_int UPDATE_TIME\n"
 	    " -p PORTMASK: hexadecimal bitmask of ports to use\n"
 	    " --stats_core CORE_ID: the core used to display stats\n"
 	    " --stats_int UPDATE_TIME:\n"
-	    "   Interval (in seconds) at which stats are updated. Set to 0 to disable (default)\n"
+	    "   Interval (in seconds) at which stats are updated. Set to 0"
+	    " to disable (default)\n"
 	    , progname);
 }
 
-/**
- * The application specific arguments follow the DPDK-specific
- * arguments which are stripped by the DPDK init. This function
- * processes these application arguments, printing usage info
- * on error.
+/*
+ * Parse application arguments.
+ *
+ * The application specific arguments succeed the DPDK-specific arguments,
+ * which are stripped by the DPDK EAL init. Process these application
+ * arguments, and display the usage info on error.
  */
 int
 ovdk_args_parse_app_args(int argc, char *argv[])
@@ -93,34 +94,52 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 	progname = argv[0];
 
 	while ((opt = getopt_long(argc, argvopt, "p:", lgopts,
-		&option_index)) != EOF) {
+	                          &option_index)) != EOF) {
 		switch (opt) {
-                        case 'p':
-                                if (parse_portmask(optarg) != 0) {
-                                        usage();
-                                        rte_exit(EXIT_FAILURE, "Invalid option"
-                                                 " specified '%c'\n", opt);
-                                }
-                                break;
-			case 0:
-				if (strncmp(lgopts[option_index].name, PARAM_STATS_INTERVAL, 9) == 0) {
-					stats_interval = atoi(optarg);
-				} else if (strncmp(lgopts[option_index].name, PARAM_STATS_CORE, 10) == 0) {
-					stats_core = atoi(optarg);
-				}
-				break;
-			default:
+		case 'p':
+			if (parse_portmask(optarg) != 0) {
 				usage();
 				rte_exit(EXIT_FAILURE, "Invalid option"
 				         " specified '%c'\n", opt);
+			}
+			break;
+		case 0:
+			if (strncmp(lgopts[option_index].name,
+			            PARAM_STATS_INTERVAL, 9) == 0)
+				stats_interval = atoi(optarg);
+			else if (strncmp(lgopts[option_index].name,
+			                 PARAM_STATS_CORE, 10) == 0)
+				stats_core = atoi(optarg);
+			break;
+		default:
+			usage();
+			rte_exit(EXIT_FAILURE, "Invalid option"
+			         " specified '%c'\n", opt);
 		}
 	}
+
 	return 0;
 }
 
-int
-ovdk_args_get_stats_interval(void) {
-	return stats_interval;
+/*
+ * Parse the supplied portmask argument.
+ *
+ * This does not actually validate the port bitmask - it merely parses and
+ * stores it. As a result, validation must be carried out on this value.
+ */
+static int
+parse_portmask(const char *portmask)
+{
+	char *end = NULL;
+	unsigned long num = 0;
+
+	num = strtoul(portmask, &end, 16);
+	if ((portmask[0] == '\0') || (end == NULL) || (*end != '\0'))
+		return -1;
+
+	port_mask = num;
+
+	return 0;
 }
 
 uint64_t
@@ -128,22 +147,9 @@ ovdk_args_get_portmask(void){
 	return port_mask;
 }
 
-static int
-parse_portmask(const char *portmask)
-{
-	char *end = NULL;
-	unsigned long pm;
-
-	if (portmask == NULL || *portmask == '\0')
-		return -1;
-
-	/* convert parameter to a number and verify */
-	pm = strtoul(portmask, &end, PORTMASK_BASE);
-	if (end == NULL || *end != '\0' || pm == 0)
-		return -1;
-	port_mask = pm;
-
-	return 0;
+int
+ovdk_args_get_stats_interval(void) {
+	return stats_interval;
 }
 
 int
