@@ -98,7 +98,8 @@ ovdk_args_parse_app_args(int argc, char *argv[])
                         case 'p':
                                 if (parse_portmask(optarg) != 0) {
                                         usage();
-                                        return -1;
+                                        rte_exit(EXIT_FAILURE, "Invalid option"
+                                                 " specified '%c'\n", opt);
                                 }
                                 break;
 			case 0:
@@ -109,9 +110,9 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 				}
 				break;
 			default:
-				printf("ERROR: Unknown option '%c'\n", opt);
 				usage();
-				return -1;
+				rte_exit(EXIT_FAILURE, "Invalid option"
+				         " specified '%c'\n", opt);
 		}
 	}
 	return 0;
