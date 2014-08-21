@@ -39,13 +39,8 @@
 #include "ovdk_vport_info.h"
 
 void ovdk_vport_vhost_init(void);
-
 int ovdk_vport_vhost_port_init(struct vport_info *vport_info);
-
 void ovdk_vport_vhost_removal_ack(unsigned lcore_id);
-
 void ovdk_vport_vhost_pthread_kill(void);
-
-void ovdk_vport_vhost_teardown_cuse(void);
 
 #endif /* __OVDK_VPORT_VHOST_H_ */

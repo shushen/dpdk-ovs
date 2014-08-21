@@ -368,12 +368,3 @@ cuse_session_loop(void)
 {
 	fuse_session_loop(session);
 }
-
-/*
- * Call cuse_level_teardown on the CUSE session
- */
-void
-call_teardown_cuse(void)
-{
-	cuse_lowlevel_teardown(session);
-}

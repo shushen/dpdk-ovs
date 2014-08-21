@@ -203,7 +203,6 @@ ovdk_vport_vhost_init(void)
 {
 	unsigned lcore = 0;
 	int ret = 0;
-	static pthread_t tid = 0;
 
 	/* Register cuse device with user defined name & callbacks */
 	ret = register_cuse_device((char*)&dev_basename, dev_index,
@@ -225,21 +224,13 @@ ovdk_vport_vhost_init(void)
 }
 
 /*
- * Call to teardown CUSE session.
- */
-void
-ovdk_vport_vhost_teardown_cuse(void)
-{
-	call_teardown_cuse();
-}
-
-/*
- * Pass an interrupt signal to pthread tid. Used to
- * notify FUSE session event handler running on pthread
- * tid when interrupt has been generated.
+ * Kill the pthread cuse is running on.
+ *
+ * Pass an interrupt signal to pthread 'tid'. Used to notify FUSE session
+ * event handler running on pthread 'tid' when interrupt has been generated.
  */
 void
 ovdk_vport_vhost_pthread_kill(void)
 {
-	pthread_kill(tid,SIGINT);
+	pthread_kill(tid, SIGINT);
 }

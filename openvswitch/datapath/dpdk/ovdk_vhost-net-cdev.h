@@ -82,6 +82,5 @@ struct vhost_net_device_ops {
 
 int register_cuse_device(const char *base_name, int index, struct vhost_net_device_ops const * const);
 void cuse_session_loop(void);
-void call_teardown_cuse(void);
 
 #endif /* _VHOST_NET_CDEV_H_ */

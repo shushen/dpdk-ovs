@@ -246,7 +246,6 @@ static void
 handle_signal(int sig)
 {
 	RTE_LOG(INFO, APP, "Shutting down application...\n");
-	ovdk_vport_vhost_teardown_cuse();
 	ovdk_vport_vhost_pthread_kill();
 	_exit(sig);
 }
