@@ -633,6 +633,8 @@ ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
 			assert(num_actions == 1);
 			/* send to exception port */
 			port_id = 0;
+			ovdk_pipeline_entry.pf_entry.action = RTE_PIPELINE_ACTION_PORT;
+			ovdk_pipeline_entry.pf_entry.port_id = port_id;
 			break;
 		}
 	}
