@@ -38,15 +38,14 @@
 #include <rte_mbuf.h>
 #include <rte_string_fns.h>
 #include <rte_memzone.h>
+#include <rte_log.h>
+
 #include <ovs-vport.h>
 
 /* Number of packets to attempt to read from queue */
 #define PKT_READ_SIZE           32u
 #define RTE_LOGTYPE_APP         RTE_LOGTYPE_USER1
 #define ALLOC_INTERVAL          128
-
-#define enqueue_mbufs_to_be_freed(queue, mbufs, n) \
-  rte_ring_enqueue_bulk(queue, mbufs, n)
 
 /* Our client port name - tells us which rx queue to read, and tx
  * queue to write to. */
@@ -58,7 +57,8 @@ static char *port_name = NULL;
 static void
 usage(const char *progname)
 {
-	printf("\nUsage: %s [EAL args] -- -p <port_name>\n", progname);
+	RTE_LOG(INFO, APP, "Usage: %s [EAL args] -- -p <port_name>\n",
+	        progname);
 }
 
 /*
@@ -134,8 +134,9 @@ int main(int argc, char *argv[])
 
 	RTE_LOG(INFO, APP, "Finished Process Init.\n");
 
-	printf("\nClient handling packets from port '%s'\n", port_name);
-	printf("[Press Ctrl-C to quit ...]\n");
+	RTE_LOG(INFO, APP, "Client handling packets from port '%s'\n",
+	        port_name);
+	RTE_LOG(INFO, APP, "[Press Ctrl-C to quit ...]\n");
 
 	for (;;) {
 		/*Do the actual work of forwarding packets*/
@@ -172,24 +173,37 @@ int main(int argc, char *argv[])
 		 * be periodically allocating mbufs and adding them to this queue.
 		 * Add this new queue the same way the free_q queue is added.
 		 */
-		if (ret == -ENOBUFS)
-			enqueue_mbufs_to_be_freed(free_q, pkts, pkts_count);
+		if (unlikely(ret == -ENOBUFS)) {
+			RTE_LOG (DEBUG, APP, "ovs_client: Couldn't transmit %u "
+			        "packets to Tx ring %s;enqueuing to free ring "
+				"%s\n", pkts_count, tx_ring->name, free_q->name);
+
+			ret = rte_ring_enqueue_bulk(free_q, pkts, pkts_count);
+			if (unlikely(ret == -ENOBUFS))
+				RTE_LOG(DEBUG, APP, "ovs_client: couldn't "
+				       "enqueue %u Tx mbufs to free queue %s\n",
+				       pkts_count, free_q->name);
+		}
 
 		if (alloc_count == ALLOC_INTERVAL) {
 			/*Simulate using the alloc queue*/
 			free_count = rte_ring_free_count(free_q);
-
 			pkts_count = RTE_MIN(free_count, PKT_READ_SIZE);
 
 			if (unlikely(pkts_count == 0))
 				continue;
 
-			ret = rte_ring_dequeue_bulk(alloc_q, af_pkts, pkts_count);
+			ret = rte_ring_dequeue_bulk(alloc_q, af_pkts,
+			                            pkts_count);
 			if (unlikely(ret < 0))
 				continue;
 
-			enqueue_mbufs_to_be_freed(free_q, af_pkts, pkts_count);
-
+			ret = rte_ring_enqueue_bulk(free_q, af_pkts,
+			                            pkts_count);
+			if (unlikely(ret == -ENOBUFS))
+				RTE_LOG(DEBUG, APP, "ovs_client: couldn't "
+				       "enqueue %u alloc mbufs to free queue "
+				       "%s\n", pkts_count, free_q->name);
 			alloc_count = 0;
 		} else {
 			alloc_count++;
