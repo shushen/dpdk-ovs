@@ -215,11 +215,13 @@ rte_port_ivshm_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 	n_enq_pkts = rte_ring_sc_dequeue_burst(p->free_ring,
 	                                (void **) freebufs,
 	                                FREE_BURST_SIZE);
+	if (unlikely(n_enq_pkts > 0))
+		RTE_LOG(INFO, PORT, "%s: Freeing %d packets from IVSHM free_ring %s\n",
+		        __FUNCTION__, n_enq_pkts, p->free_ring->name);
 
 	for(i = 0; i < n_enq_pkts; i++) {
 		rte_pktmbuf_free(freebufs[i]);
 	}
-
 
 	/* Only allocate buffers if we need to */
 	ring_free_count = rte_ring_free_count(p->alloc_ring);
@@ -233,10 +235,15 @@ rte_port_ivshm_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 						      (void **) alloc_buf,
 						      num_to_alloc);
 
+		if (unlikely(num_alloced < num_to_alloc))
+			RTE_LOG(INFO, PORT, "%s: unable to enqueue all buffers "
+				"to IVSHM alloc ring %s; freeing %"PRIu32
+				" buffers\n", __FUNCTION__,
+				p->alloc_ring->name,
+				num_to_alloc - num_alloced);
 		for(i = num_alloced; i < num_to_alloc; i++)
 			rte_pktmbuf_free(alloc_buf[i]);
 	}
-
 
 	return rte_ring_sc_dequeue_burst(p->rx_ring, (void **) pkts, n_pkts);
 }
@@ -250,6 +257,10 @@ rte_port_ivshm_ring_drain(struct rte_ring *ring, uint32_t burst_size)
 	struct rte_mbuf *bufs[burst_size];
 
 	n_pkts = rte_ring_sc_dequeue_burst(ring, (void **)&bufs, burst_size);
+	if (unlikely(n_pkts > 0))
+		RTE_LOG(INFO, PORT, "%s: Freeing %d packets from IVSHM free "
+		       "ring %s\n", __FUNCTION__, n_pkts, ring->name);
+
 	for (i = 0; i < n_pkts; i++)
 		rte_pktmbuf_free(bufs[i]);
 }
@@ -368,9 +379,22 @@ send_burst_tx(struct rte_port_ivshm_writer *p)
 		}
 	}
 
+	if (unlikely(retry > 0 && retry == p->tx_burst_retry_num))
+	    RTE_LOG(WARNING, PORT,
+		   "%s: max number of retries exceeded (%"PRIu32"), but still "
+		   "insufficient free entries in IVSHM port Tx ring %s \n "
+		   "to accomodate %"PRIu32" outbound Tx buffers.\n"
+	           "Attempting to enqueue buffers anyway\n", __FUNCTION__,
+	           p->tx_burst_retry_num, p->tx_ring->name, p->tx_buf_count);
 	nb_tx = rte_ring_sp_enqueue_burst(p->tx_ring,
-	                                  (void **)p->tx_buf,
+	                                 (void **)p->tx_buf,
 	                                  p->tx_buf_count);
+
+	if (unlikely(p->tx_buf_count > nb_tx))
+		RTE_LOG(INFO, PORT, "%s: unable to enqueue all buffers to "
+			"IVSHM port Tx ring %s; freeing %"PRIu32" buffers\n",
+			__FUNCTION__, p->tx_ring->name,
+			p->tx_buf_count - nb_tx);
 
 	for ( ; nb_tx < p->tx_buf_count; nb_tx ++) {
 		rte_pktmbuf_free(p->tx_buf[nb_tx]);
