@@ -151,7 +151,7 @@ ring_create(const char *template)
 }
 
 /*
- * Dequeue control  mbufs from 'free-ring' and free.
+ * Dequeue control mbufs from 'free-ring' and free.
  */
 static void
 free_mbufs(struct rte_ring *free_ring)
@@ -161,6 +161,10 @@ free_mbufs(struct rte_ring *free_ring)
 
 	dq_pkt = rte_ring_sc_dequeue_burst(free_ring, (void**)buf,
 		VSWITCHD_PKT_BURST_SIZE);
+
+	if (unlikely(dq_pkt > 0))
+		RTE_LOG(DEBUG, APP, "%s: freeing %d mbufs from free ring %s\n",
+		        __FUNCTION__, dq_pkt, free_ring->name);
 
 	for (j = 0; j < dq_pkt; j++)
 		rte_ctrlmbuf_free(buf[j]);
@@ -174,15 +178,21 @@ alloc_mbufs(struct rte_ring *alloc_ring)
 {
 	uint16_t i = 0;
 	struct rte_mbuf *buf[VSWITCHD_PKT_BURST_SIZE];
+	int rslt = 0;
 
 	while (rte_ring_count(alloc_ring) < VSWITCHD_ALLOC_THRESHOLD) {
 		for (i = 0; i < VSWITCHD_PKT_BURST_SIZE; i++) {
 			if ((buf[i] = rte_ctrlmbuf_alloc(ctrlmbuf_pool)) == NULL)
 				break;
 		}
-		if (i)
-			rte_ring_sp_enqueue_bulk(alloc_ring,
-						 (void**) buf, i);
+		if (i) {
+			rslt = rte_ring_sp_enqueue_bulk(alloc_ring,
+				                       (void**) buf, i);
+			if (unlikely(rslt == -ENOBUFS))
+				RTE_LOG(DEBUG, APP, "%s: Unable to enqueue " \
+					"%d control mbufs to alloc ring %s\n",
+					__FUNCTION__, i, alloc_ring->name);
+		}
 	}
 }
 
@@ -589,6 +599,10 @@ ovdk_datapath_send_reply(struct ovdk_message *reply)
 	rslt = rte_ring_mp_enqueue(vswitchd_reply_ring, (void *)mbuf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
+			RTE_LOG(WARNING, APP,
+			       "%s: Unable to send buffer to vswitchd ring %s: "
+			       "freeing mbuf\n", __FUNCTION__,
+			       vswitchd_reply_ring->name);
 			rte_ctrlmbuf_free(mbuf);
 			ovdk_stats_vswitch_control_tx_drop_increment(1);
 		} else {
@@ -599,7 +613,6 @@ ovdk_datapath_send_reply(struct ovdk_message *reply)
 		ovdk_stats_vswitch_control_tx_increment(1);
 	}
 }
-
 
 /*
  * ovdk_datapath_handle_vswitchd_cmd() receives messages from the vswitchd. It
