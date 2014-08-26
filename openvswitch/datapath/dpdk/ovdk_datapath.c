@@ -236,8 +236,8 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 
 	ret = ovdk_vport_port_verify(vportid);
 	if (ret != 0) {
-		RTE_LOG(WARNING, APP, "Invalid port ID for new port: '%u'"
-	                             ,vportid);
+		RTE_LOG(WARNING, APP, "Invalid port ID for new port '%u', "
+		        "error '%d'\n", vportid, ret);
 		reply.error = ret;
 		ovdk_datapath_send_reply(&reply);
 
@@ -247,27 +247,29 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 	if (flags & VPORT_FLAG_IN_PORT) {
 		ret = ovdk_pipeline_port_in_add(vportid, vport_name);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to add in-port '%"PRIu32"'\n",
-				vportid);
+			RTE_LOG(WARNING, APP, "Unable to add in-port '%"PRIu32"', "
+			        "error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "Added %s as in-port on lcore_id = %d\n",
-		                      vport_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Added vport id '%u', '%s' "
+		        "as in-port on lcore_id '%d'\n",
+		        __func__,__LINE__,vportid, vport_name, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
 		ret = ovdk_pipeline_port_out_add(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to add out-port '%"PRIu32"'\n",
-				vportid);
+			RTE_LOG(WARNING, APP, "Unable to add out-port '%"PRIu32"', "
+			        "error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
-		RTE_LOG(DEBUG, APP, "Added %s as out-port on lcore_id = %d\n",
-		                       vport_name, rte_lcore_id());
+		RTE_LOG(DEBUG, APP, "%s(%d): Added vport id '%u', '%s' "
+		        "as out-port on lcore_id '%d'\n",
+		        __func__,__LINE__,vportid, vport_name, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -299,23 +301,29 @@ ovdk_datapath_vport_del(struct ovdk_vport_message *request)
 	if (flags & VPORT_FLAG_IN_PORT) {
 		ret = ovdk_pipeline_port_in_del(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to delete in-port '%"PRIu32"'"
-			    "\n", vportid);
+			RTE_LOG(WARNING, APP, "Unable to delete in-port '%"PRIu32"', "
+			        "error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
+		RTE_LOG(DEBUG, APP, "Deleted vport id '%u', '%s' "
+		        "as in-port on lcore_id '%d'\n",
+		        vportid, request->port_name, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
 		ret = ovdk_pipeline_port_out_del(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to delete out-port '%"PRIu32"'"
-				"\n", vportid);
+			RTE_LOG(WARNING, APP, "Unable to delete out-port '%"PRIu32"', "
+			        "error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
 		}
+		RTE_LOG(DEBUG, APP, "Deleted vport id '%u', '%s' "
+		        "as out-port on lcore_id '%d'\n",
+		        vportid, request->port_name, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -367,7 +375,7 @@ ovdk_datapath_flow_mod_del(struct ovdk_flow_message *request,
                                   &del_key_found,
                                   &(reply->flow_msg.stats));
 	if (ret) {
-		RTE_LOG(WARNING, APP, "Unable to delete flow\n");
+		RTE_LOG(WARNING, APP, "Unable to delete flow, error '%d'\n", ret);
 		return ret;
 	}
 	/*
@@ -431,6 +439,8 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
 		ret = ovdk_datapath_flow_mod_del(request, &reply,
                                          &local_stats, &update_stats);
 		if (ret) {
+			RTE_LOG(WARNING, APP, "Unable to modify existing flow, "
+			        "error '%d'\n", ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
@@ -440,7 +450,7 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
 	ret = ovdk_pipeline_flow_add(&request->key, &request->actions[0],
 	                             request->num_actions, &flow_handle);
 	if (ret) {
-		RTE_LOG(WARNING, APP, "Unable to add flow\n");
+		RTE_LOG(WARNING, APP, "Unable to add flow, error '%d'\n", ret);
 		reply.error = ret;
 		ovdk_datapath_send_reply(&reply);
 		return ret;
@@ -471,6 +481,8 @@ ovdk_datapath_flow_new(struct ovdk_flow_message *request)
                                                      reply.flow_msg.stats.used);
 	}
 
+	RTE_LOG(DEBUG, APP, "Added flow, flow handle '0x%lX'\n", flow_handle);
+
 	reply.error = 0;
 	reply.flow_msg.flow_handle = flow_handle;
 	ovdk_datapath_send_reply(&reply);
@@ -496,11 +508,13 @@ ovdk_datapath_flow_del(struct ovdk_flow_message *request)
 
 	ret = ovdk_pipeline_flow_del(&request->key, NULL, &(reply.flow_msg.stats));
 	if (ret) {
-		RTE_LOG(WARNING, APP, "Unable to delete flow\n");
+		RTE_LOG(WARNING, APP, "Unable to delete flow, error '%d'\n", ret);
 		reply.error = ret;
 		ovdk_datapath_send_reply(&reply);
 		return ret;
 	}
+
+	RTE_LOG(DEBUG, APP, "Deleted flow\n");
 
 	/* Convert the flow's used stats from cycles to seconds in the reply
 	 * message
