@@ -548,6 +548,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     DPDK_DEBUG()
 
     if ((netdev == NULL) || (port_no == NULL)) {
+        VLOG_ERR("Invalid params");
         return EINVAL;
     }
 
@@ -557,11 +558,13 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
      */
     if (dpif_dpdk_odport_type(netdev_get_type(netdev)) == OVDK_VPORT_TYPE_VHOST
                         && strlen(netdev_get_name(netdev)) > IFNAMSIZ) {
+        VLOG_ERR("Invalid VHOST name length");
         return EINVAL;
     }
 
     error = next_available_pipeline(&last_used_add_pipeline);
     if (error) {
+        VLOG_ERR("Cannot find next available pipeline, error '%d'", error);
         return ENODEV;
     }
     pipeline_id = last_used_add_pipeline;
@@ -574,6 +577,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     request.type = dpif_dpdk_odport_type(netdev_get_type(netdev));
 
     if (request.type == OVDK_VPORT_TYPE_DISABLED) {
+        VLOG_ERR("Requested port type 'disabled'");
         return ENODEV;
     }
 
@@ -596,7 +600,8 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
                                             netdev_get_name(netdev),
                                             &vportid);
     if (error) {
-        if (error == -EBUSY) {
+    	VLOG_ERR("Unable to add port to vport table, error '%d'", error);
+    	if (error == -EBUSY) {
             return -error;
         }
         return ENODEV;
@@ -623,9 +628,10 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (error) {
         /* Reset table entry here if datapath fails to add port */
         dpif_dpdk_vport_table_entry_reset(vportid);
+        VLOG_ERR("Unable to successfully add in/out port to datapath, "
+        		  "error '%d'", error);
         return error;
     }
-    VLOG_DBG("Added vportid %d as in port to pipeline %d", vportid, pipeline_id);
 
     /* Modify message and add output ports to available datapath pipelines */
     request.flags = VPORT_FLAG_OUT_PORT;
@@ -637,6 +643,8 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
              */
             if (error) {
                 del_port(*port_no, max);
+                VLOG_ERR("Unable to successfully add out port to datapath "
+                         "on pipeline '%u', error '%d'", i, error);
                 return error;
             } else {
                 max = i;
@@ -649,6 +657,14 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (request.type == OVDK_VPORT_TYPE_MEMNIC) {
         error = memnic_rename_shm_object(reply.vportid,
                                         netdev_get_name(netdev));
+    }
+
+    if (unlikely(error)) {
+        VLOG_ERR("Unable to add port '%u' to "
+                 "in port pipeline '%u', error '%d'", vportid, pipeline_id, error);
+    } else {
+        VLOG_DBG("Added port '%u', '%s'. in port pipeline '%u'",
+                  vportid, request.port_name, pipeline_id);
     }
 
     return error;
@@ -667,10 +683,16 @@ dpif_dpdk_port_del(struct dpif *dpif_ OVS_UNUSED, odp_port_t port_no)
     /* Ensure that 'port_no' is present in the dpif_dpdk_vport_table */
     error = dpif_dpdk_vport_table_entry_get_lcore_id(port_no, &pipeline_id);
     if (error) {
+        VLOG_ERR("Unable to get port '%u' pipeline, error '%d'", port_no, error);
         return -error;
     }
 
     error = del_port(port_no, max_pipeline_id);
+    if (unlikely(error)) {
+        VLOG_ERR("Unable to delete port '%u', error '%d'", port_no, error);
+    } else {
+        VLOG_DBG("Deleted port '%u'", port_no);
+    }
 
     return error;
 }
@@ -1152,11 +1174,13 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
     }
 
     if (put == NULL || put->key == NULL) {
+        VLOG_ERR("Invalid put command");
         return EINVAL;
     }
 
     fitness_error = odp_flow_key_to_flow(put->key, put->key_len, &flow);
     if (fitness_error == ODP_FIT_ERROR) {
+        VLOG_ERR("Key failed fitness test");
         return EINVAL;
     }
 
@@ -1167,11 +1191,13 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
      */
     error = dpif_dpdk_vport_table_entry_get_inuse(key.in_port, &in_use);
     if (error || !in_use) {
+        VLOG_ERR("Invalid port");
         return EINVAL;
     }
 
     error = dpif_dpdk_vport_table_entry_get_lcore_id(key.in_port, &pipeline_id);
     if (error) {
+        VLOG_ERR("Unable to get flow pipeline, error '%d'", error);
         return EINVAL;
     }
 
@@ -1180,14 +1206,16 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
                             put->actions_len, &request);
 
     /* We must send datapath at least one action */
-    if (request.num_actions == 0)
+    if (request.num_actions == 0) {
+        VLOG_ERR("No actions to be sent to datapath");
         return EINVAL;
+    }
 
     error = dpif_dpdk_flow_transact(&request, pipeline_id, &reply);
     if (error) {
+        VLOG_ERR("Transact to datapath failed, error '%d'", error);
         return -error;
     }
-    VLOG_DBG("Added flow to pipeline %d", pipeline_id);
 
     if (put->stats) {
         dpif_dpdk_flow_get_stats(&reply, put->stats);
@@ -1202,6 +1230,8 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
                  * The flag indicates that we should not create the flow if
                  * the one it is intended to replace is not found
                  */
+                VLOG_ERR("Unable to find existing flow in flow table, "
+                		 "error '%d'", error);
                 return error;
             }
         }
@@ -1209,6 +1239,12 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
 
     flow_handle = reply.flow_handle;
     error = dpif_dpdk_flow_table_entry_add(&flow, &flow_handle);
+    if (unlikely(error)) {
+        VLOG_ERR("Unable to add flow to flow table, error '%d'", error);
+    } else {
+        VLOG_DBG("Added flow to pipeline '%d'", pipeline_id);
+    }
+
 
     return -error;
 }
@@ -1261,31 +1297,44 @@ dpif_dpdk_flow_del(struct dpif *dpif_ ,
     }
 
     if (del == NULL || del->key == NULL) {
+        VLOG_ERR("Invalid del command");
         return EINVAL;
     }
 
     fitness_error = odp_flow_key_to_flow(del->key, del->key_len, &flow);
     if (fitness_error == ODP_FIT_ERROR) {
+        VLOG_ERR("Key failed fitness test");
         return EINVAL;
     }
 
     dpif_dpdk_flow_key_from_flow(&key, &flow);
     error = dpif_dpdk_vport_table_entry_get_lcore_id(key.in_port, &pipeline_id);
     if (error) {
+        VLOG_ERR("Unable to get flow pipeline, error '%d'", error);
         return EINVAL;
     }
 
     error = flow_message_del_create(&request, del->key, del->key_len);
     if (error) {
+        VLOG_ERR("Unable to create del message, error '%d'", error);
         return -error;
     }
 
     error = dpif_dpdk_flow_transact(&request, pipeline_id, &reply);
-    if (!error && del->stats) {
-        dpif_dpdk_flow_get_stats(&reply, del->stats);
+    if (!error) {
+        if (del->stats) {
+            dpif_dpdk_flow_get_stats(&reply, del->stats);
+        }
+    } else {
+        VLOG_ERR("Transact to datapath failed, error '%d'", error);
     }
 
     error = dpif_dpdk_flow_table_entry_del(&flow);
+    if (unlikely(error)) {
+        VLOG_ERR("Unable to delete flow from flow table, error '%d'", error);
+    } else {
+        VLOG_DBG("Deleted flow from pipeline '%d'", pipeline_id);
+    }
 
     return error;
 }
@@ -1318,7 +1367,7 @@ dpif_dpdk_flow_flush(struct dpif *dpif_)
                                               &flow_handle,
                                               &(flow_index));
         if (ret != -EAGAIN) {
-                return -ret;
+            return -ret;
         }
 
         /* Get the lcoreid */
@@ -1326,6 +1375,7 @@ dpif_dpdk_flow_flush(struct dpif *dpif_)
         error = dpif_dpdk_vport_table_entry_get_lcore_id(key.in_port,
                                                          &pipeline_id);
         if (error) {
+            VLOG_ERR("Unable to get flow pipeline, error '%d'", error);
             return -error;
         }
 
@@ -1338,13 +1388,18 @@ dpif_dpdk_flow_flush(struct dpif *dpif_)
         /* Send the del message */
         error = dpif_dpdk_flow_transact(&request, pipeline_id, NULL);
         if (error) {
+            VLOG_ERR("Transact to datapath failed, error '%d'", error);
             return error;
         }
 
         /* Delete entry from flow table */
         error = dpif_dpdk_flow_table_entry_del(&flow);
         if (error) {
+            VLOG_ERR("Unable to delete flow from flow table, "
+            		 "error '%d'", error);
             return -error;
+        } else {
+            VLOG_DBG("Deleted flow from pipeline '%d'", pipeline_id);
         }
     }
 
