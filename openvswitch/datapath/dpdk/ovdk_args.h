@@ -41,6 +41,7 @@ int ovdk_args_parse_app_args(int argc, char *argv[]);
 uint64_t ovdk_args_get_portmask(void);
 int ovdk_args_get_stats_interval(void);
 int ovdk_args_get_stats_core(void);
+unsigned ovdk_args_get_log_level(void);
 
 #endif /* ifndef __OVDK_ARGS_H__ */
 

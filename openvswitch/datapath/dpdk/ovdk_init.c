@@ -34,6 +34,7 @@
 
 #include <rte_config.h>
 #include <rte_ethdev.h>
+#include <rte_log.h>
 
 #include "ovdk_init.h"
 #include "ovdk_vport.h"
@@ -41,12 +42,16 @@
 #include "ovdk_stats.h"
 #include "ovdk_mempools.h"
 #include "ovdk_vport_vhost.h"
+#include "ovdk_args.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 void
 ovdk_init(void)
 {
+	/* Set the logging level */
+	rte_set_log_level(ovdk_args_get_log_level());
+
 	/* Order here can be important */
 	ovdk_mempools_init();
 	ovdk_stats_init();

@@ -84,10 +84,6 @@ main(int argc, char **argv)
 	if (ret < 0)
 		return -1;
 
-	/* Disable logging */
-	/* TODO - this should be done dynamically, i.e. via parameters */
-	rte_set_log_level(RTE_LOG_INFO);
-
 	/*Parse app args */
 	argc -= ret;
 	argv += ret;

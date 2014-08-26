@@ -39,6 +39,7 @@
 
 #include <rte_config.h>
 #include <rte_common.h>
+#include <rte_log.h>
 
 #include "ovdk_args.h"
 
@@ -47,14 +48,18 @@
 #define PARAM_STATS_INTERVAL "stats_int"
 #define PARAM_STATS_CORE "stats_core"
 
-#define PORTMASK_BASE 16
+#define LOG_LEVEL_BASE 10
+#define PORTMASK_BASE  16
 
 static const char *progname;
 static uint64_t port_mask = 0;
 static int stats_interval = 0;
 static int stats_core = -1;
+/* Default log level - used if '-v' parameter not supplied */
+static unsigned log_level = RTE_LOG_ERR;
 
 static int parse_portmask(const char *portmask);
+static int parse_log_level(const char *level_arg);
 
 /*
  * Display usage instructions.
@@ -70,6 +75,15 @@ ovdk_args_usage(const char *name)
 	    "  -p PORTMASK                 hex bitmask of phy ports to use\n"
 	    "\n"
 	    "Optional Arguments:\n"
+	    "  -v LOG_LEVEL                verbosity of ovs-dpdk logging "
+	                                   "(default: 4)\n"
+	    "                              1=EMERGENCY,	2=ALERT,"
+	                                   "	3=CRITICAL,\n"
+	    "                              4=ERROR		5=WARNING,	"
+	                                   "6=NOTICE,\n"
+	    "                              7=INFORMATION,	8=DEBUG)\n"
+	    "                              ** Higher log levels print all "
+	                                   "lower level logs **\n"
 	    "  --stats_int INT             print stats every INT (default: 0)\n"
 	    "  --stats_core CORE           id of core used to print stats\n",
 	    name, name);
@@ -95,14 +109,21 @@ ovdk_args_parse_app_args(int argc, char *argv[])
 
 	progname = argv[0];
 
-	while ((opt = getopt_long(argc, argvopt, "p:", lgopts, &option_index))
-	       != EOF) {
+	while ((opt = getopt_long(argc, argvopt, "p:v:", lgopts,
+	                          &option_index)) != EOF) {
 		switch (opt) {
 		case 'p':
 			if (parse_portmask(optarg) != 0) {
 				ovdk_args_usage(progname);
 				rte_exit(EXIT_FAILURE, "Invalid option"
 				         " specified '%c'\n", opt);
+			}
+			break;
+		case 'v':
+			if (parse_log_level(optarg) != 0) {
+				ovdk_args_usage(progname);
+				rte_exit(EXIT_FAILURE, "Invalid log level"
+				         " specified '%s'\n", optarg);
 			}
 			break;
 		case 0:
@@ -149,9 +170,37 @@ parse_portmask(const char *portmask)
 	return 0;
 }
 
+/*
+ * Parse and validate the supplied log level argument.
+ */
+static int
+parse_log_level(const char *level_arg)
+{
+	char *end = NULL;
+	unsigned long level = log_level;
+
+	if (level_arg == NULL || *level_arg == '\0')
+		return -1;
+
+	/* Convert parameter to a number and verify */
+	level = strtoul(level_arg, &end, LOG_LEVEL_BASE);
+
+	if (end == NULL || *end != '\0' || level == 0 || level > RTE_LOG_DEBUG)
+		return -1;
+
+	log_level = level;
+
+	return 0;
+}
+
 uint64_t
 ovdk_args_get_portmask(void){
 	return port_mask;
+}
+
+unsigned
+ovdk_args_get_log_level(void) {
+	return log_level;
 }
 
 int

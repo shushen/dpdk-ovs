@@ -33,15 +33,34 @@ After the EAL arguments, the following arguments (i.e. `[args...]` above) are su
 * `-p PORTMASK`
   PORTMASK Hexadecimal bitmask representing the ports to be configured, where each bit represents a port ID; that is, for a portmask of 0x3, ports 0 and 1 are configured.
 
+* `-v LOG_LEVEL`
+  LOG_LEVEL Decimal value from 1 (least) to 8 (most verbose), representing the degree to which ovs-dpdk reports internal messages.
+  If this parameter is not supplied, the default logging level of 4 (ERROR) is used.
+
+  There is a 1:1 correlation between these log levels and DPDK log levels, as documented in [rte_log.h][rte_log].
+
+    * 1 = Print EMERGENCY messages
+    * 2 = Print ALERT messages
+    * 3 = Print CRITICAL messages
+    * 4 = Print ERROR messages (default)
+    * 5 = Print WARNING messages
+    * 6 = Print NOTICE messages
+    * 7 = Print INFORMATION messages
+    * 8 = Print DEBUG messages
+
+**  Note ** Higher log levels also report all lower-level messages.
+
+
 ### Example Command
 
-An example configuration, with two physical ports and stats enabled:
+An example configuration, with two physical ports, stats enabled, and log level set to 8 (i.e. print all log messages):
 
 ```bash
-./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 -- -p 0x03 --stats_core=0 --stats_int=1
+./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 -- -p 0x03 -v 8 --stats_core=0 --stats_int=1
 ```
 
 ** Note ** If --stats_core is omitted, statistics are implicitly turned off.
+
 
 ______
 
@@ -257,3 +276,4 @@ ______
 [ovs-man-dpctl]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=utilities%2Fovs-dpctl.8
 [ovs-man-ofctl]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=utilities%2Fovs-ofctl.8
 [ovs-man-vsctl]: http://openvswitch.org/cgi-bin/ovsman.cgi?page=utilities%2Fovs-vsctl.8
+[rte_log]: http://dpdk.org/doc/api/rte__log_8h.html
