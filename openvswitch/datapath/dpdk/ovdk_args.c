@@ -70,7 +70,7 @@ ovdk_args_usage(const char *name)
 	    "  -p PORTMASK                 hex bitmask of phy ports to use\n"
 	    "\n"
 	    "Optional Arguments:\n"
-	    "  --stats_int SECS            print stats every SECS seconds (default: 0)\n"
+	    "  --stats_int INT             print stats every INT (default: 0)\n"
 	    "  --stats_core CORE           id of core used to print stats\n",
 	    name, name);
 }
