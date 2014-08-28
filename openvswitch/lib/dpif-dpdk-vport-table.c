@@ -265,6 +265,8 @@ dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned lcore_id,
         end_vportid = start_vportid + OVDK_MAX_BRIDGES;
         break;
     case OVDK_VPORT_TYPE_VETH:
+        end_vportid = start_vportid + OVDK_MAX_VETHS;
+        break;
     case OVDK_VPORT_TYPE_MEMNIC:
     case OVDK_VPORT_TYPE_VSWITCHD:
     case OVDK_VPORT_TYPE_DISABLED:

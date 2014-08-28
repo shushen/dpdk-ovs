@@ -39,7 +39,6 @@
 #include <rte_config.h>
 #include <rte_cycles.h>
 
-#include "rte_port_vhost.h"
 #include "ovdk_init.h"
 #include "ovdk_mempools.h"
 #include "ovdk_stats.h"
@@ -47,6 +46,7 @@
 #include "ovdk_datapath.h"
 #include "ovdk_datapath_messages.h"
 #include "ovdk_pipeline.h"
+#include "ovdk_vport.h"
 #include "ovdk_vport_vhost.h"
 #include "ovdk_flow.h"
 #include "ovdk_jobs.h"
@@ -171,7 +171,7 @@ static inline void __attribute__((always_inline))
 shutdown(void)
 {
 	ovdk_jobs_stop_slaves_all();
-	ovdk_vport_vhost_pthread_kill();
+	ovdk_vport_shutdown();
 }
 
 /*

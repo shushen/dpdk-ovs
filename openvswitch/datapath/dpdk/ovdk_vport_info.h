@@ -45,9 +45,11 @@
 #include <rte_pipeline.h>
 #include <rte_port_ethdev.h>
 #include <rte_port_source_sink.h>
+#include <rte_kni.h>
 
 #include "rte_port_vhost.h"
 #include "rte_port_ivshm.h"
+#include "rte_port_veth.h"
 
 #include "ovdk_vport_types.h"
 
@@ -88,6 +90,9 @@ struct vport_kni {
 };
 
 struct vport_veth {
+	struct rte_port_veth_writer_params port_writer_veth_params[RTE_MAX_LCORE];
+	struct rte_port_veth_reader_params port_reader_veth_params;
+	struct veth_dev *dev;
 	uint8_t index;
 };
 

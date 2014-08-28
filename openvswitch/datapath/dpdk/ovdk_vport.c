@@ -56,6 +56,7 @@
 #include "ovdk_vport_info.h"
 #include "ovdk_vport_phy.h"
 #include "ovdk_vport_client.h"
+#include "ovdk_vport_veth.h"
 #include "ovdk_vport_bridge.h"
 #include "ovdk_flow.h"
 #include "ovdk_vport_vhost.h"
@@ -87,11 +88,14 @@ static int vportid_map[RTE_MAX_LCORE][RTE_PIPELINE_PORT_OUT_MAX];
 static uint64_t phy_portmask = 0x0;
 
 /*
- * Initialize 'vport_info'. This should do any one-time initialization of
- * 'vport_info' as this will be executed only once
+ * Initialize 'vport_info'.
+ *
+ * This should do any one-time initialization of 'vport_info' as this
+ * will be executed only once.
  */
 void
-ovdk_vport_init(void) {
+ovdk_vport_init(void)
+{
 	int i = 0;
 	int j = 0;
 	const struct rte_memzone *vport_mz = NULL;
@@ -145,6 +149,10 @@ ovdk_vport_init(void) {
 		ovdk_vport_bridge_port_init(&vport_info[i]);
 	RTE_LOG(INFO, APP, "Initialized %d bridge ports\n", OVDK_MAX_BRIDGES);
 
+	RTE_LOG(INFO, APP, "Initializing veth ports\n");
+	for (i = OVDK_VPORT_TYPE_VETH; i < OVDK_VPORT_TYPE_VETH + OVDK_MAX_VETHS; i++)
+		ovdk_vport_veth_port_init(&vport_info[i]);
+	RTE_LOG(INFO, APP, "Initialized %d veths ports\n", OVDK_MAX_VETHS);
 
 	for (i = 0; i < OVDK_MAX_VPORTS; i++) {
 		/*
@@ -171,11 +179,38 @@ ovdk_vport_init(void) {
 }
 
 /*
- * Get the 'port_in_id' for a given 'vportid'. This is the port_in_id
- * assigned by the rte_pipeline when adding the vport as an in port
+ * Deallocate, close or otherwise shutdown all ports found 'vport_info'.
+ *
+ * This should be executed before allowing the program to exit. If this is not
+ * done it is possible for long-running threads or IO-bound processes to
+ * prevent the application from closing cleanly.
+ */
+void
+ovdk_vport_shutdown(void)
+{
+	int i = 0;
+
+	/* vEth ports */
+
+	for (i = OVDK_VPORT_TYPE_VETH; i < OVDK_VPORT_TYPE_VETH + OVDK_MAX_VETHS; i++)
+		ovdk_vport_veth_port_shutdown(&vport_info[i]);
+
+	/* vHost ports */
+
+	ovdk_vport_vhost_pthread_kill();
+
+	return;
+}
+
+/*
+ * Get the 'port_in_id' for a given 'vportid'.
+ *
+ * Use the 'port_in_id' assigned by the 'rte_pipeline' when adding the
+ * vport as an in port.
  */
 inline int
-ovdk_vport_get_in_portid(uint32_t vportid, uint32_t *portid) {
+ovdk_vport_get_in_portid(uint32_t vportid, uint32_t *portid)
+{
 	if (vportid >= OVDK_MAX_VPORTS)
 		return -1;
 
@@ -188,11 +223,14 @@ ovdk_vport_get_in_portid(uint32_t vportid, uint32_t *portid) {
 }
 
 /*
- * Get the port_out_id for a given 'vportid'. This is the port_out_id
- * assigned by the rte_pipeline when adding the vport as an out port
+ * Get the 'port_out_id' for a given 'vportid'.
+ *
+ * Use the 'port_out_id' assigned by the 'rte_pipeline' when adding the
+ * vport as an out port.
  */
 inline int
-ovdk_vport_get_out_portid(uint32_t vportid, uint32_t *portid) {
+ovdk_vport_get_out_portid(uint32_t vportid, uint32_t *portid)
+{
 	unsigned lcore_id = 0;
 
 	lcore_id = rte_lcore_id();
@@ -209,8 +247,10 @@ ovdk_vport_get_out_portid(uint32_t vportid, uint32_t *portid) {
 }
 
 /*
- * Get the 'vportid' for a given port_in_id. This is the port_in_id
- * assigned by the rte_pipeline when adding the vport as an in port
+ * Get the 'vportid' for a given 'port_in_id'.
+ *
+ * Use the 'port_in_id' assigned by the 'rte_pipeline' when adding the
+ * vport as an in port.
  */
 inline int
 ovdk_vport_get_vportid(uint32_t port_in_id, uint32_t *vportid)
@@ -240,8 +280,10 @@ ovdk_vport_get_vportid(uint32_t port_in_id, uint32_t *vportid)
 }
 
 /*
- * Save the port_in_id assigned by an rte_pipeline when adding this vport
- * as an in port
+ * Set the 'port_in_id' for a vport.
+ *
+ * Use the ID assigned by an 'rte_pipeline' when adding this vport as
+ * an in port
  */
 inline int
 ovdk_vport_set_in_portid(uint32_t vportid, uint32_t portid)
@@ -260,8 +302,10 @@ ovdk_vport_set_in_portid(uint32_t vportid, uint32_t portid)
 }
 
 /*
- * Save the port_out_id assigned by an rte_pipeline when adding this vport
- * as an out port
+ * Set the 'port_out_id' for a vport.
+ *
+ * Use the ID assigned by an 'rte_pipeline' when adding this vport as
+ * an out port
  */
 inline int
 ovdk_vport_set_out_portid(uint32_t vportid, uint32_t portid) {
@@ -278,11 +322,12 @@ ovdk_vport_set_out_portid(uint32_t vportid, uint32_t portid) {
 }
 
 /*
- * Get the rte_pipeline_port_out_params used to configure a vport
+ * Get the 'rte_pipeline_port_out_params' used to configure a vport
  */
 inline int
 ovdk_vport_get_out_params(uint32_t vportid,
-		struct rte_pipeline_port_out_params **params) {
+		struct rte_pipeline_port_out_params **params)
+{
 	unsigned lcore_id = 0;
 
 	if (vportid >= OVDK_MAX_VPORTS)
@@ -300,11 +345,12 @@ ovdk_vport_get_out_params(uint32_t vportid,
 }
 
 /*
- * Get the rte_pipeline_port_in_params used to configure a vport
+ * Get the 'rte_pipeline_port_in_params' used to configure a vport
  */
 inline int
 ovdk_vport_get_in_params(uint32_t vportid,
-		struct rte_pipeline_port_in_params **params) {
+		struct rte_pipeline_port_in_params **params)
+{
 	if (vportid >= OVDK_MAX_VPORTS)
 		return -1;
 
@@ -319,8 +365,10 @@ ovdk_vport_get_in_params(uint32_t vportid,
 /*
  * Vhost port control functions
  */
+
 inline int
-ovdk_vport_vhost_up(struct virtio_net *dev) {
+ovdk_vport_vhost_up(struct virtio_net *dev)
+{
 	uint32_t vhostid;
 	struct vport_info *info;
 
@@ -345,7 +393,8 @@ ovdk_vport_vhost_up(struct virtio_net *dev) {
 }
 
 inline int
-ovdk_vport_vhost_down(struct virtio_net *dev) {
+ovdk_vport_vhost_down(struct virtio_net *dev)
+{
 	uint32_t vhostid;
 	struct vport_info *info;
 
@@ -370,7 +419,9 @@ ovdk_vport_vhost_down(struct virtio_net *dev) {
 }
 
 /*
- * Save the name passed down to ovdk_pipeline_add_port when adding this vport
+ * Set the name of a vport.
+ *
+ * Use the name passed down to 'ovdk_pipeline_add_port' when adding this vport
  * as the vport name.
  */
 inline int
@@ -394,7 +445,7 @@ ovdk_vport_set_port_name(uint32_t vportid, char *port_name)
 }
 
 /*
- * Return the name that was added to the port with 'vportid'
+ * Get the name that was added to the port with 'vportid'
  */
 inline int
 ovdk_vport_get_port_name(uint32_t vportid, char *port_name)
@@ -416,10 +467,11 @@ ovdk_vport_get_port_name(uint32_t vportid, char *port_name)
 }
 
 /*
- * Verify the vportid of a physical device against the
- * portmask of allowed physical devices. If not then
- * verify that port is winthin range of allowed port
- * types.
+ * Verify the vportid of a physical device.
+ *
+ * Verify the vportid of a physical device against the portmask of allowed
+ * physical devices. If not then verify that port is within range of allowed
+ * port types.
  */
 int
 ovdk_vport_port_verify(uint32_t vportid)

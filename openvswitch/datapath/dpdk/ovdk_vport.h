@@ -43,6 +43,7 @@
 #include "ovdk_virtio-net.h"
 
 void ovdk_vport_init(void);
+void ovdk_vport_shutdown(void);
 int ovdk_vport_get_in_portid(uint32_t vportid, uint32_t *portid);
 int ovdk_vport_set_in_portid(uint32_t vportid, uint32_t portid);
 int ovdk_vport_get_out_portid(uint32_t vportid, uint32_t *portid);
