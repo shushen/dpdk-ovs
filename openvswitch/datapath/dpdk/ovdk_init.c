@@ -37,6 +37,7 @@
 #include <rte_log.h>
 
 #include "ovdk_init.h"
+#include "ovdk_jobs.h"
 #include "ovdk_vport.h"
 #include "ovdk_datapath.h"
 #include "ovdk_stats.h"
@@ -57,6 +58,7 @@ ovdk_init(void)
 	ovdk_stats_init();
 	ovdk_vport_init();
 	ovdk_vport_vhost_init();
+	ovdk_jobs_init();
 
 	return;
 }

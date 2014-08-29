@@ -49,6 +49,7 @@
 #include "ovdk_pipeline.h"
 #include "ovdk_vport_vhost.h"
 #include "ovdk_flow.h"
+#include "ovdk_jobs.h"
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
@@ -57,16 +58,20 @@
  * responsiveness to control messages and throughput/latency of the dataplane.
  */
 #define MAX_PIPELINE_RUNS_PER_CONTROL_RUN 10
-static int ovdk_lcore_main_loop(__attribute__((unused)) void *arg);
 
+static void do_display_stats(__rte_unused void *arg);
+static void do_process_packets(__rte_unused void *arg);
+static void configure_lcore(unsigned lcore_id);
+static inline void __attribute__((always_inline)) configure_lcores_all(void);
+static inline void __attribute__((always_inline)) master_lcore_loop(void);
 static void interrupt_func(int sig);
+int initialize_lcore(void *);
 
 int
 main(int argc, char **argv)
 {
 	struct sigaction new_action;
 	struct sigaction old_action;
-	unsigned lcore = 0;
 	int ret = 0;
 
 	new_action.sa_handler = interrupt_func;
@@ -96,76 +101,123 @@ main(int argc, char **argv)
 	RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n",
 						rte_get_tsc_hz() / 1000000);
 
-	/* Launch per-lcore init on every lcore */
-	rte_eal_mp_remote_launch(ovdk_lcore_main_loop, NULL, CALL_MASTER);
-	RTE_LCORE_FOREACH_SLAVE(lcore) {
-		if (rte_eal_wait_lcore(lcore) < 0) {
-			return -1;
-		}
-	}
+	configure_lcores_all();
+	ovdk_jobs_launch_slaves_all();
+	master_lcore_loop();
+	ovdk_jobs_stop_slaves_all();
 
 	return 0;
 }
 
-/*
- * This function is called on each lcore.
- */
-static int
-ovdk_lcore_main_loop(__attribute__((unused)) void *arg)
+static void
+do_display_stats(__rte_unused void *arg)
 {
-	uint32_t count = MAX_PIPELINE_RUNS_PER_CONTROL_RUN;
-	unsigned lcore_id = rte_lcore_id();
 	static uint64_t next_tsc = 0;
 	static uint64_t curr_tsc = 0;
 	uint64_t curr_tsc_local = 0;
 	static uint64_t last_stats_display_tsc = 0;
 	static uint64_t tsc_update_period = 0;
 	uint32_t stats_interval = ovdk_args_get_stats_interval();
-	unsigned vswitchd_core = ovdk_args_get_stats_core();
 
-	RTE_LOG(INFO, APP, "Running datapath core on lcore %d\n",
-			lcore_id);
+	/* Display stats */
+	curr_tsc_local = rte_rdtsc();
 
-	/* Carry out any per-core initialization */
-	ovdk_pipeline_init();
-	ovdk_datapath_init();
-
-	RTE_LOG(INFO, APP, "Pipeline %d initialised\n", lcore_id);
-
-	while (1) {
-		/*
-		 * On every core, we loop indefinitely handling any
-		 * control messages from the vswitchd, running
-		 * the pipeline and checking for Vhost device removal flags.
-		 *
-		 */
-		while (count--)
-			ovdk_pipeline_run();
-
-		ovdk_datapath_handle_vswitchd_cmd();
-
-		ovdk_vport_vhost_removal_ack(lcore_id);
-
-		/* Display stats */
-		if (lcore_id == vswitchd_core) {
-			curr_tsc_local = rte_rdtsc();
-
-			if(curr_tsc_local >= next_tsc) {
-				curr_tsc = curr_tsc_local;
-				next_tsc = curr_tsc_local + tsc_update_period;
-			}
-			if ((curr_tsc -last_stats_display_tsc) / rte_get_tsc_hz() >= stats_interval
-			    && stats_interval != 0) {
-				ovdk_stats_display();
-				last_stats_display_tsc = curr_tsc;
-			}
-		}
-
-		count = MAX_PIPELINE_RUNS_PER_CONTROL_RUN;
+	if(curr_tsc_local >= next_tsc) {
+		curr_tsc = curr_tsc_local;
+		next_tsc = curr_tsc_local + tsc_update_period;
 	}
+	if ((curr_tsc - last_stats_display_tsc) / rte_get_tsc_hz() >= stats_interval
+	    && stats_interval != 0) {
+		ovdk_stats_display();
+		last_stats_display_tsc = curr_tsc;
+	}
+}
+
+static void
+do_process_packets(__rte_unused void *arg)
+{
+	uint32_t count = MAX_PIPELINE_RUNS_PER_CONTROL_RUN;
+	unsigned lcore_id = rte_lcore_id();
+
+	/*
+	 * On each core, we handle any control messages from the vswitchd, run
+	 * the pipeline and check for Vhost device removal flags.
+	 */
+	while (count--)
+		ovdk_pipeline_run();
+
+	ovdk_datapath_handle_vswitchd_cmd();
+
+	ovdk_vport_vhost_removal_ack(lcore_id);
+}
+
+/*
+ * Assigns jobs to an lcore
+ */
+static void
+configure_lcore(unsigned lcore_id)
+{
+	int ret = 0;
+
+	/* clear all job tables */
+	ovdk_jobs_clear_lcore(lcore_id);
+
+	/* start packet processing cores */
+	ret = ovdk_jobs_add_to_lcore(do_process_packets, NULL,
+				lcore_id);
+	if (ret < 0)
+		rte_panic("Could not setup core %d for packet "
+			  "processing\n", lcore_id);
+
+	if (ovdk_args_get_stats_core() == lcore_id) {
+		ret = ovdk_jobs_add_to_lcore(do_display_stats, NULL,
+                                             lcore_id);
+		if (ret < 0)
+			rte_panic("Could not display stats for core %d\n",
+		                  lcore_id);
+	}
+}
+
+
+/*
+ * Assigns jobs to all lcores
+ */
+static inline void __attribute__((always_inline))
+configure_lcores_all(void)
+{
+	unsigned lcore_id = 0;
+	int error = 0;
+
+	error = rte_eal_mp_remote_launch(initialize_lcore, NULL, CALL_MASTER);
+	if (error)
+		rte_panic("Unable to initialize lcores\n");
+
+	rte_eal_mp_wait_lcore();
+
+	RTE_LOG(INFO, APP, "Successfully initialized lcores\n");
+
+	RTE_LCORE_FOREACH(lcore_id) {
+		configure_lcore(lcore_id);
+	}
+}
+
+static inline void __attribute__((always_inline))
+master_lcore_loop(void)
+{
+	for (;;)
+		ovdk_jobs_run_master_lcore();
+
+	/* TODO: Check for switch exit */
+}
+
+int initialize_lcore( __rte_unused void *arg)
+{
+	ovdk_datapath_init();
+	ovdk_pipeline_init();
 
 	return 0;
 }
+
 
 static void
 interrupt_func(int sig)

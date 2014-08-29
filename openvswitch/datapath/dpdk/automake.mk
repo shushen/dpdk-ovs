@@ -40,6 +40,7 @@ datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_vport_client.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_vport_bridge.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_datapath.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_hash.c
+datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_jobs.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_init.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_action.c
 datapath_dpdk_ovs_dpdk_SOURCES += datapath/dpdk/ovdk_flow.c
