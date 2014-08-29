@@ -46,20 +46,20 @@ VLOG_DEFINE_THIS_MODULE(dpdk_link);
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 #define enqueue_packet_mbufs_to_be_freed(mbufs, num_mbufs, pipeline_id) { \
-    while (rte_ring_mp_enqueue_bulk(packet_free_ring[pipeline_id], mbufs, num_mbufs) != 0); \
+    while (rte_ring_mp_enqueue_bulk(packet_free_ring[pipeline_id], mbufs, num_mbufs) == -ENOBUFS); \
 }
 
 #define enqueue_packet_mbuf_to_be_freed(mbuf, pipeline_id) {                \
-    while (rte_ring_mp_enqueue(packet_free_ring[pipeline_id], mbuf) != 0);  \
+    while (rte_ring_mp_enqueue(packet_free_ring[pipeline_id], mbuf) == -ENOBUFS);  \
 }
 
 #define enqueue_control_mbufs_to_be_freed(mbufs, num_mbufs, pipeline_id) {  \
     while (rte_ring_mp_enqueue_bulk(control_free_ring[pipeline_id], mbufs,  \
-           num_mbufs) != 0); \
+           num_mbufs) == -ENOBUFS); \
 }
 
 #define enqueue_control_mbuf_to_be_freed(mbuf, pipeline_id) {               \
-    while (rte_ring_mp_enqueue(control_free_ring[pipeline_id], mbuf) != 0); \
+    while (rte_ring_mp_enqueue(control_free_ring[pipeline_id], mbuf) == -ENOBUFS); \
 }
 
 #define alloc_packet_mbufs(packet_mbufs, num_mbufs, pipeline_id) {          \
@@ -224,8 +224,11 @@ dpdk_link_recv_reply(struct ovdk_message *reply, unsigned pipeline_id)
         case OVDK_VPORT_CMD_FAMILY:
             /* Allow multi-threading */
             if (((struct ovdk_message *)ctrlmbuf_data)->vport_msg.thread_id != tid ){
-                /* Don't touch other processes' packets - re-enqueue */
-                while (rte_ring_mp_enqueue(reply_ring[pipeline_id], (void *)mbuf) != 0)
+                /* Don't touch other processes' packets - re-enqueue back onto
+                 * reply ring. If reply ring is full, keep trying until packet
+                 * has been succssfully enqueued
+                 */
+                while (rte_ring_mp_enqueue(reply_ring[pipeline_id], (void *)mbuf) == -ENOBUFS)
                     ;
             } else {
                 loop = false;
@@ -235,7 +238,7 @@ dpdk_link_recv_reply(struct ovdk_message *reply, unsigned pipeline_id)
             /* Allow multi-threading */
             if (((struct ovdk_message *)ctrlmbuf_data)->flow_msg.thread_id != tid ){
                 /* Don't touch other processes' packets - re-enqueue */
-                while (rte_ring_mp_enqueue(reply_ring[pipeline_id], (void *)mbuf) != 0)
+                while (rte_ring_mp_enqueue(reply_ring[pipeline_id], (void *)mbuf) == -ENOBUFS)
                     ;
             } else {
                loop = false;
