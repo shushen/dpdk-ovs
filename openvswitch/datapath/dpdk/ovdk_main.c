@@ -59,6 +59,8 @@
  */
 #define MAX_PIPELINE_RUNS_PER_CONTROL_RUN 10
 
+static inline void __attribute__((always_inline)) initialize(void);
+static inline void __attribute__((always_inline)) shutdown(void);
 static void do_display_stats(__rte_unused void *arg);
 static void do_process_packets(__rte_unused void *arg);
 static void configure_lcore(unsigned lcore_id);
@@ -67,6 +69,8 @@ static inline void __attribute__((always_inline)) master_lcore_loop(void);
 static void configure_signal_handlers(void);
 static void handle_signal(int sig);
 int initialize_lcore(void *);
+
+static bool continue_lcore = true;
 
 int
 main(int argc, char **argv)
@@ -89,16 +93,9 @@ main(int argc, char **argv)
 
 	ovdk_args_parse_app_args(argc, argv);
 
-	/* Carry out any initialization that needs to be done for all cores */
-	ovdk_init();
-
-	RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n",
-						rte_get_tsc_hz() / 1000000);
-
-	configure_lcores_all();
-	ovdk_jobs_launch_slaves_all();
+	initialize();
 	master_lcore_loop();
-	ovdk_jobs_stop_slaves_all();
+	shutdown();
 
 	return 0;
 }
@@ -149,6 +146,32 @@ do_process_packets(__rte_unused void *arg)
 	ovdk_datapath_handle_vswitchd_cmd();
 
 	ovdk_vport_vhost_removal_ack(lcore_id);
+}
+
+/*
+ * Initialize system.
+ */
+static inline void __attribute__((always_inline))
+initialize(void)
+{
+	/* Carry out any initialization that needs to be done for all cores */
+	ovdk_init();
+
+	RTE_LOG(INFO, APP, "CPU frequency is %"PRIu64" MHz\n",
+	        rte_get_tsc_hz() / 1000000);
+
+	configure_lcores_all();
+	ovdk_jobs_launch_slaves_all();
+}
+
+/*
+ * Shutdown system.
+ */
+static inline void __attribute__((always_inline))
+shutdown(void)
+{
+	ovdk_jobs_stop_slaves_all();
+	ovdk_vport_vhost_pthread_kill();
 }
 
 /*
@@ -206,17 +229,15 @@ configure_lcores_all(void)
 static inline void __attribute__((always_inline))
 master_lcore_loop(void)
 {
-	for (;;)
+	while(continue_lcore)
 		ovdk_jobs_run_master_lcore();
-
-	/* TODO: Check for switch exit */
 }
 
 /*
  * Initialise a datapath instance on an lcore.
  */
 int
-initialize_lcore( __rte_unused void *arg)
+initialize_lcore(__rte_unused void *arg)
 {
 	ovdk_datapath_init();
 	ovdk_pipeline_init();
@@ -256,9 +277,9 @@ configure_signal_handlers(void)
  * Perform cleanup on master core.
  */
 static void
-handle_signal(int sig)
+handle_signal(__rte_unused int sig)
 {
 	RTE_LOG(INFO, APP, "Shutting down application...\n");
-	ovdk_vport_vhost_pthread_kill();
-	_exit(sig);
+
+	continue_lcore = false;
 }
