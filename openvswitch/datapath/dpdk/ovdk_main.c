@@ -103,6 +103,9 @@ main(int argc, char **argv)
 	return 0;
 }
 
+/*
+ * Stats display job for an lcore.
+ */
 static void
 do_display_stats(__rte_unused void *arg)
 {
@@ -127,6 +130,9 @@ do_display_stats(__rte_unused void *arg)
 	}
 }
 
+/*
+ * Packet processing job for an lcore.
+ */
 static void
 do_process_packets(__rte_unused void *arg)
 {
@@ -146,7 +152,7 @@ do_process_packets(__rte_unused void *arg)
 }
 
 /*
- * Assigns jobs to an lcore
+ * Assigns jobs to an lcore.
  */
 static void
 configure_lcore(unsigned lcore_id)
@@ -172,9 +178,8 @@ configure_lcore(unsigned lcore_id)
 	}
 }
 
-
 /*
- * Assigns jobs to all lcores
+ * Assigns jobs to all lcores.
  */
 static inline void __attribute__((always_inline))
 configure_lcores_all(void)
@@ -195,6 +200,9 @@ configure_lcores_all(void)
 	}
 }
 
+/*
+ * Main loop.
+ */
 static inline void __attribute__((always_inline))
 master_lcore_loop(void)
 {
@@ -204,14 +212,17 @@ master_lcore_loop(void)
 	/* TODO: Check for switch exit */
 }
 
-int initialize_lcore( __rte_unused void *arg)
+/*
+ * Initialise a datapath instance on an lcore.
+ */
+int
+initialize_lcore( __rte_unused void *arg)
 {
 	ovdk_datapath_init();
 	ovdk_pipeline_init();
 
 	return 0;
 }
-
 
 /*
  * Configure signal handlers.
@@ -241,7 +252,9 @@ configure_signal_handlers(void)
 		sigaction(SIGTERM, &new_action, NULL);
 }
 
-/* Perform cleanup on master core. */
+/*
+ * Perform cleanup on master core.
+ */
 static void
 handle_signal(int sig)
 {
