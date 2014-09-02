@@ -1,4 +1,5 @@
                  Open vSwitch <http://openvswitch.org>
+       Intel (r) DPDK vSwitch <https://01.org/packet-processing>
 
 What is Open vSwitch?
 ---------------------
@@ -114,5 +115,6 @@ the manpages.
 Contact 
 -------
 
-bugs@openvswitch.org
+https://github.com/01org/dpdk-ovs/issues
+https://01.org/packet-processing
 http://openvswitch.org/

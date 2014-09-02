@@ -1,4 +1,5 @@
                  Open vSwitch <http://openvswitch.org>
+       Intel (r) DPDK vSwitch <https://01.org/packet-processing>
 
 Frequently Asked Questions
 ==========================
@@ -104,14 +105,14 @@ A: Open vSwitch is intended to be a useful component for building
    support all as a primitive building block rather than choose a
    particular point in the distributed design space.
 
-Q: How can I contribute to the Open vSwitch Community?
+Q: How can I contribute to the Intel (R) DPDK vSwitch Community?
 
 A: You can start by joining the mailing lists and helping to answer
    questions.  You can also suggest improvements to documentation.  If
    you have a feature or bug you would like to work on, send a mail to
    one of the mailing lists:
 
-       http://openvswitch.org/mlists/
+       https://lists.01.org/pipermail/dpdk-ovs/
 
 
 Releases
@@ -1219,5 +1220,6 @@ A: An empty set of actions causes a packet to be dropped.  You can
 Contact 
 -------
 
-bugs@openvswitch.org
+https://github.com/01org/dpdk-ovs/issues
+https://01.org/packet-processing
 http://openvswitch.org/

@@ -80,4 +80,4 @@ Please refer to ovs-dpctl(8) and ovs-ofctl(8) for more details.
 Bug Reporting
 -------------
 
-Please report problems to bugs@openvswitch.org.
+Please report problems at https://github.com/01org/dpdk-ovs/issues.

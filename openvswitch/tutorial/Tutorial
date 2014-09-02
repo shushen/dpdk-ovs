@@ -831,5 +831,6 @@ learned destination port p4:
 Contact 
 =======
 
-bugs@openvswitch.org
+https://github.com/01org/dpdk-ovs/issues
+https://01.org/packet-processing
 http://openvswitch.org/

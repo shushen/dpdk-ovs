@@ -67,4 +67,4 @@ Libvirt/Open vSwitch log files for possible root cause.
 Bug Reporting
 -------------
 
-Please report problems to bugs@openvswitch.org.
+Please report problems at https://github.com/01org/dpdk-ovs/issues.
