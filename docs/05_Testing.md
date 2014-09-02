@@ -1,4 +1,4 @@
-Intel® DPDK vSwitch provides a testing utility: ovs-testsuite. This is described in detail below.
+Intel® DPDK vSwitch provides two main testing utilities: ovs-testsuite and OFTest. Both are described in detail below.
 
 ______
 
@@ -16,7 +16,7 @@ The testsuite requires a minor amount of setup, due to the current design of Int
 export PATH=$PATH:$(OVS_DIR)/utilities:$(OVS_DIR)/ovsdb:$(OVS_DIR)/vswitchd
 ```
 
-Additionally, Hugepages must be mounted before running ovs-testsuite. Please see the [Installation guide][doc-installation] for more information on how to do this.
+Additionally, DPDK must be built and hugepages must be mounted before running ovs-testsuite. Please see the [Installation guide][doc-installation] for more information on how to do this.
 
 ### Run Tests
 
@@ -82,7 +82,6 @@ cd openvswitch/tests
 To run only Intel® DPDK related unit tests:
 
 ```bash
-cd openvswitch
 ./testsuite -k dpdk
 ```
 
@@ -112,6 +111,160 @@ For all other options, execute `--help`:
 
 ______
 
+## OFTest
+
+OFTest is a test framework meant to exercise a candidate OpenFlow switch — in this case, Intel® DPDK vSwitch. It is especially useful when adding additional functionality to the switch or when modifying existing functionality. General information on the framework, along with the framework itself can be found here:
+
+http://www.projectfloodlight.org/oftest/
+
+This section contains instructions on how to configure and test Intel® DPDK vSwitch using OFTest.
+
+### Get OFtest
+
+Clone the OFTest repo from GitHub:
+
+```bash
+git clone git://github.com/floodlight/oftest
+```
+
+Checkout the version of OFTest that Intel® DPDK vSwitch has been validated against:
+
+```bash
+git checkout de0b58a05dd5685828ce3f8f9a1cb43edd2bc782
+```
+
+OFTest requires a number of additional utilities to be installed prior to use, including, but not limited to:
+* Python 2.5, or 2.6
+* scapy
+* tcpdump
+* `root` privileges on the host
+
+Refer to the “Pre-requisites” section of the Project Floodlight Getting Started Guide [here][oft-gsg-long] for a full list of prerequisites.
+
+**Note:** If Python has not been compiled with IPv6 support, Scapy will issue an error. To avoid this error, either:
+
+* Recompile Python, adding support for IPv6 by passing `--enable_ipv6` to the
+configure step
+* Pass the `--disable-ipv6` parameter to the `oft` executable in OFTest
+
+### Initial Setup
+
+Compile DPDK, and insert the KNI kernel module:
+
+```bash
+cd $RTE_SDK  # where RTE_SDK has already been defined as path to DPDK directory
+make install T=x86_64-ivshmem-linuxapp-gcc
+insmod x86_64-ivshmem-linuxapp-gcc/kmod/rte_kni.ko
+```
+
+On the host, remove any configuration associated with a previous run of the switch:
+
+```bash
+pkill -9 ovs
+rm -rf /usr/local/var/run/openvswitch/
+rm -rf /usr/local/etc/openvswitch/
+mkdir -p /usr/local/var/run/openvswitch/
+mkdir -p /usr/local/etc/openvswitch/
+rm -f /tmp/conf.db
+```
+
+Initialise the Open vSwitch database server:
+
+```bash
+./ovsdb/ovsdb-tool create /usr/local/etc/openvswitch/conf.db $OPENVSWITCH_DIR/vswitchd/vswitch.ovsschema
+./ovsdb/ovsdb-server --remote=punix:/usr/local/var/run/openvswitch/db.sock --remote=db:Open_vSwitch,manager_options &
+```
+
+### Configure `ovs-dpdk`
+
+Add a bridge to the switch:
+
+```bash
+./utilities/ovs-vsctl --no-wait add-br br0 -- set Bridge br0 datapath_type=dpdk
+```
+
+Configure the switch to use an OpenFlow controller and disable in-band management:
+
+```bash
+./utilities/ovs-vsctl set-controller br0 tcp:127.0.0.1:6653
+./utilities/ovs-vsctl set Bridge br0 other_config:disable-in-band=true
+```
+
+Add four vEth ports to the bridge:
+
+```bash
+./utilities/ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=dpdk
+./utilities/ovs-vsctl add-port br0 myport64 --set Interface myport64
+  type=dpdkveth ofport_request=64
+./utilities/ovs-vsctl add-port br0 myport65 --set Interface myport65
+  type=dpdkveth ofport_request=65
+./utilities/ovs-vsctl add-port br0 myport66 --set Interface myport66
+  type=dpdkveth ofport_request=66
+./utilities/ovs-vsctl add-port br0 myport67 --set Interface myport67
+  type=dpdkveth ofport_request=67
+```
+
+Confirm the ports have been successfully added:
+
+```bash
+./utilities/ovs-vsctl show
+```
+
+Start `ovs-dpdk`:
+
+```bash
+./datapath/dpdk/ovs-dpdk -c 0x0f -n 4 --socket-mem 2048,2048 -- -p 0x03
+```
+
+Finally, start `ovs-vswitchd`:
+
+```bash
+./vswitchd/ovs-vswitchd -c 0x10 --proc-type=secondary
+```
+
+Delete the default flows present from the bridge:
+
+```bash
+./utilities/ovs-ofctl del-flows br0
+```
+
+The vport devices — which, by default, have names corresponding to vEthX —
+should be brought up. For example:
+
+```bash
+ifconfig vEth0 up
+ifconfig vEth1 up
+ifconfig vEth2 up
+ifconfig vEth3 up
+```
+
+### Run Tests
+
+A full guide on how to execute OFTest can be found at the [OFTest site][oft-gsg]. In this case, OFTest should be configured to use the vEth devices created by `ovs-dpdk`. For example:
+
+```bash
+./oft -i 64@vEth0 -i 65@vEth1 -i 66@vEth2 -i 67@vEth3
+```
+
+You may also wish to disable IPv6 support due to the issues highlighted above. To do this, just add the `--disable-ipv6` parameter:
+
+```bash
+./oft -i 64@vEth0 -i 65@vEth1 -i 66@vEth2 -i 67@vEth3 --disable-ipv6
+```
+
+Intel® DPDK vSwitch complies with a subset of OpenFlow specification v1.0; by default, OFTest tests switch compatibility against v1.0 of the OpenFlow specification, but this can be specified explicitly using one of the command line options:
+
+```bash
+./oft --of-version 1.0 [-i interfaces...] [--port=6653]
+```
+
+A current list of the expected results for OFTest can be found in the [`extras`][extras-dir] directory of the source package.
+
+______
+
 © 2014, Intel Corporation. All Rights Reserved
 
+[oft-gsg]: http://docs.projectfloodlight.org/display/OFTest/Getting+Started
+[oft-gsg-long]: http://docs.projectfloodlight.org/display/OFTest/Longer+Start
 [doc-installation]: 01_Installation.md
+[extras-dir]: ../extras
