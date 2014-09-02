@@ -258,15 +258,13 @@ pf_vhost_enqueue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned 
 			/* Prefetch descriptor index. */
 			rte_prefetch0(&vq->desc[head[packet_success]]);
 		}
-
 	}
 
 	rte_compiler_barrier();
 
 	/* Wait until it's our turn to add our buffer to the used ring. */
-	while (unlikely(vq->last_used_idx != res_base_idx)) {
+	while (unlikely(vq->last_used_idx != res_base_idx))
 		rte_pause();
-	}
 
 	*(volatile uint16_t *) &vq->used->idx += count;
 	vq->last_used_idx = res_end_idx;
@@ -363,7 +361,7 @@ pf_vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned 
 		mbuf->pkt.pkt_len = mbuf->pkt.data_len;
 
 		rte_memcpy((void*) mbuf->pkt.data,
-		        (const void*) buff_addr, mbuf->pkt.data_len);
+		           (const void*) buff_addr, mbuf->pkt.data_len);
 
 		pkts[packet_success]=mbuf;
 
@@ -388,8 +386,8 @@ pf_vhost_dequeue_burst(struct virtio_net *dev, struct rte_mbuf **pkts, unsigned 
  * virtio-net device on a guest.
  */
 struct rte_port_vhost_reader {
-	struct virtio_net **dev;	/* Virtio-net device which will be populated
-								   when the guest is brought up. */
+	struct virtio_net **dev; /* Virtio-net device which will be populated
+	                          *  when the guest is brought up. */
 };
 
 /*============= Vhost Reader Port functions ===============*/
@@ -416,9 +414,9 @@ rte_port_vhost_reader_create(void *params, int socket_id)
 
 	/* Memory allocation */
 	port = rte_malloc_socket("PIPELINE",
-							sizeof(*port),
-							CACHE_LINE_SIZE,
-							socket_id);
+	                         sizeof(*port),
+	                         CACHE_LINE_SIZE,
+	                         socket_id);
 	if (port == NULL)
 		return NULL;
 
@@ -444,9 +442,9 @@ rte_port_vhost_reader_rx(void *port, struct rte_mbuf **pkts, uint32_t n_pkts)
 
 	struct virtio_net *deq_dev = *(p->dev);
 
-	if (unlikely(deq_dev == NULL))
+	if (unlikely(deq_dev == NULL)) {
 		return 0;
-	else {
+	} else {
 		nb_rx = pf_vhost_dequeue_burst(deq_dev, pkts, n_pkts);
 
 		return nb_rx;
@@ -501,9 +499,9 @@ rte_port_vhost_writer_create(void *params, int socket_id)
 
 	/* Memory allocation */
 	port = rte_malloc_socket("PIPELINE",
-							sizeof(*port),
-							CACHE_LINE_SIZE,
-							socket_id);
+	                         sizeof(*port),
+	                         CACHE_LINE_SIZE,
+	                         socket_id);
 	if (port == NULL)
 		return NULL;
 

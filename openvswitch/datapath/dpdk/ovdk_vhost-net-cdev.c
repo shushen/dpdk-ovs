@@ -191,7 +191,7 @@ vhost_net_release(fuse_req_t req, struct fuse_file_info *fi)
  */
 static void
 vhost_net_ioctl(fuse_req_t req, int cmd, void *arg,
-		struct fuse_file_info *fi, unsigned flags __attribute__((__unused__)),
+		struct fuse_file_info *fi, unsigned flags __rte_unused,
 		const void *in_buf, size_t in_bufsz, size_t out_bufsz)
 {
 	static struct vhost_memory mem_temp;
