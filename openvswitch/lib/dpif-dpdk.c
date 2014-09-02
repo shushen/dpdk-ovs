@@ -149,8 +149,6 @@ static inline bool is_valid_pipeline(unsigned pipeline_id);
 static int next_available_pipeline(unsigned *last_used);
 static int peek_next_pipeline(unsigned *last_used);
 static unsigned max_available_pipeline_id(void);
-static inline void summate_stats(struct ovdk_port_stats *total_stats,
-                          struct ovdk_port_stats *stats);
 
 static inline bool
 is_valid_pipeline(unsigned pipeline_id) {
@@ -270,25 +268,6 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
     }
 
     return initial_error || error;
-}
-
-/* NOTE: currently, the only port stats supported are rx, rx_drop, tx and
- * tx_drop.
- */
-static inline void
-summate_stats(struct ovdk_port_stats *total_stats,
-              struct ovdk_port_stats *stats)
-{
-    if (total_stats && stats) {
-        total_stats->rx += stats->rx;
-        total_stats->tx += stats->tx;
-        total_stats->rx_bytes = UINT64_MAX;
-        total_stats->tx_bytes = UINT64_MAX;
-        total_stats->rx_drop  += stats->rx_drop;
-        total_stats->tx_drop  += stats->tx_drop;
-        total_stats->rx_error = UINT64_MAX;
-        total_stats->tx_error = UINT64_MAX;
-    }
 }
 
 static int
@@ -900,7 +879,6 @@ int
 dpif_dpdk_port_get_stats(const char *name, struct ovdk_port_stats *stats)
 {
     struct ovdk_vport_message request, reply;
-    struct ovdk_port_stats total_stats = {0};
     unsigned pipeline_id = 0;
     uint32_t vportid = 0;
     int error = 0;
@@ -916,24 +894,23 @@ dpif_dpdk_port_get_stats(const char *name, struct ovdk_port_stats *stats)
         return -error;
     }
 
+    error = dpif_dpdk_vport_table_entry_get_lcore_id(vportid, &pipeline_id);
+    if (error) {
+        return -error;
+    }
+
     request.cmd = OVS_VPORT_CMD_GET;
     request.flags = 0;
     request.vportid = vportid;
 
-    for (pipeline_id = min_pipeline_id; pipeline_id <= max_pipeline_id; pipeline_id++) {
-        if (is_valid_pipeline(pipeline_id)) {
-            error = dpif_dpdk_vport_transact(&request, pipeline_id, &reply);
-            if (!error) {
-                summate_stats(&total_stats, &reply.stats);
-            } else {
-                VLOG_ERR("Failed to retrieve stats for port %"PRIu32
-                        " from pipeline %u, error '%d'", vportid, pipeline_id, error);
-                return error;
-            }
-        }
+    error = dpif_dpdk_vport_transact(&request, pipeline_id, &reply);
+    if (error) {
+        VLOG_ERR("Failed to retrieve stats for port %"PRIu32
+                " from pipeline %u, error '%d'", vportid, pipeline_id, error);
+        return error;
     }
 
-    *stats = total_stats;
+   *stats = reply.stats;
 
     return error;
 }
