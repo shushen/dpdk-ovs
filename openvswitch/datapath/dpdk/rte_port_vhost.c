@@ -525,35 +525,18 @@ static inline void
 send_burst(struct rte_port_vhost_writer *p)
 {
 	int i = 0;
-	uint32_t num_enqueued = 0;
 
 	struct virtio_net *enq_dev = *(p->dev);
 
-	if (unlikely(enq_dev != NULL)) {
-		num_enqueued = pf_vhost_enqueue_burst(enq_dev,
-		               (struct rte_mbuf**)p->tx_buf, p->tx_buf_count);
+	if (unlikely(enq_dev != NULL))
+		pf_vhost_enqueue_burst(enq_dev,
+							  (struct rte_mbuf**)p->tx_buf,
+							   p->tx_buf_count);
 
-		/* This log _should_ never actually be executed. mbufs are added
-		 * to the port's local tx buffer sequentially and individually;
-		 * 'send_burst' is only invoked once the port's tx_buf_count
-		 * reaches its tx_burst_sz (with the exception of the flush
-		 * function).
-		 *
-		 * Thus, assuming p->tx_buf_count <= PKT_BURST_SIZE,
-		 * num_enqueued should never be smaller than the tx_buf_count.
-		 * Nonetheless, this log is introduced as a sanity check.
-		 */
-		if (unlikely(num_enqueued < p->tx_buf_count))
-			    RTE_LOG(ERR, APP, "%s: Attempted to enqueue %"
-			    PRIu32" mbufs to vhost port %s, but only %"PRIu32
-			    " succeeded\n", __FUNCTION__, p->tx_buf_count,
-			    enq_dev->port_name, num_enqueued);
+	for (i = 0; i < p->tx_buf_count; i++)
+		rte_pktmbuf_free_seg(p->tx_buf[i]);
 
-		for (i = 0; i < p->tx_buf_count; i++)
-			rte_pktmbuf_free_seg(p->tx_buf[i]);
-
-		p->tx_buf_count = 0;
-	}
+	p->tx_buf_count = 0;
 }
 
 /* Vhost Writer port single-packet transmit function.
