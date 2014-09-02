@@ -44,3 +44,13 @@
 /testsuite
 /testsuite.dir/
 /testsuite.log
+/dummy-vports-info-mock
+/test-dpif-dpdk
+/test-dpif-dpdk-flow-table
+/test-dpif-dpdk-vport-table
+/test-multicore-dpif-dpdk
+/test-netdev-dpdk
+/test-ovdk-datapath-flow-actions
+/test-ovdk-jobs
+/test-ovdk-vport
+

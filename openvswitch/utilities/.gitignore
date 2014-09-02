@@ -34,3 +34,7 @@
 /ovs-vlan-test.8
 /ovs-vsctl
 /ovs-vsctl.8
+/ovs-dpctl-top
+/ovs-dpctl-top.8
+/ovs-ivshm-mngr
+
