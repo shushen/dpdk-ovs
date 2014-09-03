@@ -55,15 +55,6 @@ const struct rte_memzone *ovs_vport_lookup_vport_info(void);
 int ovs_vport_is_vport_client(const char *port_name);
 
 /**
- * Check if port_name is a valid KNI port name
- *
- * Returns 0 in case port_name is a valid and existent KNI port name.
- * Otherwise returns -1.
- * ovs_vport_lookup_vport() must have been called before.
- */
-int ovs_vport_is_vport_kni(const char *port_name);
-
-/**
  * Lookup the RX queue of vport client named port_name.
  *
  * Returns the RX rte_ring of vport client named port_name in case this
@@ -98,69 +89,6 @@ struct rte_ring *ovs_vport_client_lookup_free_q(const char *port_name);
  * ovs_vport_lookup_vport() must have been called before.
  */
 struct rte_ring *ovs_vport_client_lookup_alloc_q(const char *port_name);
-
-/**
- * Lookup the TX queue of vport KNI named port_name.
- *
- * Returns the TX rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_tx_fifo(const char *port_name);
-
-/**
- * Lookup the RX queue of vport KNI named port_name.
- *
- * Returns the RX rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_rx_fifo(const char *port_name);
-
-/**
- * Lookup the ALLOC queue of vport KNI named port_name.
- *
- * Returns the ALLOC rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_alloc_fifo(const char *port_name);
-
-/**
- * Lookup the FREE queue of vport KNI named port_name.
- *
- * Returns the FREE rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_free_fifo(const char *port_name);
-
-/**
- * Lookup the RESP queue of vport KNI named port_name.
- *
- * Returns the RESP rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_resp_fifo(const char *port_name);
-
-/**
- * Lookup the REQ queue of vport KNI named port_name.
- *
- * Returns the REQ rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_req_fifo(const char *port_name);
-
-/**
- * Lookup the SYNC queue of vport KNI named port_name.
- *
- * Returns the SYNC rte_memzone of vport KNI named port_name in case this
- * is valid. Otherwise returns NULL.
- * ovs_vport_lookup_vport() must have been called before.
- */
-const struct rte_memzone *ovs_vport_kni_lookup_sync_fifo(const char *port_name);
 
 /**
  * Check if port_name is a valid vport name.

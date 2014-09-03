@@ -58,18 +58,18 @@
 /* Template used to create QEMU's command line files */
 #define QEMU_CMD_FILE_FMT "/tmp/.ovs_ivshmem_qemu_cmdline_%s"
 
-#define usage(...) do {				\
-	RTE_LOG(ERR, APP, __VA_ARGS__);	\
-	print_usage();					\
+#define usage(...) do {                                                      \
+	RTE_LOG(ERR, APP, __VA_ARGS__);                                      \
+	print_usage();                                                       \
 } while(0);
 
 #define metadata_name_is_too_long(metadata_name) \
-		(strnlen(metadata_name, IVSHMEM_NAME_LEN + 1) == IVSHMEM_NAME_LEN + 1)
+	(strnlen(metadata_name, IVSHMEM_NAME_LEN + 1) == IVSHMEM_NAME_LEN + 1)
 
 struct ovs_ivshmem_config {
-	char *metadata_name;	/* IVSHMEM metadata file name */
+	char *metadata_name;  /* IVSHMEM metadata file name */
 	char *port_names[RTE_LIBRTE_IVSHMEM_MAX_ENTRIES];
-							/* Ports (DPDK objects) to be shared */
+	                      /* Ports (DPDK objects) to be shared */
 };
 
 /* Global ivshmem config containing all metadata names and all its
@@ -81,28 +81,26 @@ static int ivshmem_mngr_share_with_guests(void);
 static int parse_arguments(int argc, char *argv[]);
 static void print_usage(void);
 static int save_ivshmem_cmdline_to_file(const char *cmdline,
-		const char *metadata_name);
+                                        const char *metadata_name);
 static int ivshmem_mngr_share_object(const char *metadata_name,
-		const char *port_name);
+                                     const char *port_name);
 static int ivshmem_mngr_share_vport_client(const char *metadata_name,
-		const char *port_name);
-static int
-ivshmem_mngr_share_vport_kni(const char *metadata_name, const char *port_name);
+                                           const char *port_name);
 static int ivshmem_mngr_share_mempool(const char *metadata_name);
 
 static void
 print_usage(void)
 {
 	printf("\nUsage:\n"
-			"   ovs-ivshm-mngr [EAL options] --proc-type=secondary --"
-			" metadata0:port0[,port1...] [metadata1:port0[,port1...]]\n\n"
-			"Options:\n"
-			"   metadata: IVSHMEM metadata file name to be used."
-			" %d metadata files are allowed\n"
-			"   ports: list of ports to be shared over metadata file."
-			" %d ports per metadata are allowed\n\n",
-			RTE_LIBRTE_IVSHMEM_MAX_METADATA_FILES,
-			RTE_LIBRTE_IVSHMEM_MAX_ENTRIES);
+	       "   ovs-ivshm-mngr [EAL options] --proc-type=secondary --"
+	       " metadata0:port0[,port1...] [metadata1:port0[,port1...]]\n\n"
+	       "Options:\n"
+	       "   metadata: IVSHMEM metadata file name to be used."
+	       " %d metadata files are allowed\n"
+	       "   ports: list of ports to be shared over metadata file."
+	       " %d ports per metadata are allowed\n\n",
+	       RTE_LIBRTE_IVSHMEM_MAX_METADATA_FILES,
+	       RTE_LIBRTE_IVSHMEM_MAX_ENTRIES);
 }
 
 /*
@@ -239,86 +237,6 @@ ivshmem_mngr_share_mempool(const char *metadata_name)
 }
 
 /*
- * Share all KNI fifos of KNI port port_name with a given metadata name
- */
-static int
-ivshmem_mngr_share_vport_kni(const char *metadata_name, const char *port_name)
-{
-	const struct rte_memzone *mz = NULL;
-
-	/* TX fifo */
-	mz = ovs_vport_kni_lookup_tx_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI tx_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* RX fifo */
-	mz = ovs_vport_kni_lookup_rx_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI rx_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* ALLOC fifo */
-	mz = ovs_vport_kni_lookup_alloc_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI alloc_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* FREE fifo */
-	mz = ovs_vport_kni_lookup_free_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI free_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* REQ fifo */
-	mz = ovs_vport_kni_lookup_req_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI req_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* RESPONSE fifo */
-	mz = ovs_vport_kni_lookup_resp_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI resp_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-
-	/* SYNC fifo */
-	mz = ovs_vport_kni_lookup_sync_fifo(port_name);
-	if (mz == NULL)
-		return -1;
-	if (rte_ivshmem_metadata_add_memzone(mz, metadata_name) < 0) {
-		RTE_LOG(ERR, APP, "Failed adding KNI sync_q to metadata '%s'\n",
-				metadata_name);
-		return -1;
-	}
-	return 0;
-}
-
-/*
  * Share all client queues of client port port_name with a given metadata name
  */
 static int
@@ -377,8 +295,6 @@ ivshmem_mngr_share_object(const char *metadata_name, const char *port_name)
 {
 	if (ovs_vport_is_vport_client(port_name) == 0)
 		return ivshmem_mngr_share_vport_client(metadata_name, port_name);
-	else if (ovs_vport_is_vport_kni(port_name) == 0)
-		return ivshmem_mngr_share_vport_kni(metadata_name, port_name);
 	else
 		RTE_LOG(ERR, APP, "Port name '%s' not found or invalid\n", port_name);
 

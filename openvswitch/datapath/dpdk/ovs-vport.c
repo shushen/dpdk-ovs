@@ -47,13 +47,9 @@
 
 #define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
-#define client_vport_name_equal_to(client, client_name) \
-	(client.type == OVDK_VPORT_TYPE_CLIENT					\
+#define client_vport_name_equal_to(client, client_name)                      \
+	(client.type == OVDK_VPORT_TYPE_CLIENT                               \
 	&& !strncmp(client.name, client_name, sizeof(client.name)))
-
-#define kni_vport_name_equal_to(kni, kni_name) 			\
-	(kni.type == OVDK_VPORT_TYPE_KNI							\
-	&& !strncmp(kni.name, kni_name, sizeof(kni.name)))
 
 #define ASSERT_VPORTS_NOT_NULL() assert(vports != NULL)
 
@@ -82,27 +78,8 @@ get_client_vport_by_name(const char *port_name)
 	}
 	if (client == NULL)
 		RTE_LOG(ERR, APP, "Cannot find client vport '%s'\n", port_name);
+
 	return client;
-}
-
-static inline struct vport_kni *
-get_kni_vport_by_name(const char *port_name)
-{
-	int i = 0;
-	struct vport_kni *kni = NULL;
-
-	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
-		return NULL;
-
-	for (i = 0; i < OVDK_MAX_VPORTS; i++) {
-		if (kni_vport_name_equal_to(vports[i], port_name)) {
-			kni = &vports[i].kni;
-			break;
-		}
-	}
-	if (kni == NULL)
-		RTE_LOG(ERR, APP, "Cannot find KNI vport '%s'\n", port_name);
-	return kni;
 }
 
 static inline struct rte_ring *
@@ -124,6 +101,7 @@ memzone_lookup(const char *mz_name)
 	mz = rte_memzone_lookup(mz_name);
 	if (mz == NULL)
 		RTE_LOG(ERR, APP, "Cannot find memzone '%s'\n", mz_name);
+
 	return mz;
 }
 
@@ -140,7 +118,6 @@ ovs_vport_lookup_vport_info(void)
 		RTE_LOG(ERR, APP, "Cannot find vport memzone\n");
 		return NULL;
 	}
-
 	vports = vports_mz->addr;
 
 	return vports_mz;
@@ -153,28 +130,11 @@ ovs_vport_is_vport_client(const char *port_name)
 
 	ASSERT_VPORTS_NOT_NULL();
 
-
 	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
 		return -1;
 
 	for (i = 0; i < OVDK_MAX_VPORTS; i++)
 		if (client_vport_name_equal_to(vports[i], port_name))
-			return 0;
-	return -1;
-}
-
-int
-ovs_vport_is_vport_kni(const char *port_name)
-{
-	int i = 0;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	if ((ovs_vport_is_vport_name_valid(port_name)) < 0)
-		return -1;
-
-	for (i = 0; i < OVDK_MAX_VPORTS; i++)
-		if (kni_vport_name_equal_to(vports[i], port_name))
 			return 0;
 	return -1;
 }
@@ -188,7 +148,6 @@ ovs_vport_client_lookup_rx_q(const char *port_name)
 	ASSERT_VPORTS_NOT_NULL();
 
 	client = get_client_vport_by_name(port_name);
-
 	if (client != NULL)
 		ring = ring_lookup(client->ring_names.rx);
 
@@ -240,110 +199,6 @@ ovs_vport_client_lookup_alloc_q(const char *port_name)
 	return ring;
 }
 
-const struct rte_memzone *
-ovs_vport_kni_lookup_tx_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.tx);
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_rx_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.rx);
-
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_alloc_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.alloc);
-
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_free_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.free);
-
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_resp_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.resp);
-
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_req_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.req);
-
-	return mz;
-}
-
-const struct rte_memzone *
-ovs_vport_kni_lookup_sync_fifo(const char *port_name)
-{
-	struct vport_kni *kni = NULL;
-	const struct rte_memzone *mz = NULL;
-
-	ASSERT_VPORTS_NOT_NULL();
-
-	kni = get_kni_vport_by_name(port_name);
-	if (kni != NULL)
-		mz = memzone_lookup(kni->fifo_names.sync);
-
-	return mz;
-}
-
 inline int
 ovs_vport_is_vport_name_valid(const char *port_name)
 {
@@ -354,9 +209,11 @@ struct rte_mempool *
 ovs_vport_host_lookup_packet_mempool(void)
 {
 	struct rte_mempool *mp = NULL;
+
 	mp = rte_mempool_lookup(PKTMBUF_POOL_NAME);
 	if (mp == NULL)
 		RTE_LOG(ERR, APP, "Could not find mempool '%s'\n", PKTMBUF_POOL_NAME);
+
 	return mp;
 }
 
