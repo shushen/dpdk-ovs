@@ -21,6 +21,5 @@ m4_define([TEST_MULTICORE_DPIF_DPDK],
 TEST_MULTICORE_DPIF_DPDK([multicore tests], [
     multicore-port-add,
     multicore-port-del,
-    multicore-port-getstats,
     multicore-recv])
 
