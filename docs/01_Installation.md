@@ -231,6 +231,20 @@ For example:
 
 You can refer to the [*Intel® Data Plane Development Kit (Intel DPDK) - Getting Started Guide*][dpdkorg-dpdkgsg] - for full instructions on performing this step.
 
+### Insert the `rte_kni` Driver
+
+One of the interfaces found in Intel® DPDK vSwitch - vEth - relies on the Intel® DPDK KNI kernel module. Unless this interface is disabled at compile time, you must insert the KNI kernel module for `ovs-dpdk` to start successfully. You can check if this module is already loaded as follows:
+
+```bash
+lsmod | grep rte_kni
+```
+
+If this returns no results, insert the module like so:
+
+```bash
+insmod ./DPDK/$RTE_TARGET/kmod/rte_kni.ko
+```
+
 ______
 
 © 2014, Intel Corporation. All Rights Reserved
