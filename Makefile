@@ -128,7 +128,7 @@ check-ovs:
 .PHONY: dpdk ivshm ovs qemu docs
 
 dpdk: config-dpdk
-	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) install T=$(RTE_TARGET) && cd $(ROOT_DIR)
+	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) CONFIG_RTE_BUILD_COMBINE_LIBS=y install T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 ovs:
 	cd $(OVS_DIR) && $(MAKE) && cd $(ROOT_DIR)

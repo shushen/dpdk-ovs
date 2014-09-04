@@ -20,30 +20,8 @@ dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
 dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
 
 dpdk_libs=\
-	$(dpdk_lib_dir)/librte_mbuf.a \
-	$(dpdk_lib_dir)/librte_eal.a \
-	$(dpdk_lib_dir)/librte_hash.a \
-	$(dpdk_lib_dir)/librte_pmd_ring.a \
-	$(dpdk_lib_dir)/libethdev.a \
-	$(dpdk_lib_dir)/librte_cmdline.a \
-	$(dpdk_lib_dir)/librte_lpm.a \
-	$(dpdk_lib_dir)/librte_mempool.a \
-	$(dpdk_lib_dir)/librte_ring.a \
-	$(dpdk_lib_dir)/librte_malloc.a \
-	$(dpdk_lib_dir)/librte_kni.a \
-	$(dpdk_lib_dir)/librte_ivshmem.a \
-	$(dpdk_lib_dir)/librte_pipeline.a \
-	$(dpdk_lib_dir)/librte_table.a \
-	$(dpdk_lib_dir)/librte_pmd_e1000.a \
-	$(dpdk_lib_dir)/librte_pmd_ixgbe.a \
-	$(dpdk_lib_dir)/librte_pmd_i40e.a \
-	$(dpdk_lib_dir)/librte_pmd_vmxnet3_uio.a \
-	$(dpdk_lib_dir)/librte_pmd_virtio_uio.a \
-	$(dpdk_lib_dir)/librte_kvargs.a \
-	$(dpdk_lib_dir)/librte_acl.a \
-	$(dpdk_lib_dir)/librte_ip_frag.a \
-	$(dpdk_lib_dir)/librte_sched.a \
-	$(dpdk_lib_dir)/librte_port.a
+	$(dpdk_lib_dir)/libintel_dpdk.a
+
 endif
 
 AM_CPPFLAGS = $(SSL_CFLAGS)
