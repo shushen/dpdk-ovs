@@ -96,7 +96,7 @@ dpif_dpdk_vport_table_construct(void)
 
     for (i = 0; i < OVDK_MAX_VPORTS; i++) {
         vport_table->entry[i].in_use = false;
-        vport_table->entry[i].lcore_id = 0;
+        vport_table->entry[i].lcore_id = UINT32_MAX;
     }
 
     return 0;
@@ -221,7 +221,7 @@ dpif_dpdk_vport_table_exists(void)
  * add the entry, returns -ENOENT.
  */
 int
-dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned lcore_id,
+dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned *lcore_id,
                                 const char *name, uint32_t *req_vportid)
 {
     uint32_t start_vportid = 0;
@@ -233,7 +233,7 @@ dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned lcore_id,
         return -EINVAL;
     }
 
-    if (lcore_id >= RTE_MAX_LCORE) {
+    if (lcore_id == NULL || *lcore_id >= RTE_MAX_LCORE) {
         return -EINVAL;
     }
 
@@ -278,10 +278,22 @@ dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned lcore_id,
 
     /*
      * If 'req_vportid' is specified then we try to get that vportid.
+     * We check if the existing entry for lcore_id is equal to UINT32_MAX,
+     * if so, this means the vport has not been used before. If it does
+     * not equal UINT32_MAX then the vportid has been used before,
+     * we set the *lcore_id to that of the existing value so that the
+     * same pipeline can be used in the datapath to facilitate
+     * re-enabling the port.
      */
     if (*req_vportid < end_vportid && *req_vportid >= start_vportid) {
         if (vport_table->entry[*req_vportid].in_use == false) {
-            vport_table->entry[*req_vportid].lcore_id = lcore_id;
+            if(vport_table->entry[*req_vportid].lcore_id == UINT32_MAX) {
+                vport_table->entry[*req_vportid].lcore_id = *lcore_id;
+            }
+            else {
+                /* return previously used lcore_id back to caller */
+                *lcore_id = vport_table->entry[*req_vportid].lcore_id;
+            }
             vport_table->entry[*req_vportid].in_use = true;
             vport_table->entry[*req_vportid].type = type;
             strncpy(vport_table->entry[*req_vportid].name, name,
@@ -300,11 +312,19 @@ dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type, unsigned lcore_id,
      * If the requested 'req_vportid' is not found or 'req_vportid' is
      * OVDK_MAX_VPORTS, we search all vports in the range associated with
      * 'type' to get a vportid. Coming into this loop ret is -1. If we find
-     * a valid vportid we set it to 0.
+     * a valid vportid we set it to 0. As above we check to see if the
+     * lcore_id has been set previously to facilitate re-enabling ports
+     * in the datapath.
      */
     for (vportid = start_vportid; vportid < end_vportid; vportid++) {
         if (vport_table->entry[vportid].in_use == false) {
-            vport_table->entry[vportid].lcore_id = lcore_id;
+            if(vport_table->entry[vportid].lcore_id == UINT32_MAX) {
+                vport_table->entry[vportid].lcore_id = *lcore_id;
+            }
+            else {
+                /* return previously used lcore_id back to caller */
+                *lcore_id = vport_table->entry[vportid].lcore_id;
+            }
             vport_table->entry[vportid].in_use = true;
             vport_table->entry[vportid].type = type;
             strncpy(vport_table->entry[vportid].name, name, OVDK_MAX_VPORT_NAMESIZE - 1);
@@ -354,6 +374,8 @@ dpif_dpdk_vport_table_entry_get_next_inuse(uint32_t *vportid)
 
 /*
  * Reset 'vportid' by marking it as not being in use.
+ * Do not reset lcore_id as it is needed to identify
+ * the original core a vport was added to.
  *
  * Returns 0 on success, or -EINVAL on invalid parameters.
  */
@@ -366,9 +388,28 @@ dpif_dpdk_vport_table_entry_reset(uint32_t vportid)
 
     ovs_mutex_lock(&dpif_dpdk_vport_table_mutex);
     vport_table->entry[vportid].in_use = false;
-    vport_table->entry[vportid].lcore_id = 0;
     vport_table->entry[vportid].type = OVDK_VPORT_TYPE_DISABLED;
     strncpy(vport_table->entry[vportid].name, "invalid" , OVDK_MAX_VPORT_NAMESIZE);
+    ovs_mutex_unlock(&dpif_dpdk_vport_table_mutex);
+
+    return 0;
+}
+
+/*
+ * Reset the lcore_id for 'vportid' by setting it to
+ * UINT32_MAX.
+ *
+ * Returns 0 on success, or -EINVAL on invalid parameters.
+ */
+int
+dpif_dpdk_vport_table_entry_reset_lcore_id(uint32_t vportid)
+{
+    if (vportid >= OVDK_MAX_VPORTS) {
+        return -EINVAL;
+    }
+
+    ovs_mutex_lock(&dpif_dpdk_vport_table_mutex);
+    vport_table->entry[vportid].lcore_id = UINT32_MAX;
     ovs_mutex_unlock(&dpif_dpdk_vport_table_mutex);
 
     return 0;

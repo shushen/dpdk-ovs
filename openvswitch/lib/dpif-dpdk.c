@@ -68,10 +68,16 @@
 #define SHM_DIR "/dev/shm"
 #define MEMNIC_SHM_NAME_FMT (SHM_DIR "/ovs_dpdk_not_used_%u")
 
-#define SIGNAL_HANDLED(sock_fd, sock_msg) \
-    do { \
-        recvfrom(sock_fd, &sock_msg, sizeof(sock_msg), 0, NULL, NULL); \
-    } while (0)
+#define SIGNAL_HANDLED(sock_fd, sock_msg)                                    \
+    do {                                                                     \
+        recvfrom(sock_fd, &sock_msg, sizeof(sock_msg), 0, NULL, NULL);       \
+    } while (0);
+#define TEST_AND_SET(initial_error, error)                                   \
+    do {                                                                     \
+        if (!(*initial_error)) {                                             \
+            *initial_error = error;                                          \
+        }                                                                    \
+    } while (0);
 
 VLOG_DEFINE_THIS_MODULE(dpif_dpdk);
 
@@ -219,7 +225,12 @@ min_available_pipeline_id(void)
     return __builtin_ctzll(pipeline_bitmask);
 }
 
-
+/* Delete a port in two steps:
+ * - first, delete the IN_PORT from the pipeline that the port was
+ *   initially added to
+ * - secondly, delete the port's OUT_PORT component from each of the other
+ *   pipelines
+ */
 static int
 del_port(odp_port_t port_no, unsigned max_pipeline)
 {
@@ -227,25 +238,37 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
     int i = 0;
     int error = 0;
     int initial_error = 0;
+    unsigned lcore_id = 0;
 
     dpif_dpdk_vport_msg_init(&request);
     request.cmd = OVS_VPORT_CMD_DEL;
     request.vportid = port_no;
-    request.flags = 0;
 
+    /* Delete the port's IN port component */
+    request.flags = VPORT_FLAG_IN_PORT;
+    error = dpif_dpdk_vport_table_entry_get_lcore_id(port_no, &lcore_id);
+    if (error) {
+        VLOG_ERR("IN port %d is not associated with a datapath core", port_no);
+        initial_error = error;
+    }
+    error = dpif_dpdk_vport_transact(&request, lcore_id, NULL);
+    if (error) {
+        /* Flag the error, but don't return the error code yet */
+        VLOG_ERR("Failed to remove IN port %"PRIu32" from pipeline %u.",
+                  port_no, lcore_id);
+        TEST_AND_SET(&initial_error, error);
+    }
+
+    /* Delete the port's OUT port component */
+    request.flags = VPORT_FLAG_OUT_PORT;
     for (i = min_pipeline_id; i <= max_pipeline; i++) {
         if (is_valid_pipeline(i)) {
             error = dpif_dpdk_vport_transact(&request, i, NULL);
             if (error) {
                 /* Flag the error, but don't return the error code yet */
-                VLOG_ERR("Failed to remove port %"PRIu32" from pipeline %d, "
+                VLOG_ERR("Failed to remove OUT port %"PRIu32" from pipeline %d,"
                          "error '%d'", port_no, i, error);
-            } else {
-                VLOG_DBG("Removed vportid %d from pipeline %d", port_no, i);
-            }
-
-            if (!initial_error) {
-                initial_error = error; /* First error value will be returned */
+                TEST_AND_SET(&initial_error, error);
             }
         }
     }
@@ -257,11 +280,7 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
      * would not actually be present in any of the pipelines from which it was
      * successfully deleted.
      */
-    /* Temporarily removing this call, see errata for more details.
-     *
-     * error = dpif_dpdk_vport_table_entry_reset(port_no);
-     */
-    error = 0;  /* temporary code needed due removal of call above */
+    error = dpif_dpdk_vport_table_entry_reset(port_no);
     if (error) {
         VLOG_ERR("Failed to remove port %"PRIu32" from vport table, error '%d'",
                  port_no, error);
@@ -520,7 +539,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     uint32_t vportid = OVDK_MAX_VPORTS;
     struct netdev_dpdk_phyport *netdev_dpdk = NETDEV_DPDK_PHYPORT_CAST(netdev);
     unsigned pipeline_id = 0;
-    unsigned max = 0;
+    unsigned max_out_port = 0;
     int error = 0;
     int i = 0;
 
@@ -548,6 +567,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
         VLOG_ERR("Cannot find next available pipeline, error '%d'", error);
         return ENODEV;
     }
+
     pipeline_id = last_used_add_pipeline;
 
     /* Populate 'request' to send to datapath */
@@ -577,7 +597,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
      * then we fail as it is already in use.
      */
     error = dpif_dpdk_vport_table_entry_add(request.type,
-                                            pipeline_id,
+                                            &pipeline_id,
                                             netdev_get_name(netdev),
                                             &vportid);
     if (error) {
@@ -591,10 +611,11 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     request.vportid = vportid;
 
     /* Currently bridge ports are only out ports */
-    if (request.type == OVDK_VPORT_TYPE_BRIDGE)
+    if (request.type == OVDK_VPORT_TYPE_BRIDGE) {
         request.flags = VPORT_FLAG_OUT_PORT;
-    else
-        request.flags = VPORT_FLAG_INOUT_PORT;
+    } else {
+        request.flags = VPORT_FLAG_IN_PORT;
+    }
 
     /* Add port to the datapath. A port consists of two parts: In port
      * component for handling inbound traffic, and Out port which handles
@@ -604,7 +625,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
      * only needs to be added to the pipeline assigned to handle inbound
      * traffic for that port.
      */
-    /* In/Out port */
+    /* In port */
     error = dpif_dpdk_vport_transact(&request, pipeline_id, &reply);
     if (error) {
         /* Reset table entry here if datapath fails to add port */
@@ -614,25 +635,31 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
         return error;
     }
 
-    /* Modify message and add output ports to available datapath pipelines */
-    request.flags = VPORT_FLAG_OUT_PORT;
-    for (i = min_pipeline_id; i <= max_pipeline_id; i++) {
-        if (is_valid_pipeline(i) && i != pipeline_id) {
-            error = dpif_dpdk_vport_transact(&request, i, &reply);
-            /* If an error is encountered, delete all previously-added instances
-             * of this port from the appropriate datapath pipelines.
-             */
-            if (error) {
-                del_port(*port_no, max);
-                VLOG_ERR("Unable to successfully add out port to datapath "
-                         "on pipeline '%u', error '%d'", i, error);
-                return error;
-            } else {
-                max = i;
+    VLOG_DBG("Added vportid %d as in port (or bridge port, if applicable)"
+             "to pipeline %d", vportid, pipeline_id);
+
+    if (request.type != OVDK_VPORT_TYPE_BRIDGE) {
+        /* Modify message and add output ports to available datapath pipelines */
+        request.flags = VPORT_FLAG_OUT_PORT;
+        for (i = min_pipeline_id; i <= max_pipeline_id; i++) {
+            if (is_valid_pipeline(i)) {
+                /* If an error is encountered, delete all previously-added
+                 * instances of this port from the appropriate datapath
+                 * pipelines.
+                 */
+                error = dpif_dpdk_vport_transact(&request, i, &reply);
+                if (unlikely(error)) {
+                    del_port(vportid, max_out_port);
+                    VLOG_ERR("Unable to successfully add out port to datapath "
+                             "on pipeline '%u', error '%d'", i, error);
+                    return error;
+                }
+                max_out_port = i;
             }
         }
     }
 
+    /* Only set *port_no if port has been successfully added */
     *port_no = vportid;
 
     if (request.type == OVDK_VPORT_TYPE_MEMNIC) {

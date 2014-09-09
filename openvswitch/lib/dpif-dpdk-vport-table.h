@@ -27,7 +27,7 @@ int dpif_dpdk_vport_table_open(void);
 int dpif_dpdk_vport_table_close(void);
 int dpif_dpdk_vport_table_exists(void);
 int dpif_dpdk_vport_table_entry_add(enum ovdk_vport_type type,
-                                    unsigned lcore_id,
+                                    unsigned *lcore_id,
                                     const char *name,
                                     uint32_t *vportid);
 int dpif_dpdk_vport_table_entry_get_first_inuse(uint32_t *vportid);
@@ -35,6 +35,7 @@ int dpif_dpdk_vport_table_entry_get_next_inuse(uint32_t *vportid);
 int dpif_dpdk_vport_table_entry_get_inuse(uint32_t vportid,
                                        bool *in_use);
 int dpif_dpdk_vport_table_entry_reset(uint32_t vportid);
+int dpif_dpdk_vport_table_entry_reset_lcore_id(uint32_t vportid);
 int dpif_dpdk_vport_table_entry_set_inuse(uint32_t vportid,
                                            bool in_use);
 int dpif_dpdk_vport_table_entry_get_lcore_id(uint32_t vportid,
