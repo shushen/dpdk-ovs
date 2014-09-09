@@ -173,17 +173,8 @@ int main(int argc, char *argv[])
 		 * be periodically allocating mbufs and adding them to this queue.
 		 * Add this new queue the same way the free_q queue is added.
 		 */
-		if (unlikely(ret == -ENOBUFS)) {
-			RTE_LOG (DEBUG, APP, "ovs_client: Couldn't transmit %u "
-			        "packets to Tx ring %s;enqueuing to free ring "
-				"%s\n", pkts_count, tx_ring->name, free_q->name);
-
+		if (unlikely(ret == -ENOBUFS))
 			ret = rte_ring_enqueue_bulk(free_q, pkts, pkts_count);
-			if (unlikely(ret == -ENOBUFS))
-				RTE_LOG(DEBUG, APP, "ovs_client: couldn't "
-				       "enqueue %u Tx mbufs to free queue %s\n",
-				       pkts_count, free_q->name);
-		}
 
 		if (alloc_count == ALLOC_INTERVAL) {
 			/*Simulate using the alloc queue*/
@@ -200,10 +191,6 @@ int main(int argc, char *argv[])
 
 			ret = rte_ring_enqueue_bulk(free_q, af_pkts,
 			                            pkts_count);
-			if (unlikely(ret == -ENOBUFS))
-				RTE_LOG(DEBUG, APP, "ovs_client: couldn't "
-				       "enqueue %u alloc mbufs to free queue "
-				       "%s\n", pkts_count, free_q->name);
 			alloc_count = 0;
 		} else {
 			alloc_count++;
