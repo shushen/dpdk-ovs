@@ -236,7 +236,8 @@ create_dpif_flow_del_message(struct dpif_flow_del *del)
 
 void
 create_dpdk_port_reply(struct ovdk_message *reply,
-                           int return_code)
+                       int return_code,
+                       uint32_t flags)
 {
 	struct ovdk_vport_message vport_msg = {0};
 
@@ -244,6 +245,7 @@ create_dpdk_port_reply(struct ovdk_message *reply,
 
 	reply->vport_msg = vport_msg;
 	reply->vport_msg.thread_id = (uint32_t)syscall(SYS_gettid);
+	reply->vport_msg.flags = flags;
 	reply->type = OVDK_VPORT_CMD_FAMILY;
 	reply->error = return_code;
 }

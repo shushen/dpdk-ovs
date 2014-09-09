@@ -68,6 +68,7 @@
 #include "dpdk-ring-stub.h"
 #include "dpdk-flow-stub.h"
 #include "odp-util.h"
+#include "test-ovdk-utils.h"
 
 #define MAX_OPS        10
 #define MAX_ACTIONS    32
@@ -75,12 +76,10 @@
 static struct dpif dpif;
 static struct dpif *dpif_p = &dpif;
 
-void test_multicore_dpif_dpdk_add(int argc OVS_UNUSED,
-										char *argv[] OVS_UNUSED);
-void test_multicore_dpif_dpdk_del(int argc OVS_UNUSED,
-										char *argv[] OVS_UNUSED);
+void test_multicore_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
+void test_multicore_dpif_dpdk_port_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void test_multicore_dpif_dpdk_recv(int argc OVS_UNUSED,
-										char *argv[] OVS_UNUSED);
+		                   char *argv[] OVS_UNUSED);
 
 static int find_next_add_pipeline(void);
 static int peek_next_add_pipeline(void);
@@ -95,15 +94,22 @@ uint64_t pipeline_mask = 0xF0A00007C00A0001;
  */
 
 static void
-multiqueue_success_replys(void) {
-
+multiqueue_success_replys(uint32_t in_port_pipeline)
+{
 	unsigned pipeline_id = 0;
 	int result = -1;
 	struct ovdk_message reply = {0};
 
 	for (pipeline_id = 0; pipeline_id < NUM_CORES; pipeline_id++) {
 		if (1 & (pipeline_mask >> pipeline_id)) {
-			create_dpdk_port_reply(&reply, 0);
+			if (pipeline_id == in_port_pipeline) {
+				create_dpdk_port_reply(&reply, 0, VPORT_FLAG_IN_PORT);
+				result = enqueue_reply_on_reply_ring(reply, pipeline_id);
+				assert(result == 0);
+				RESET(&result);
+			}
+
+			create_dpdk_port_reply(&reply, 0,VPORT_FLAG_OUT_PORT);
 			result = enqueue_reply_on_reply_ring(reply, pipeline_id);
 			assert(result == 0);
 		}
@@ -113,8 +119,8 @@ multiqueue_success_replys(void) {
 static void
 multiqueue_add_check_port_requests (unsigned pipeline_id,
                                     uint32_t vport_id,
-                                    enum ovdk_vport_type type) {
-
+                                    enum ovdk_vport_type type)
+{
 	unsigned i = 0;
 	int result = -1;
 	struct ovdk_message *request = NULL;
@@ -122,31 +128,30 @@ multiqueue_add_check_port_requests (unsigned pipeline_id,
 	for (i = 0; i < NUM_CORES; i++) {
 		if (1 & (pipeline_mask >> i)) {
 			if (i == pipeline_id) {
-				/* Check the in_port/out_port request */
+				/* Check the in_port request */
 				result = dequeue_request_from_request_ring(&request, pipeline_id);
 				assert(result == 0);
 				assert(request->type == OVDK_VPORT_CMD_FAMILY);
 				assert(request->vport_msg.cmd == VPORT_CMD_NEW);
-				assert(request->vport_msg.flags == VPORT_FLAG_INOUT_PORT );
-				assert(request->vport_msg.vportid == vport_id);
-				assert(strncmp(request->vport_msg.port_name, "example_name", 12) == 0);
-				assert(request->vport_msg.type == type);
-			} else {
-				result = dequeue_request_from_request_ring(&request, i);
-				assert(result == 0);
-				assert(request->type == OVDK_VPORT_CMD_FAMILY);
-				assert(request->vport_msg.cmd == VPORT_CMD_NEW);
-				assert(request->vport_msg.flags == VPORT_FLAG_OUT_PORT );
+				assert(request->vport_msg.flags == VPORT_FLAG_IN_PORT );
 				assert(request->vport_msg.vportid == vport_id);
 				assert(strncmp(request->vport_msg.port_name, "example_name", 12) == 0);
 				assert(request->vport_msg.type == type);
 			}
+			result = dequeue_request_from_request_ring(&request, i);
+			assert(result == 0);
+			assert(request->type == OVDK_VPORT_CMD_FAMILY);
+			assert(request->vport_msg.cmd == VPORT_CMD_NEW);
+			assert(request->vport_msg.flags == VPORT_FLAG_OUT_PORT );
+			assert(request->vport_msg.vportid == vport_id);
+			assert(strncmp(request->vport_msg.port_name, "example_name", 12) == 0);
+			assert(request->vport_msg.type == type);
 		}
 	}
 }
 
 void
-test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+test_multicore_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 {
 	int result = -1;
 	struct netdev netdev;
@@ -176,7 +181,7 @@ test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 		}
 
 		/* Add successful replies for port msgs */
-		multiqueue_success_replys();
+		multiqueue_success_replys(pipeline_id);
 
 		/* Add the ports */
 		port_no = OVDK_VPORT_TYPE_CLIENT + i;
@@ -184,7 +189,7 @@ test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 		assert(result == 0);
 		assert(port_no == OVDK_VPORT_TYPE_CLIENT + i);
 
-		/* Check the generated requests for the in_port/out_port and out_ports*/
+		/* Check the generated requests for the in_port and out_ports*/
 		multiqueue_add_check_port_requests(pipeline_id, port_no, vport_type);
 
 		/*
@@ -195,7 +200,6 @@ test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 			netdev_class.type = "dpdkvhost";
 			vport_type = OVDK_VPORT_TYPE_VHOST;
 		}
-
 	} while(peek_next_add_pipeline() != initial_pipeline);
 
 
@@ -205,10 +209,10 @@ test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 */
 
 	/*
-	 * We may have gone over may available Clients and VHOST,
+	 * We may have gone over max available Clients and VHOST,
 	 * so switch type to KNI
 	 */
-	if (i >= OVDK_MAX_CLIENTS+OVDK_MAX_VHOSTS) {
+	if (i >= OVDK_MAX_CLIENTS + OVDK_MAX_VHOSTS) {
 		netdev_class.type = "dpdkkni";
 		vport_type = OVDK_VPORT_TYPE_KNI;
 	}
@@ -216,44 +220,51 @@ test_multicore_dpif_dpdk_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	pipeline_id = find_next_add_pipeline();
 
 	/* Add successful replies for port msgs */
-	multiqueue_success_replys();
+	multiqueue_success_replys(pipeline_id);
 
 	/* Add the ports */
 	port_no = OVDK_VPORT_TYPE_CLIENT + i;
 	result = dpif_p->dpif_class->port_add(dpif_p, &netdev, &port_no);
-	if (result != 0)
-		i++;
 	assert(result == 0);
 	assert(port_no == OVDK_VPORT_TYPE_CLIENT + i);
 
-	/* Check the generated requests for the in_port/out_port and out_ports*/
+	/* Check the generated requests for the in_port and out_ports*/
 	multiqueue_add_check_port_requests(pipeline_id, port_no, vport_type);
-
 }
 
 static void
-multiqueue_del_check_requests(void) {
-
+multiqueue_del_check_requests(unsigned pipeline_id)
+{
 	unsigned i = 0;
 	int result = -1;
 	struct ovdk_message *request = NULL;
 
 	for (i = 0; i < NUM_CORES; i++) {
 		if (1 & (pipeline_mask >> i)) {
+			if (unlikely(i == pipeline_id)) {
+				printf("checking in_port request for pipeline %d\n", i);
+				result = dequeue_request_from_request_ring(&request, i);
+				assert(result == 0);
+				assert(request->vport_msg.cmd == VPORT_CMD_DEL);
+				assert(request->vport_msg.flags == VPORT_FLAG_IN_PORT);
+				assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_KNI);
+				RESET(&result);
+			}
+
+			printf("checking out_port request for pipeline %d\n", i);
 			result = dequeue_request_from_request_ring(&request, i);
 			assert(result == 0);
 			assert(request->vport_msg.cmd == VPORT_CMD_DEL);
-			assert(request->vport_msg.flags == 0 );
+			assert(request->vport_msg.flags == VPORT_FLAG_OUT_PORT);
 			assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_KNI);
 		}
 	}
 }
 
 void
-test_multicore_dpif_dpdk_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+test_multicore_dpif_dpdk_port_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 {
-
-	uint16_t pipeline_id = 0;
+	unsigned pipeline_id = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "kni_example_%02u";
 	int i = 0;
 	uint32_t port_no = 0;
@@ -261,18 +272,26 @@ test_multicore_dpif_dpdk_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
 	for (pipeline_id = 0; pipeline_id < NUM_CORES; pipeline_id++) {
 		if (1 & (pipeline_mask >> pipeline_id)) {
-
 			snprintf(name, sizeof(name), "kni_example_%02u", i++);
 			/* build fake successful replys */
-			multiqueue_success_replys();
+			multiqueue_success_replys(pipeline_id);
 
 			port_no = OVDK_VPORT_TYPE_KNI;
-			result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_KNI, pipeline_id, name, &port_no);
+
+			result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_KNI, &pipeline_id, name, &port_no);
 			assert(result == 0);
+
+			RESET(&result);
+
 			result = dpif_p->dpif_class->port_del(dpif_p, port_no);
 			assert(result == 0);
 
-			multiqueue_del_check_requests();
+			RESET(&result);
+
+			result = dpif_dpdk_vport_table_entry_reset_lcore_id(port_no);
+			assert(result == 0);
+
+			multiqueue_del_check_requests(pipeline_id);
 
 			/*
 			 * check entry was correctly removed from the table
@@ -430,8 +449,8 @@ test_multicore_dpif_dpdk_recv(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 }
 
 static const struct command commands[] = {
-	{"multicore-port-add", 0, 0, test_multicore_dpif_dpdk_add},
-	{"multicore-port-del", 0, 0, test_multicore_dpif_dpdk_del},
+	{"multicore-port-add", 0, 0, test_multicore_dpif_dpdk_port_add},
+	{"multicore-port-del", 0, 0, test_multicore_dpif_dpdk_port_del},
 	{"multicore-recv", 0, 0, test_multicore_dpif_dpdk_recv},
 	{NULL, 0, 0, NULL},
 };
@@ -466,4 +485,3 @@ main(int argc, char *argv[])
 
 	return 0;
 }
-

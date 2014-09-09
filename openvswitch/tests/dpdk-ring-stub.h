@@ -95,8 +95,6 @@ extern struct rte_ring *vswitchd_request_ring[];
 extern struct rte_ring *vswitchd_reply_ring[];
 extern struct rte_ring *vswitchd_packet_ring[];
 
-void create_dpdk_port_reply(struct ovdk_message *reply,
-                            int return_code);
 int enqueue_reply_on_reply_ring(struct ovdk_message reply, unsigned pipeline_id);
 int enqueue_upcall_on_exception_ring(uint8_t upcall_cmd, unsigned pipeline_id);
 int dequeue_packet_from_packet_ring(struct ovdk_action *actions, uint8_t *num_actions, unsigned pipeline_id);
@@ -108,7 +106,7 @@ void create_dpif_flow_put_message(struct dpif_flow_put *put);
 void create_dpdk_flow_put_reply(struct ovdk_message *reply, int error);
 void create_dpif_flow_del_message(struct dpif_flow_del *del);
 void create_dpdk_flow_del_reply(struct ovdk_message *reply);
-void create_dpdk_port_reply(struct ovdk_message *reply, int return_code);
+void create_dpdk_port_reply(struct ovdk_message *reply, int return_code, uint32_t flags);
 void create_dpif_execute_message(struct dpif_execute *execute);
 
 #endif /* __DPDK_RING_STUB_H__ */

@@ -74,6 +74,7 @@ add_entries(unsigned num_entries, enum ovdk_vport_type type)
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
 	int max_entries = 0;
 	int first_entry = 0;
+	unsigned pipeline_id = 0;
 
 	switch (type) {
 	case OVDK_VPORT_TYPE_PHY:
@@ -109,7 +110,7 @@ add_entries(unsigned num_entries, enum ovdk_vport_type type)
 
 	for (vportid = first_entry; vportid < first_entry + num_entries; vportid++) {
 		ret = dpif_dpdk_vport_table_entry_add(type,
-		                                      0, &name[0], &vportid);
+		                                      &pipeline_id, &name[0], &vportid);
 		assert(ret == 0);
 	}
 }
@@ -248,9 +249,10 @@ test_add__invalid_type(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	/* boundary check */
-	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_MAX, 0,
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_MAX, &pipeline_id,
 	                                      &name[0], &vportid);
 	assert(ret == -EINVAL);
 
@@ -258,7 +260,7 @@ test_add__invalid_type(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 * we can assume that we will never have more than UINT32_MAX types
 	 * of devices, hence this is a valid out of bounds check
 	 */
-	ret = dpif_dpdk_vport_table_entry_add(UINT32_MAX, 0,
+	ret = dpif_dpdk_vport_table_entry_add(UINT32_MAX, &pipeline_id,
 	                                      &name[0], &vportid);
 	assert(ret == -EINVAL);
 }
@@ -269,13 +271,19 @@ test_add__invalid_lcoreid(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = UINT32_MAX;
+
+	/* null check */
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE,
+	                                      NULL, &name[0], &vportid);
+	assert(ret == -EINVAL);
 
 	/*
 	 * we can assume that we will never have more than UINT32_MAX lcores
 	 * available, hence this is a valid out of bounds check
 	 */
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE,
-	                                      UINT32_MAX, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
 	assert(ret == -EINVAL);
 
 	/* TODO - add boundary check */
@@ -286,10 +294,11 @@ test_add__invalid_name(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 {
 	int ret = 0;
 	uint32_t vportid = UINT32_MAX;
+	unsigned pipeline_id = 0;
 
 	/* null check */
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE,
-	                                      0, NULL, &vportid);
+	                                      &pipeline_id, NULL, &vportid);
 	assert(ret == -EINVAL);
 }
 
@@ -299,17 +308,18 @@ test_add__invalid_vportid(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = UINT32_MAX;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	/* boundary check */
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE,
-	                                      0, &name[0], NULL);
+	                                      &pipeline_id, &name[0], NULL);
 	assert(ret == -EINVAL);
 
 	/*
 	 * we can assume that we will never have more than UINT32_MAX vports
 	 * available, hence this is a valid out of bounds check
 	 */
-	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE, 0,
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_BRIDGE, &pipeline_id,
 	                                      &name[0], &vportid);
 	assert(ret == -EINVAL);
 }
@@ -320,17 +330,18 @@ test_add__wraparound(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	init_table();
 
 	vportid = OVDK_VPORT_TYPE_CLIENT + OVDK_MAX_CLIENTS - 1;
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
-	                                      0, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
 	assert(ret == 0);
 
 	/* Should "wrap around" and get the next value in range */
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
-	                                      0, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
 	assert(ret == 0);
 	assert(vportid == OVDK_VPORT_TYPE_CLIENT);
 
@@ -343,6 +354,7 @@ test_add__table_full(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	init_table();
 
@@ -355,7 +367,7 @@ test_add__table_full(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 */
 	vportid = OVDK_MAX_VPORTS;
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
-	                                      0, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
 	assert(ret == -ENOENT);
 
 	remove_table();
@@ -367,6 +379,7 @@ test_add__duplicate_phy_entry(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	init_table();
 
@@ -377,7 +390,7 @@ test_add__duplicate_phy_entry(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 * Try to add a phy entry with the same vportid
 	 */
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-	                                      0, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
 	assert(ret == -EBUSY);
 
 	remove_table();
@@ -389,11 +402,46 @@ test_add__default(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	int ret = 0;
 	uint32_t vportid = 0;
 	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 0;
 
 	init_table();
 
 	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
-	                                      0, &name[0], &vportid);
+	                                      &pipeline_id, &name[0], &vportid);
+	assert(ret == 0);
+
+	remove_table();
+}
+
+static void
+test_add__previously_used_entry(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+{
+	int ret = 0;
+	uint32_t vportid = 0;
+	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id_first_entry = 0;
+	unsigned pipeline_id_second_entry = 1;
+
+	init_table();
+
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
+	                                      &pipeline_id_first_entry,
+						&name[0], &vportid);
+
+	assert(pipeline_id_first_entry == 0);
+
+	assert(ret == 0);
+
+	ret = dpif_dpdk_vport_table_entry_reset(vportid);
+
+	assert(ret == 0);
+
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
+	                                      &pipeline_id_second_entry,
+						&name[0], &vportid);
+
+	assert(pipeline_id_second_entry == pipeline_id_first_entry);
+
 	assert(ret == 0);
 
 	remove_table();
@@ -518,6 +566,49 @@ test_reset__default(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
 	ret = dpif_dpdk_vport_table_entry_get_next_inuse(&vportid);
 	assert(ret == -ENOENT);
+
+	remove_table();
+}
+
+static void
+test_reset_lcoreid__invalid_vportid(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+{
+	int ret = 0;
+
+	init_table();
+
+	ret = dpif_dpdk_vport_table_entry_reset_lcore_id(OVDK_MAX_VPORTS);
+	assert(ret == -EINVAL);
+
+	remove_table();
+}
+
+static void
+test_reset_lcoreid__default(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+{
+	int ret = 0;
+	uint32_t vportid = 0;
+	char name[OVDK_MAX_VPORT_NAMESIZE] = "dummyname";
+	unsigned pipeline_id = 1;
+	unsigned lcore_id = 0;
+
+	init_table();
+
+	ret = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT,
+	                                      &pipeline_id,
+	                                      &name[0], &vportid);
+	assert(ret == 0);
+
+	ret = dpif_dpdk_vport_table_entry_get_lcore_id(vportid, &lcore_id);
+	assert(ret == 0);
+	assert(lcore_id == pipeline_id);
+
+	ret = dpif_dpdk_vport_table_entry_reset_lcore_id(vportid);
+	assert(ret == 0);
+
+	ret = dpif_dpdk_vport_table_entry_get_lcore_id(vportid, &lcore_id);
+	assert(ret == 0);
+	assert(lcore_id == UINT32_MAX);
 
 	remove_table();
 }
@@ -792,12 +883,15 @@ static const struct command commands[] = {
 	{"add-duplicate-phy-entry", 0, 0, test_add__duplicate_phy_entry},
 	{"add-table-full", 0, 0, test_add__table_full},
 	{"add-default", 0, 0, test_add__default},
+	{"add-previously-used-entry", 0, 0, test_add__previously_used_entry},
 	{"get-next-inuse-invalid-vportid", 0, 0, test_get_next_inuse__invalid_vportid},
 	{"get-next-inuse-table-empty", 0, 0, test_get_next_inuse__table_empty},
 	{"get-next-inuse-wraparound", 0, 0, test_get_next_inuse__wraparound},
 	{"get-next-inuse-default", 0, 0, test_get_next_inuse__default},
 	{"reset-invalid-vportid", 0, 0, test_reset__invalid_vportid},
 	{"reset-default", 0, 0, test_reset__default},
+	{"reset-lcoreid-invalid-vportid", 0, 0, test_reset_lcoreid__invalid_vportid},
+	{"reset-lcoreid-default", 0, 0, test_reset_lcoreid__default},
 	{"set-inuse-default", 0, 0, test_set_inuse__default},
 	{"set-inuse-invalid-vportid", 0, 0, test_set_inuse__invalid_vportid},
 	{"get-inuse-default", 0, 0, test_get_inuse__default},

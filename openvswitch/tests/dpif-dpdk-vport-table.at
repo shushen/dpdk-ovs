@@ -42,7 +42,8 @@ TEST_DPIF_DPDK_VPORT_TABLE([entry add], [
     add-wraparound,
     add-table-full,
     add-duplicate-phy-entry,
-    add-default])
+    add-default,
+    add-previously-used-entry])
 
 TEST_DPIF_DPDK_VPORT_TABLE([entry get next in-use], [
     get-next-inuse-invalid-vportid,
@@ -53,6 +54,10 @@ TEST_DPIF_DPDK_VPORT_TABLE([entry get next in-use], [
 TEST_DPIF_DPDK_VPORT_TABLE([entry reset], [
     reset-invalid-vportid,
     reset-default])
+
+TEST_DPIF_DPDK_VPORT_TABLE([entry reset lcoreid], [
+    reset-lcoreid-invalid-vportid,
+    reset-lcoreid-default])
 
 TEST_DPIF_DPDK_VPORT_TABLE([entry get lcoreid], [
     get-lcoreid-invalid-vportid,

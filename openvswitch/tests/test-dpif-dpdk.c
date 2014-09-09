@@ -68,6 +68,7 @@
 #include "dpdk-ring-stub.h"
 #include "dpdk-flow-stub.h"
 #include "odp-util.h"
+#include "test-ovdk-utils.h"
 
 #define MAX_OPS        10
 #define MAX_ACTIONS    32
@@ -119,6 +120,7 @@ void test_dpif_dpdk_recv(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void test_dpif_dpdk_operate(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void test_dpif_dpdk_execute(int argc OVS_UNUSED, char *argv[] OVS_UNUSED);
 void populate_flow(struct flow *flow);
+void enqueue_port_replies(struct ovdk_message *reply, int return_code, unsigned pipeline_id);
 
 void populate_flow(struct flow *flow)
 {
@@ -145,6 +147,24 @@ void populate_flow(struct flow *flow)
 	flow->dl_type = rte_cpu_to_be_16(DPDK_RING_STUB_DL_TYPE);
 }
 
+void enqueue_port_replies(struct ovdk_message *reply, int return_code,
+		         unsigned pipeline_id)
+{
+	int result = -1;
+
+	/* Build fake error reply for in_port deletion*/
+	create_dpdk_port_reply(reply, return_code, VPORT_FLAG_IN_PORT);
+	result = enqueue_reply_on_reply_ring(*reply, pipeline_id);
+	assert(result == 0);
+
+	RESET(&result);
+
+	/* Build fake error reply for out_port deletion*/
+	create_dpdk_port_reply(reply, return_code, VPORT_FLAG_OUT_PORT);
+	result = enqueue_reply_on_reply_ring(*reply, pipeline_id);
+	assert(result == 0);
+}
+
 void
 test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 {
@@ -156,8 +176,7 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	struct netdev_dpdk_phyport netdev_dpdk_phy;
 	struct netdev_class netdev_class;
 	odp_port_t port_no = -1;
-	/* Hardcoded until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/*
 	 * Parameter checks
@@ -198,7 +217,7 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	 * this, but transact will hang until a reply is received so
 	 * there has to be something to dequeue.
 	 */
-	create_dpdk_port_reply(&reply, 0);
+	create_dpdk_port_reply(&reply, 0, VPORT_FLAG_OUT_PORT);
 	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
 	assert(result == 0);
 
@@ -219,9 +238,7 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(request->vport_msg.type == OVDK_VPORT_TYPE_BRIDGE);
 
 	/* Non-bridge ports handled correctly */
-	create_dpdk_port_reply(&reply, 0);
-	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
-	assert(result == 0);
+	enqueue_port_replies(&reply, 0, pipeline_id);
 
 	netdev.name = "kni_example";
 	netdev.netdev_class = &netdev_class;
@@ -231,11 +248,22 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(result == 0);
 	assert(port_no == OVDK_VPORT_TYPE_KNI);
 
+	/* Check successful IN_PORT add */
 	result = dequeue_request_from_request_ring(&request, pipeline_id);
 	assert(result == 0);
 	assert(request->type == OVDK_VPORT_CMD_FAMILY);
 	assert(request->vport_msg.cmd == VPORT_CMD_NEW);
-	assert(request->vport_msg.flags == VPORT_FLAG_INOUT_PORT );
+	assert(request->vport_msg.flags == VPORT_FLAG_IN_PORT);
+	assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_KNI);
+	assert(strncmp(request->vport_msg.port_name, "kni_example", OVDK_MAX_NAME_SIZE) == 0);
+	assert(request->vport_msg.type == OVDK_VPORT_TYPE_KNI);
+
+	/* Check successful OUT_PORT add */
+	result = dequeue_request_from_request_ring(&request, pipeline_id);
+	assert(result == 0);
+	assert(request->type == OVDK_VPORT_CMD_FAMILY);
+	assert(request->vport_msg.cmd == VPORT_CMD_NEW);
+	assert(request->vport_msg.flags == VPORT_FLAG_OUT_PORT);
 	assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_KNI);
 	assert(strncmp(request->vport_msg.port_name, "kni_example", OVDK_MAX_NAME_SIZE) == 0);
 	assert(request->vport_msg.type == OVDK_VPORT_TYPE_KNI);
@@ -243,8 +271,10 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	/* Invalid portmask handled correctly */
 	/* Add a dpdkphy port. Then create a new reply and set error to -ENODEV,
 	 * attempt to add another dpdkphy port. Check that ENODEV is present in reply.
+	 * No need to create a reply for the OUT_PORT component; the port_add function
+	 * returns as soon as the ENODEV is returned by the datapath reply.
 	 */
-	create_dpdk_port_reply(&reply, -ENODEV);
+	create_dpdk_port_reply(&reply, -ENODEV, VPORT_FLAG_IN_PORT);
 	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
 	assert(result == 0);
 
@@ -258,7 +288,7 @@ test_dpif_dpdk_port_add(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(result == ENODEV);
 
 	/* Failure from datapath */
-	create_dpdk_port_reply(&reply, -1);
+	create_dpdk_port_reply(&reply, -1, VPORT_FLAG_IN_PORT);
 	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
 	assert(result == 0);
 
@@ -285,7 +315,7 @@ test_dpif_dpdk_flow_put(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	uint64_t handle = 0;
 
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Negative cases */
 
@@ -317,7 +347,7 @@ test_dpif_dpdk_flow_put(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(result == 0);
 	vportid = 0;
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-                                                 pipeline_id,
+                                                 &pipeline_id,
                                                  "fakeport",
                                                  &vportid);
 	assert(result == 0);
@@ -426,7 +456,7 @@ test_dpif_dpdk_flow_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	uint32_t vportid = 0;
 	uint64_t handle = DPDK_RING_STUB_FLOW_HANDLE;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Create a dpif flow table, and add an entry for the flow that we
 	 * want to delete.
@@ -449,7 +479,7 @@ test_dpif_dpdk_flow_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	assert(result == 0);
 	vportid = 0;
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-                                                 pipeline_id,
+                                                 &pipeline_id,
                                                 "fakename",
                                                  &vportid);
 	assert(result == 0);
@@ -540,7 +570,7 @@ test_dpif_dpdk_flow_del__flow_entry_not_found(int argc OVS_UNUSED, char *argv[] 
 	int result = -1;
 	uint32_t vportid = 0;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Create a dpif flow table, and add an entry for the flow that we
 	 * want to delete.
@@ -559,7 +589,7 @@ test_dpif_dpdk_flow_del__flow_entry_not_found(int argc OVS_UNUSED, char *argv[] 
 	assert(result == 0);
 	vportid = 0;
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-                                                 pipeline_id,
+                                                 &pipeline_id,
                                                 "fakename",
                                                  &vportid);
 	assert(result == 0);
@@ -588,7 +618,7 @@ test_dpif_dpdk_flow_get(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	struct flow flow;
 	uint32_t vportid = 0;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Reserve memory for stats & actions pointers */
 	stats = malloc(sizeof(*stats));
@@ -612,7 +642,7 @@ test_dpif_dpdk_flow_get(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	result = dpif_dpdk_vport_table_construct();
 	assert(result == 0);
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-	                                         pipeline_id,
+	                                         &pipeline_id,
 	                                         "fakename",
 	                                         &vportid);
 	assert(result == 0);
@@ -707,7 +737,7 @@ test_dpif_dpdk_flow_get__flow_entry_not_found(int argc OVS_UNUSED, char *argv[] 
 	struct dpif_flow_put get;
 	uint32_t vportid = 0;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Reserve memory for stats & actions pointers */
 	stats = malloc(sizeof(*stats));
@@ -725,7 +755,7 @@ test_dpif_dpdk_flow_get__flow_entry_not_found(int argc OVS_UNUSED, char *argv[] 
 	result = dpif_dpdk_vport_table_construct();
 	assert(result == 0);
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-	                                         pipeline_id,
+	                                         &pipeline_id,
 	                                        "fakename",
 	                                         &vportid);
 	assert(result == 0);
@@ -782,7 +812,7 @@ test_dpif_dpdk_flow_dump_next(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	struct flow flow;
 	uint32_t vportid = 0;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Reserve memory for stats, actions, key and mask pointers */
 	stats = malloc(sizeof(**stats));
@@ -815,7 +845,7 @@ test_dpif_dpdk_flow_dump_next(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	result = dpif_dpdk_vport_table_construct();
 	assert(result == 0);
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-	                                         pipeline_id,
+	                                         &pipeline_id,
                                              "fakename",
 	                                         &vportid);
 	assert(result == 0);
@@ -919,7 +949,7 @@ test_dpif_dpdk_flow_dump_next__no_entry(int argc OVS_UNUSED, char *argv[] OVS_UN
 	int result = 0;
 	struct ovdk_message reply = {0};
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Initialise state via call to dump_start() */
 	result = dpif_p->dpif_class->flow_dump_start(dpif_p, (void **)&state);
@@ -980,7 +1010,7 @@ test_dpif_dpdk_flow_flush(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	struct flow flow_2;
 	int i = 0;
 	/* Hardcoded to zero until we test with multiple pipelines */
-	uint16_t pipeline_id = 1;
+	unsigned pipeline_id = 1;
 
 	/* Create a dpif flow table, and add two entries for the flows that we
 	 * want to flush.
@@ -1009,7 +1039,7 @@ test_dpif_dpdk_flow_flush(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	result = dpif_dpdk_vport_table_construct();
 	assert(result == 0);
 	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY,
-											 pipeline_id,
+											 &pipeline_id,
 											 "fakename",
 											 &vportid);
 	assert(result == 0);
@@ -1106,42 +1136,50 @@ test_dpif_dpdk_port_del(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	/* - Input parameter check - */
 	result = dpif_p->dpif_class->port_del(dpif_p, port_no);
 	assert(result == EINVAL); /* port_no = -1 */
+	RESET(&result);
 
 	port_no = OVDK_VPORT_TYPE_CLIENT;
 	/* Add fake entry to vport table */
-	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT, pipeline_id, "dummyname", &port_no);
+	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT, &pipeline_id, "dummyname", &port_no);
 	assert(result == 0);
+	RESET(&result);
 
 	/* - Error codes passed back from datapath - */
-	/* Build fake error reply */
-	create_dpdk_port_reply(&reply, -1);
-	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
-	assert(result == 0);
+	enqueue_port_replies(&reply, -1, pipeline_id);
 	result = dpif_p->dpif_class->port_del(dpif_p, port_no);
 	assert(result == 1);
+	RESET(&result);
 	/*
 	 * Check entry was correctly removed from the table
 	 * (table should be empty)
 	 */
 	result = dpif_dpdk_vport_table_entry_get_first_inuse(&port_no);
 	assert(result == -ENOENT);
+	RESET(&result);
 
 	/* - Normal operation - */
 	/* Add fake entry to vport table */
-	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT, pipeline_id, "dummyname", &port_no);
-	assert(result == 0);
-	/* Build fake successful reply */
-	create_dpdk_port_reply(&reply, 0);
-	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
-	assert(result == 0);
+	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_CLIENT, &pipeline_id, "dummyname", &port_no);
+	enqueue_port_replies(&reply, 0, pipeline_id);
 	result = dpif_p->dpif_class->port_del(dpif_p, port_no);
 	assert(result == 0);
+	RESET(&result);
 
+	/* Check for successful in_port deletion */
 	result = dequeue_request_from_request_ring(&request, pipeline_id);
 	assert(result == 0);
 	assert(request->vport_msg.cmd == VPORT_CMD_DEL);
-	assert(request->vport_msg.flags == 0 );
+	assert(request->vport_msg.flags == VPORT_FLAG_IN_PORT);
 	assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_CLIENT);
+	RESET(&result);
+
+	/* Check for successful out_port deletion */
+	result = dequeue_request_from_request_ring(&request, pipeline_id);
+	assert(result == 0);
+	assert(request->vport_msg.cmd == VPORT_CMD_DEL);
+	assert(request->vport_msg.flags == VPORT_FLAG_OUT_PORT);
+	assert(request->vport_msg.vportid == OVDK_VPORT_TYPE_CLIENT);
+	RESET(&result);
 	/*
 	 * Check entry was correctly removed from the table
 	 * (table should be empty)
@@ -1159,6 +1197,7 @@ test_dpif_dpdk_port_query_by_number(int argc OVS_UNUSED, char *argv[] OVS_UNUSED
 	char port_name[OVDK_MAX_NAME_SIZE] = "random_port";
 	enum ovdk_vport_type type = OVDK_VPORT_TYPE_DISABLED;
 	odp_port_t port_no = 0;
+	unsigned portmask_id = 0;
 
 	/*
 	 * Invalid parameters
@@ -1182,7 +1221,7 @@ test_dpif_dpdk_port_query_by_number(int argc OVS_UNUSED, char *argv[] OVS_UNUSED
 	type = OVDK_VPORT_TYPE_CLIENT;
 
 	/* add a sample entry to table */
-	result = dpif_dpdk_vport_table_entry_add(type, 0, &port_name[0],
+	result = dpif_dpdk_vport_table_entry_add(type, &portmask_id, &port_name[0],
 	                                         &port_no);
 	assert(result == 0);
 
@@ -1204,6 +1243,7 @@ test_dpif_dpdk_port_query_by_name(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	char port_name[OVDK_MAX_NAME_SIZE] = "random_port";
 	enum ovdk_vport_type type = OVDK_VPORT_TYPE_DISABLED;
 	odp_port_t port_no = 0;
+	unsigned pipeline_id = 0;
 
 	/*
 	 * Invalid parameters
@@ -1226,7 +1266,7 @@ test_dpif_dpdk_port_query_by_name(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	type = OVDK_VPORT_TYPE_CLIENT;
 
 	/* add a sample entry to table */
-	result = dpif_dpdk_vport_table_entry_add(type, 0, &port_name[0],
+	result = dpif_dpdk_vport_table_entry_add(type, &pipeline_id, &port_name[0],
 	                                         &port_no);
 	assert(result == 0);
 
@@ -1299,6 +1339,7 @@ test_dpif_dpdk_port_dump_next(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	char type_name1[OVDK_MAX_NAME_SIZE] = "dpdkphy";
 	char type_name2[OVDK_MAX_NAME_SIZE] = "dpdkclient";
 	char type_name3[OVDK_MAX_NAME_SIZE] = "dpdkvhost";
+	unsigned pipeline_id = 0;
 
 	/* dump is a state machine, and hence relies on dump_start to get things
 	 * rolling. Might as well use that function here to set things up */
@@ -1325,11 +1366,11 @@ test_dpif_dpdk_port_dump_next(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
 	/* normal operation */
 	/* Add a few random entries */
-	result = dpif_dpdk_vport_table_entry_add(port_type1, 0, &port_name1[0], &port_no1);
+	result = dpif_dpdk_vport_table_entry_add(port_type1, &pipeline_id, &port_name1[0], &port_no1);
 	assert(result == 0);
-	result = dpif_dpdk_vport_table_entry_add(port_type2, 0, &port_name2[0], &port_no2);
+	result = dpif_dpdk_vport_table_entry_add(port_type2, &pipeline_id, &port_name2[0], &port_no2);
 	assert(result == 0);
-	result = dpif_dpdk_vport_table_entry_add(port_type3, 0, &port_name3[0], &port_no3);
+	result = dpif_dpdk_vport_table_entry_add(port_type3, &pipeline_id, &port_name3[0], &port_no3);
 	assert(result == 0);
 	/* Check dumped ports are same as the entries that were added */
 	result = dpif_p->dpif_class->port_dump_next(&dpif, state, &dpif_port);
@@ -1407,10 +1448,10 @@ test_dpif_dpdk_port_get_stats(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
 	/* invalid reply from datapath */
 	/* Add a random entry */
-	result = dpif_dpdk_vport_table_entry_add(type, pipeline_id, &name[0], &vportid);
+	result = dpif_dpdk_vport_table_entry_add(type, &pipeline_id, &name[0], &vportid);
 	assert(result == 0);
 	/* put an invalid entry on the reply ring */
-	create_dpdk_port_reply(&reply, -1);
+	create_dpdk_port_reply(&reply, -1, 0);
 	result = enqueue_reply_on_reply_ring(reply, pipeline_id);
 	assert(result == 0);
 
@@ -1423,11 +1464,11 @@ test_dpif_dpdk_port_get_stats(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
 	/* normal case */
 	/* Add a random entry */
-	result = dpif_dpdk_vport_table_entry_add(type, pipeline_id, &name[0], &vportid);
+	result = dpif_dpdk_vport_table_entry_add(type, &pipeline_id, &name[0], &vportid);
 	assert(result == 0);
 
 	/* Create a fake reply and set the stats to some arbitrary values */
-	create_dpdk_port_reply(&reply, 0);
+	create_dpdk_port_reply(&reply, 0, 0);
 	reply.vport_msg.stats.rx = 0xDEADBEEF;
 	reply.vport_msg.stats.tx = 0xDEADBEEF;
 	reply.vport_msg.stats.rx_bytes = 0xDEADBEEF;
@@ -1558,7 +1599,7 @@ test_dpif_dpdk_execute(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 	/* Normal case */
 	/* Add fake entry to vport table - needed by dpif_dpdk_execute to determine pipeline */
 	port_no = OVDK_VPORT_TYPE_PHY;
-	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY, pipeline_id, "dummyname", &port_no);
+	result = dpif_dpdk_vport_table_entry_add(OVDK_VPORT_TYPE_PHY, &pipeline_id, "dummyname", &port_no);
 	assert(result == 0);
 
 	create_dpif_execute_message(&execute);
