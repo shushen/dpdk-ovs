@@ -27,7 +27,6 @@
 #include <rte_memcpy.h>
 #include <rte_lcore.h>
 #include <rte_string_fns.h>
-#include <rte_log.h>
 
 #include "datapath/dpdk/ovdk_datapath_messages.h"
 #include "dpdk-link.h"
@@ -42,8 +41,6 @@ VLOG_DEFINE_THIS_MODULE(dpdk_link);
 #else
 #define DPDK_DEBUG()
 #endif
-
-#define RTE_LOGTYPE_APP RTE_LOGTYPE_USER1
 
 #define enqueue_packet_mbufs_to_be_freed(mbufs, num_mbufs, pipeline_id) { \
     while (rte_ring_mp_enqueue_bulk(packet_free_ring[pipeline_id], mbufs, num_mbufs) == -ENOBUFS); \
@@ -114,8 +111,8 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
     DPDK_DEBUG()
 
     if (num_pkts > PKT_BURST_SIZE) {
-        RTE_LOG(ERR, APP, "%s: %zd exceeds the permitted packet burst size of"
-               "%d\n", __FUNCTION__, num_pkts, PKT_BURST_SIZE);
+        VLOG_ERR("%s: %zd exceeds the permitted packet burst size of"
+                 "%d\n", __FUNCTION__, num_pkts, PKT_BURST_SIZE);
         return EINVAL;
     }
 
@@ -128,14 +125,14 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
 
     if (num_packet_pkts) {
         alloc_packet_mbufs((void **)packet_mbufs, num_packet_pkts, pipeline_id);
-        RTE_LOG(DEBUG, APP, "%s: allocated %u 'packet' mbufs from ring %s\n",
+        VLOG_DBG("%s: allocated %u 'packet' mbufs from ring %s\n",
                 __FUNCTION__, num_packet_pkts,
                 packet_alloc_ring[pipeline_id]->name);
     }
     if (num_control_pkts) {
         alloc_control_mbufs((void **)control_mbufs, num_control_pkts, pipeline_id);
-        RTE_LOG(DEBUG, APP, "%s: allocated %u 'control' mbufs from ring %s\n",
-                __FUNCTION__, num_packet_pkts,
+        VLOG_DBG("%s: allocated %u 'control' mbufs from ring %s\n",
+                __FUNCTION__, num_control_pkts,
                 control_alloc_ring[pipeline_id]->name);
     }
 
@@ -150,13 +147,13 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
             control_mbufs[num_control_pkts]->pkt.nb_segs = 1;
             mbuf_data = rte_ctrlmbuf_data(control_mbufs[num_control_pkts]);
             rte_memcpy(mbuf_data, &requests[i], sizeof(requests[i]));
-	    num_control_pkts++;
+            num_control_pkts++;
         } else if (requests[i].type == OVDK_VPORT_CMD_FAMILY) {
             requests[i].vport_msg.thread_id = tid;
             control_mbufs[num_control_pkts]->pkt.nb_segs = 1;
             mbuf_data = rte_ctrlmbuf_data(control_mbufs[num_control_pkts]);
             rte_memcpy(mbuf_data, &requests[i], sizeof(requests[i]));
-	    num_control_pkts++;
+            num_control_pkts++;
         } else if (requests[i].type == OVDK_PACKET_CMD_FAMILY) {
             packet_mbufs[num_packet_pkts]->pkt.nb_segs = 1;
             mbuf_data = rte_pktmbuf_mtod(packet_mbufs[num_packet_pkts], uint8_t *);
@@ -169,24 +166,23 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
                         + packets[i]->size;
                 rte_pktmbuf_pkt_len(packet_mbufs[num_packet_pkts]) = rte_pktmbuf_data_len(packet_mbufs[num_packet_pkts]);
             } else {
-                RTE_LOG(ERR, APP,"%s, %d: %s", __FUNCTION__, __LINE__,
-                        "memcpy prevented: packet size exceeds available mbuf space");
+                VLOG_ERR("%s, %d: %s", __FUNCTION__, __LINE__,
+                         "memcpy prevented: packet size exceeds available mbuf space");
                 enqueue_packet_mbufs_to_be_freed((void * const *)packet_mbufs, num_pkts, pipeline_id);
                 return ENOMEM;
             }
-	    num_packet_pkts++;
+            num_packet_pkts++;
         }
     }
 
     if (num_packet_pkts) {
         packet_ret = rte_ring_mp_enqueue_bulk(packet_ring[pipeline_id], (void * const *)packet_mbufs, num_packet_pkts);
         if (packet_ret == -ENOBUFS) {
-            RTE_LOG(DEBUG, APP,
-                   "%s: Could not enqueue %u 'packet' mbufs to ring %s;\n"
-                   "enqueuing these packets to ring %s to be freed\n",
-                   __FUNCTION__, num_packet_pkts,
-                   packet_ring[pipeline_id]->name,
-                   packet_free_ring[pipeline_id]->name);
+            VLOG_DBG("%s: Could not enqueue %u 'packet' mbufs to ring %s;\n"
+                     "enqueuing these packets to ring %s to be freed\n",
+                     __FUNCTION__, num_packet_pkts,
+                     packet_ring[pipeline_id]->name,
+                     packet_free_ring[pipeline_id]->name);
             enqueue_packet_mbufs_to_be_freed((void * const *)packet_mbufs, num_packet_pkts, pipeline_id);
             packet_ret = ENOBUFS;
         } else if (unlikely(packet_ret == -EDQUOT)) {
@@ -198,12 +194,11 @@ dpdk_link_send_bulk(struct ovdk_message *requests,
     if (num_control_pkts) {
         control_ret = rte_ring_mp_enqueue_bulk(request_ring[pipeline_id], (void * const *)control_mbufs, num_control_pkts);
         if (control_ret == -ENOBUFS) {
-            RTE_LOG(DEBUG, APP,
-                   "%s: Could not enqueue %u 'control' mbufs to ring %s;\n"
-                   "enqueuing these packets to ring %s to be freed\n",
-                   __FUNCTION__, num_control_pkts,
-                   request_ring[pipeline_id]->name,
-                   control_free_ring[pipeline_id]->name);
+            VLOG_DBG("%s: Could not enqueue %u 'control' mbufs to ring %s;\n"
+                     "enqueuing these packets to ring %s to be freed\n",
+                     __FUNCTION__, num_control_pkts,
+                     request_ring[pipeline_id]->name,
+                     control_free_ring[pipeline_id]->name);
             enqueue_control_mbufs_to_be_freed((void * const *)control_mbufs, num_control_pkts, pipeline_id);
             control_ret = ENOBUFS;
         } else if (unlikely(control_ret == -EDQUOT)) {
@@ -267,7 +262,7 @@ dpdk_link_recv_reply(struct ovdk_message *reply, unsigned pipeline_id)
             }
             break;
         default:
-            RTE_LOG(WARNING, APP, "invalid reply type\n");
+            VLOG_WARN("invalid reply type\n");
             loop = false;
             error = EPERM;
             break;
@@ -393,8 +388,9 @@ ring_lookup(const char *template, unsigned lcore_id)
      * the core is enabled or not.
      */
     if (ring != NULL) {
-        RTE_LOG(INFO, APP, "Found %s\n", ring_name);
+        VLOG_INFO("Found %s\n", ring_name);
     }
+
     return ring;
 }
 
