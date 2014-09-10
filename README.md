@@ -24,7 +24,7 @@ Additionally, Intel® DPDK vSwitch has been validated on the following processor
 
 Finally, Intel® DPDK vSwitch requires the following version of Intel® DPDK:
 
-* Intel® DPDK 1.7
+* Intel® DPDK 1.7.1
 
 ______
 

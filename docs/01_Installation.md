@@ -36,7 +36,7 @@ ______
 
 ### Intel® DPDK
 
-Intel® DPDK is a set of software libraries and Ethernet drivers (native and virtualized) that run in Linux user space to boost packet processing throughput on Intel® Architecture. You can find information, including download links, for Intel® DPDK  via [DPDK.org][dpdkorg].
+Intel® DPDK is a set of software libraries and Ethernet drivers (native and virtualized) that run in Linux user space to boost packet processing throughput on Intel® Architecture. You can find information, including download links, for Intel® DPDK via [DPDK.org][dpdkorg].
 
 ### Intel® DPDK vSwitch
 

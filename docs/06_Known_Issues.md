@@ -6,7 +6,7 @@ ______
 
 * To view a list of known bugs, or log a new one, please visit the [Issues][ovdk-issues] section of the Intel® DPDK vSwitch GitHub page.
 
-* This release supports Intel® DPDK v1.7.0 only. Intel® DPDK v1.6.0 is no longer supported.
+* This release supports Intel® DPDK v1.7.1 only. Intel® DPDK v1.7.0 exhibits issues with IVSHMEM and is therefore unsupported.
 
 * Intel® Virtualization Technology for Directed I/O (Intel® VT-d) should be disabled in the BIOS settings, unless PCI passthrough is required, in which case the following options should be added to the kernel boot parameters:
 
@@ -105,15 +105,6 @@ The IVSHM manager utility must be executed once the switch is up and running and
 
 ______
 
-## ovs-client
-
-IVSHM clients running in the host fail. The following dpdk patch fixes this issue [www.dpdk.org/ml/archives/dev/2014-June/003591.html][mail-003591]
-
-IVSHM VM to VM may fail intermittently. The following dpdk patch fixes this issue [www.dpdk.org/ml/archives/dev/2014-June/003591.html][mail-003591]
-
-______
-
 © 2014, Intel Corporation. All Rights Reserved
 
-[mail-003591]: http://www.dpdk.org/ml/archives/dev/2014-June/003591.html
 [ovdk-issues]: https://github.com/01org/dpdk-ovs/issues
