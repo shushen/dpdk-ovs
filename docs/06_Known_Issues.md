@@ -53,10 +53,6 @@ ______
 
     For example, `dpdk_nic_bind.py -b igb_uio <PCI ID of NIC port>` binds the NIC to the Intel® DPDK igb_uio driver.
 
-* Some Intel® DPDK dpif unit tests create files in `/tmp` (specifically, dpdk_flow_table and dpif_dpdk_vport_table). These are not always removed after iterations of the tests, causing subsequent tests to fail. These should be deleted manually in this case.
-
-* Port deletion in the datapath is not fully supported. For this release, a temporary workaround is in place which disables deletion such that ports which have been used cannot be used again. A more permanent solution for this issue is currently in progress.
-
 ______
 
 ## Intel® DPDK vSwitch Sample Guest Application
