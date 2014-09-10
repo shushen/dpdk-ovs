@@ -5,6 +5,7 @@
   - Added DPI support
   - Added Jumbo Frame Support
   - Re-added vEth support. This effectively re-adds OFTest support
+  - Bug fixes
 
 # v1.1 - August 2014
 
