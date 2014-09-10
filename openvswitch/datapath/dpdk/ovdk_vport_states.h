@@ -32,35 +32,17 @@
  *
  */
 
-#ifndef __OVDK_VPORT_H_
-#define __OVDK_VPORT_H_
+#ifndef __OVDK_VPORT_STATES_H_
+#define __OVDK_VPORT_STATES_H_
 
-#include <stdint.h>
+#include "ovdk_config.h"
 
-#include <rte_config.h>
-#include <rte_pipeline.h>
+enum ovdk_vport_state {
+	OVDK_VPORT_STATE_NEVER_USED,
+	OVDK_VPORT_STATE_DISABLED,
+	OVDK_VPORT_STATE_IN_USE_FIRST_USE,
+	OVDK_VPORT_STATE_IN_USE_USED_BEFORE,
+	OVDK_VPORT_STATE_FAILED,
+};
 
-#include "ovdk_virtio-net.h"
-#include "ovdk_vport_states.h"
-
-void ovdk_vport_init(void);
-void ovdk_vport_shutdown(void);
-int ovdk_vport_get_in_portid(uint32_t vportid, uint32_t *portid);
-int ovdk_vport_set_in_portid(uint32_t vportid, uint32_t portid);
-int ovdk_vport_get_out_portid(uint32_t vportid, uint32_t *portid);
-int ovdk_vport_set_out_portid(uint32_t vportid, uint32_t portid);
-int ovdk_vport_get_vportid(uint32_t port_in_id, uint32_t *vportid);
-int ovdk_vport_get_out_params(uint32_t vportid,
-                              struct rte_pipeline_port_out_params **params);
-int ovdk_vport_get_in_params(uint32_t vportid,
-                             struct rte_pipeline_port_in_params **params);
-int ovdk_vport_set_port_name(uint32_t vportid, char *port_name);
-int ovdk_vport_get_port_name(uint32_t vportid, char *port_name);
-int ovdk_vport_get_state(uint32_t vportid, enum ovdk_vport_state *state);
-int ovdk_vport_set_state(uint32_t vportid, enum ovdk_vport_state *state);
-
-int ovdk_vport_vhost_up(struct virtio_net *dev);
-int ovdk_vport_vhost_down(struct virtio_net *dev);
-int ovdk_vport_port_verify(uint32_t vportid);
-
-#endif /* __OVDK_VPORT_H_ */
+#endif /* __OVDK_VPORT_STATES_H_ */

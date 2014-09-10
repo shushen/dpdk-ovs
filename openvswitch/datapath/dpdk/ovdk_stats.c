@@ -294,7 +294,7 @@ ovdk_stats_vport_overrun_get(unsigned vportid)
  * Get total statistics for a given vport.
  *
  * Sum all statistics from each lcore for a given vport, and return
- * the as an outparam. Return 0 if successful, else -1.
+ * them as an outparam. Return 0 if successful, else -1.
  */
 inline int
 ovdk_stats_vport_get(unsigned vportid, struct ovdk_port_stats *stats)

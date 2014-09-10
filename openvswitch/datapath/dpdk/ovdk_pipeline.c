@@ -465,33 +465,80 @@ ovdk_pipeline_port_in_add(uint32_t vportid, char *vport_name)
 	struct rte_pipeline_port_in_params *port_in_params = NULL;
 	uint32_t port_in_id = 0;
 	unsigned lcore_id = 0;
+	enum ovdk_vport_state vport_state = OVDK_VPORT_STATE_FAILED;
+	enum ovdk_vport_state prev_state = OVDK_VPORT_STATE_NEVER_USED;
 	int ret = 0;
 
 	lcore_id = rte_lcore_id();
 
-	if ((ret = ovdk_vport_get_in_params(vportid, &port_in_params))) {
-		RTE_LOG(WARNING, APP, "Unable to get params for in-port '%u'"
-		        " [pipeline '%s']\n", vportid,
+	/* Get the state of the vport */
+	if ((ret = ovdk_vport_get_state(vportid, &prev_state))) {
+		RTE_LOG(WARNING, APP, "Unable to get vport state for in-port"
+		        " '%u' [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
 	}
 
-	if ((ret = rte_pipeline_port_in_create(
-	                ovdk_pipeline[lcore_id].pf_pipeline,
-	                port_in_params, &port_in_id))) {
-		RTE_LOG(WARNING, APP, "Unable to add in-port '%u'"
-		        " [pipeline '%s']\n", vportid,
+	/*
+	 * Set the state of the vport to failed initially. This is
+	 * to guard against the port being left in an inconsistent
+	 * state if an error occurs at any stage while creating
+	 * required port in elements or if we fail to set/get a
+	 * port state. If this initial state set call fails the
+	 * port state will be inaccessible so we return an error.
+	 */
+	if ((ret = ovdk_vport_set_state(vportid, &vport_state))) {
+		RTE_LOG(WARNING, APP, "Unable to set vport state for in-port"
+		        " '%u' [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
 	}
 
-	if ((ret = ovdk_vport_set_in_portid(vportid, port_in_id))) {
-		RTE_LOG(WARNING, APP, "Unable to set vportid for in-port '%u'"
-		        " [pipeline '%s']\n", vportid,
-		        ovdk_pipeline[lcore_id].params.name);
-		return ret;
+	/*
+	 * Check if the vport_state is never used or failed. If so then create
+	 * the required port_in params, create port_in, set the vport_id and
+	 * connect the port to the table. This is only required if a port has
+	 * never been used before or is in the failed state.
+	 */
+	if ((prev_state == OVDK_VPORT_STATE_NEVER_USED) ||
+	    (prev_state == OVDK_VPORT_STATE_FAILED)) {
+		if ((ret = ovdk_vport_get_in_params(vportid, &port_in_params))) {
+			RTE_LOG(WARNING, APP, "Unable to get params for in-port"
+			        " '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = rte_pipeline_port_in_create(
+		        ovdk_pipeline[lcore_id].pf_pipeline,
+		        port_in_params, &port_in_id))) {
+			RTE_LOG(WARNING, APP, "Unable to add in-port '%u'"
+			        " [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = ovdk_vport_set_in_portid(vportid, port_in_id))) {
+			RTE_LOG(WARNING, APP, "Unable to set vportid for"
+			        " in-port '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = rte_pipeline_port_in_connect_to_table(
+		        ovdk_pipeline[lcore_id].pf_pipeline, port_in_id,
+		        ovdk_pipeline[lcore_id].table_id))) {
+			RTE_LOG(WARNING, APP, "Unable to connect in-port '%u'"
+			        " [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
 	}
 
+	/*
+	 * Set the port name regardless of whether the previous port state
+	 * is first use or used before.
+	 */
 	if ((ret = ovdk_vport_set_port_name(vportid, vport_name))) {
 		RTE_LOG(WARNING, APP, "Unable to set vport name for in-port '%u'"
 		        " [pipeline '%s']\n", vportid,
@@ -499,18 +546,42 @@ ovdk_pipeline_port_in_add(uint32_t vportid, char *vport_name)
 		return ret;
 	}
 
-	if ((ret = rte_pipeline_port_in_connect_to_table(
-	                ovdk_pipeline[lcore_id].pf_pipeline, port_in_id,
-	                ovdk_pipeline[lcore_id].table_id))) {
-		RTE_LOG(WARNING, APP, "Unable to connect in-port '%u'"
+	/*
+	 * Enable the port regardless of whether the previous port state is
+	 * first use or used before.
+	 */
+	if ((ret = rte_pipeline_port_in_enable(
+	                ovdk_pipeline[lcore_id].pf_pipeline, port_in_id))) {
+		RTE_LOG(WARNING, APP, "Unable to enable in-port '%u'"
 		        " [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
 	}
 
-	if ((ret = rte_pipeline_port_in_enable(
-	                ovdk_pipeline[lcore_id].pf_pipeline, port_in_id))) {
-		RTE_LOG(WARNING, APP, "Unable to enable in-port '%u'"
+	/*
+	 * At this point the port has been created/enabled without issue.
+	 * We check the state stored previously for the vport info to discern
+	 * whether the port has been used before. From this we can tell what
+	 * in_use state to set (first use or used before). This is required
+	 * so that we know whether corresponding out-ports need to be created
+	 * or are already present in the pipelines.
+	 */
+	switch (prev_state) {
+	case OVDK_VPORT_STATE_FAILED:
+	case OVDK_VPORT_STATE_NEVER_USED:
+		vport_state = OVDK_VPORT_STATE_IN_USE_FIRST_USE;
+		break;
+	case OVDK_VPORT_STATE_DISABLED:
+		vport_state = OVDK_VPORT_STATE_IN_USE_USED_BEFORE;
+		break;
+	case OVDK_VPORT_STATE_IN_USE_FIRST_USE:
+	case OVDK_VPORT_STATE_IN_USE_USED_BEFORE:
+	default:
+		vport_state = OVDK_VPORT_STATE_FAILED;
+	}
+
+	if ((ret = ovdk_vport_set_state(vportid, &vport_state))) {
+		RTE_LOG(WARNING, APP, "Unable to set vport state for in-port '%u'"
 		        " [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
@@ -529,31 +600,77 @@ ovdk_pipeline_port_out_add(uint32_t vportid)
 	struct rte_pipeline_port_out_params *port_out_params = NULL;
 	uint32_t port_out_id = 0;
 	unsigned lcore_id = 0;
+	enum ovdk_vport_state vport_state = OVDK_VPORT_STATE_FAILED;
+	enum ovdk_vport_state prev_state = OVDK_VPORT_STATE_NEVER_USED;
 	int ret = 0;
 
 	lcore_id = rte_lcore_id();
 
-	if ((ret = ovdk_vport_get_out_params(vportid, &port_out_params))) {
-		RTE_LOG(WARNING, APP, "Unable to get params for out-port '%u'"
+	/* Get the state of the vport */
+	if ((ret = ovdk_vport_get_state(vportid, &prev_state))) {
+		RTE_LOG(WARNING, APP, "Unable to get vport state for out-port '%u'"
 		        " [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
 	}
 
-	if ((ret = rte_pipeline_port_out_create(
-	                ovdk_pipeline[lcore_id].pf_pipeline,
-	                port_out_params, &port_out_id))) {
-		RTE_LOG(WARNING, APP, "Unable to add out-port '%u'"
-		        " [pipeline '%s']\n", vportid,
-		        ovdk_pipeline[lcore_id].params.name);
-		return ret;
-	}
+	/*
+	 * Check if the prev_state is in_use_first_use. If so then
+	 * create required port_out params, create port_out and set the vport
+	 * port out id. This is only required if this is the first time a port
+	 * has been used. Otherwise the out ports have been created previously.
+	 */
+	if (prev_state == OVDK_VPORT_STATE_IN_USE_FIRST_USE) {
 
-	if ((ret = ovdk_vport_set_out_portid(vportid, port_out_id))) {
-		RTE_LOG(WARNING, APP, "Unable to set vportid for out-port '%u'"
-		        " [pipeline '%s']\n", vportid,
-		        ovdk_pipeline[lcore_id].params.name);
-		return ret;
+		/*
+		 * Set the state of the vport to failed initially. This is
+		 * to guard against the port being left in an inconsistent
+		 * state if an error occurs at any stage while creating
+		 * required port out elements or if we fail to set/get a
+		 * port state. If this initial state set call fails the
+		 * port state will be inaccessible so we return an error.
+		 */
+		if ((ret = ovdk_vport_set_state(vportid, &vport_state))) {
+			RTE_LOG(WARNING, APP, "Unable to set vport state for"
+			        " out-port '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = ovdk_vport_get_out_params(vportid, &port_out_params))) {
+			RTE_LOG(WARNING, APP, "Unable to get params for"
+			        " out-port '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = rte_pipeline_port_out_create(
+		        ovdk_pipeline[lcore_id].pf_pipeline,
+		        port_out_params, &port_out_id))) {
+			RTE_LOG(WARNING, APP, "Unable to add out-port '%u'"
+			        " [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		if ((ret = ovdk_vport_set_out_portid(vportid, port_out_id))) {
+			RTE_LOG(WARNING, APP, "Unable to set vportid for"
+			        " out-port '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+
+		/*
+		 * We can asssume that all port out elements have been created
+		 * without issue. We set the vports state back to its
+		 * previous state.
+		 */
+		if ((ret = ovdk_vport_set_state(vportid, &prev_state))) {
+			RTE_LOG(WARNING, APP, "Unable to set vport state for"
+			        " out-port '%u' [pipeline '%s']\n", vportid,
+			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -584,8 +701,8 @@ ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
 	for (action_count = 0; action_count < num_actions; action_count++) {
 		if (actions[action_count].type == OVDK_ACTION_OUTPUT) {
 			if ((ret = ovdk_vport_get_out_portid(
-			    actions[action_count].data.output.port,
-			    &port_id))) {
+			        actions[action_count].data.output.port,
+			        &port_id))) {
 				RTE_LOG(WARNING, APP, "Unable to get vportid"
 				        " for out-port '%u' [pipeline '%s']\n",
 				        port_id,
@@ -622,10 +739,9 @@ ovdk_pipeline_flow_add(struct ovdk_flow_key *key, struct ovdk_action *actions,
 			 * a single action
 			 */
 			assert(num_actions == 1);
-
 			ovdk_pipeline_entry.pf_entry.action = RTE_PIPELINE_ACTION_DROP;
 			break;
-	 	} else if (actions[action_count].type == OVDK_ACTION_VSWITCHD) {
+		} else if (actions[action_count].type == OVDK_ACTION_VSWITCHD) {
 			/*
 			 * Only support case of send to userspace as
 			 * a single action
@@ -784,9 +900,23 @@ ovdk_pipeline_port_in_del(uint32_t vportid)
 {
 	unsigned port_id = 0;
 	unsigned lcore_id = 0;
+	enum ovdk_vport_state vport_state = OVDK_VPORT_STATE_FAILED;
 	int ret = 0;
 
 	lcore_id = rte_lcore_id();
+
+	/*
+	 * Set the state of the vport to failed initially. This is
+	 * to guard against the port being left in an inconsistent
+	 * state if an error occurs at any stage while disabling
+	 * the port or setting the state.
+	 */
+	if ((ret = ovdk_vport_set_state(vportid, &vport_state))) {
+		RTE_LOG(WARNING, APP, "Unable to set vport state for in-port"
+		        " '%u' [pipeline '%s']\n", vportid,
+		        ovdk_pipeline[lcore_id].params.name);
+		return ret;
+	}
 
 	if ((ret = ovdk_vport_get_in_portid(vportid, &port_id))) {
 		RTE_LOG(WARNING, APP, "Unable to get vportid for in-port '%u'"
@@ -804,10 +934,11 @@ ovdk_pipeline_port_in_del(uint32_t vportid)
 		return ret;
 	}
 
-
-	if ((ret = ovdk_vport_set_in_portid(vportid, 0))) {
-		RTE_LOG(WARNING, APP, "Unable to reset vportid for in-port '%u'"
-		        " [pipeline '%s']\n", vportid,
+	/* vport is now disabled, set vport state to disabled */
+	vport_state = OVDK_VPORT_STATE_DISABLED;
+	if ((ret = ovdk_vport_set_state(vportid, &vport_state))) {
+		RTE_LOG(WARNING, APP, "Unable to set vport state for in-port"
+		        " '%u' [pipeline '%s']\n", vportid,
 		        ovdk_pipeline[lcore_id].params.name);
 		return ret;
 	}
@@ -816,29 +947,22 @@ ovdk_pipeline_port_in_del(uint32_t vportid)
 }
 
 /*
- * Delete the vport, referenced by 'vportid', from the rte_pipeline running
+ * Delete the vport referenced by 'vportid', from the rte_pipeline running
  * on this core as an out port.
  */
 int
-ovdk_pipeline_port_out_del(uint32_t vportid)
+ovdk_pipeline_port_out_del(uint32_t vportid __rte_unused)
 {
-	unsigned lcore_id = 0;
 	int ret = 0;
-
-	lcore_id = rte_lcore_id();
 
 	/*
 	 * With the current packet framework, there is nothing to do
 	 * here as we cannot delete an out port from the pipeline.
+	 * We do not modify the vport_info entry because the
+	 * port_out details will be needed if the port_in is
+	 * re-enabled at a later stage. The function is kept
+	 * for completeness only.
 	 */
-
-	if ((ret = ovdk_vport_set_out_portid(vportid, 0))) {
-		RTE_LOG(WARNING, APP, "Unable to reset vportid for out-port"
-		        " '%u' [pipeline '%s']\n", vportid,
-		        ovdk_pipeline[lcore_id].params.name);
-		return ret;
-	}
-
 	return ret;
 }
 

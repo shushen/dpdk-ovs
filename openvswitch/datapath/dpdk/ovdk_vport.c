@@ -175,6 +175,9 @@ ovdk_vport_init(void)
 		for (j = 0; j < RTE_PIPELINE_PORT_IN_MAX; j++)
 			vportid_map[i][j] = INVALID_VPORTID;
 
+	for (i = 0; i < OVDK_MAX_VPORTS; i++)
+		vport_info[i].state = OVDK_VPORT_STATE_NEVER_USED;
+
 	return;
 }
 
@@ -490,3 +493,36 @@ ovdk_vport_port_verify(uint32_t vportid)
 	return ret;
 }
 
+/*
+ * Return the current state of the port with 'vportid'
+ */
+inline int
+ovdk_vport_get_state(uint32_t vportid, enum ovdk_vport_state *state)
+{
+	if (vportid >= OVDK_MAX_VPORTS)
+		return EINVAL;
+
+	if (state == NULL)
+		return EINVAL;
+
+	*state = vport_info[vportid].state;
+
+	return 0;
+}
+
+/*
+ * Set the current state of the port with 'vportid'
+ */
+inline int
+ovdk_vport_set_state(uint32_t vportid, enum ovdk_vport_state *state)
+{
+	if (vportid >= OVDK_MAX_VPORTS)
+		return EINVAL;
+
+	if (state == NULL)
+		return EINVAL;
+
+	vport_info[vportid].state = *state;
+
+	return 0;
+}

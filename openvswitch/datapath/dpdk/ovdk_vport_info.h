@@ -52,6 +52,7 @@
 #include "rte_port_veth.h"
 
 #include "ovdk_vport_types.h"
+#include "ovdk_vport_states.h"
 
 #define MZ_VPORT_INFO           "OVS_vport_info"
 #define rpl_strnlen strnlen
@@ -109,8 +110,8 @@ struct vport_bridge {
 
 struct vport_info {
 	enum ovdk_vport_type __rte_cache_aligned type;
+	enum ovdk_vport_state __rte_cache_aligned state;
 	char __rte_cache_aligned name[OVDK_MAX_VPORT_NAMESIZE];
-	bool __rte_cache_aligned enabled;
 	uint32_t vportid;
 	union {
 		struct vport_phy phy;
