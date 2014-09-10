@@ -246,8 +246,8 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 
 	ret = ovdk_vport_port_verify(vportid);
 	if (ret != 0) {
-		RTE_LOG(WARNING, APP, "Invalid port ID for new port ''%"PRIu32"', "
-		        "error '%d'\n", vportid, ret);
+		RTE_LOG(WARNING, APP, "Invalid port ID for new port"
+		        " '%"PRIu32"', error '%d'\n", vportid, ret);
 		reply.error = ret;
 		ovdk_datapath_send_reply(&reply);
 
@@ -257,29 +257,33 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 	if (flags & VPORT_FLAG_IN_PORT) {
 		ret = ovdk_pipeline_port_in_add(vportid, vport_name);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to add in-port '%"PRIu32"', "
-			        "error '%d'\n", vportid, ret);
+			RTE_LOG(WARNING, APP, "Unable to add in-port"
+			        " '%"PRIu32"', error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
+		} else {
+			RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as in-port"
+			        " '%"PRIu32"' on lcore_id '%d'\n",
+			        __func__, __LINE__, vport_name, vportid,
+			        rte_lcore_id());
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as in-port ''%"PRIu32"' "
-		        "on lcore_id '%d'\n",
-		        __func__, __LINE__, vport_name, vportid, rte_lcore_id());
 	}
 
 	if (flags & VPORT_FLAG_OUT_PORT) {
 		ret = ovdk_pipeline_port_out_add(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to add out-port '%"PRIu32"', "
-			        "error '%d'\n", vportid, ret);
+			RTE_LOG(WARNING, APP, "Unable to add out-port"
+			        " '%"PRIu32"', error '%d'\n", vportid, ret);
 			reply.error = ret;
 			ovdk_datapath_send_reply(&reply);
 			return ret;
+		} else {
+			RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as out-port"
+			        " '%"PRIu32"' on lcore_id '%d'\n",
+			        __func__, __LINE__, vport_name, vportid,
+			        rte_lcore_id());
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as out-port ''%"PRIu32"' "
-		        "on lcore_id '%d'\n",
-		        __func__, __LINE__, vport_name, vportid, rte_lcore_id());
 	}
 
 	reply.error = 0;
@@ -311,35 +315,35 @@ ovdk_datapath_vport_del(struct ovdk_vport_message *request)
 	if (flags & VPORT_FLAG_IN_PORT) {
 		ret = ovdk_pipeline_port_in_del(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to delete in-port '%"PRIu32"', "
-			        "error '%d'\n", vportid, ret);
-			reply.error = ret;
-			ovdk_datapath_send_reply(&reply);
-			return ret;
+			RTE_LOG(WARNING, APP, "Unable to delete in-port"
+			        " '%"PRIu32"', error '%d'\n", vportid, ret);
+		} else {
+			RTE_LOG(DEBUG, APP, "%s(%d): Deleted in-port"
+			        " '%"PRIu32"' ('%s') on lcore_id '%d'\n",
+			        __func__, __LINE__, vportid, request->port_name,
+			        rte_lcore_id());
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Deleted in-port ''%"PRIu32"' ('%s') "
-		        "on lcore_id '%d'\n",
-		        __func__, __LINE__, vportid, request->port_name, rte_lcore_id());
-	}
-
-	if (flags & VPORT_FLAG_OUT_PORT) {
+	} else if (flags & VPORT_FLAG_OUT_PORT) {
 		ret = ovdk_pipeline_port_out_del(vportid);
 		if (ret) {
-			RTE_LOG(WARNING, APP, "Unable to delete out-port '%"PRIu32"', "
-			        "error '%d'\n", vportid, ret);
-			reply.error = ret;
-			ovdk_datapath_send_reply(&reply);
-			return ret;
+			RTE_LOG(WARNING, APP, "Unable to delete out-port"
+			        " '%"PRIu32"', error '%d'\n", vportid, ret);
+		} else {
+			RTE_LOG(DEBUG, APP, "%s(%d): Deleted out-port"
+			        " '%"PRIu32"' ('%s') on lcore_id '%d'\n",
+			        __func__, __LINE__, vportid, request->port_name,
+			        rte_lcore_id());
 		}
-		RTE_LOG(DEBUG, APP, "%s(%d): Deleted out-port ''%"PRIu32"' ('%s') "
-		        "on lcore_id '%d'\n",
-		        __func__, __LINE__, vportid, request->port_name, rte_lcore_id());
+	} else {
+		RTE_LOG(ERR, APP, "Invalid flags in request received from"
+		        " daemon: '%"PRIu32"'\n", flags);
+		ret = EINVAL;
 	}
 
-	reply.error = 0;
+	reply.error = ret;
 	ovdk_datapath_send_reply(&reply);
 
-	return 0;
+	return ret;
 }
 
 /*
