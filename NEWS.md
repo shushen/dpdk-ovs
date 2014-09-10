@@ -1,8 +1,10 @@
 # v1.2 - TBD
 
-- Added DPI support
-- Added Jumbo Frame Support
-- Re-added vEth support. This effectively re-adds OFTest support
+- Updated to use Intel(R) DPDK 1.7.1
+- Datapath:
+  - Added DPI support
+  - Added Jumbo Frame Support
+  - Re-added vEth support. This effectively re-adds OFTest support
 
 # v1.1 - August 2014
 
