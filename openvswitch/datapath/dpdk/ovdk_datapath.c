@@ -259,37 +259,34 @@ ovdk_datapath_vport_new(struct ovdk_vport_message *request)
 		if (ret) {
 			RTE_LOG(WARNING, APP, "Unable to add in-port"
 			        " '%"PRIu32"', error '%d'\n", vportid, ret);
-			reply.error = ret;
-			ovdk_datapath_send_reply(&reply);
-			return ret;
 		} else {
 			RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as in-port"
 			        " '%"PRIu32"' on lcore_id '%d'\n",
 			        __func__, __LINE__, vport_name, vportid,
 			        rte_lcore_id());
 		}
-	}
-
-	if (flags & VPORT_FLAG_OUT_PORT) {
+	} else if (flags & VPORT_FLAG_OUT_PORT) {
 		ret = ovdk_pipeline_port_out_add(vportid);
 		if (ret) {
 			RTE_LOG(WARNING, APP, "Unable to add out-port"
 			        " '%"PRIu32"', error '%d'\n", vportid, ret);
-			reply.error = ret;
-			ovdk_datapath_send_reply(&reply);
-			return ret;
 		} else {
 			RTE_LOG(DEBUG, APP, "%s(%d): Added '%s' as out-port"
 			        " '%"PRIu32"' on lcore_id '%d'\n",
 			        __func__, __LINE__, vport_name, vportid,
 			        rte_lcore_id());
 		}
+	} else {
+		RTE_LOG(ERR, APP, "Unable to add port '%"PRIu32"', invalid"
+		        " flags in request received from daemon: '%"PRIu32"'\n",
+		        vportid, flags);
+		ret = EINVAL;
 	}
 
-	reply.error = 0;
+	reply.error = ret;
 	ovdk_datapath_send_reply(&reply);
 
-	return 0;
+	return ret;
 }
 
 /*
