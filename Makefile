@@ -56,7 +56,7 @@ export NUMPROC=$(shell cat /proc/cpuinfo | grep processor | wc -l)
 export ROOT_DIR := $(CURDIR)
 export DPDK_DIR := $(RTE_SDK)
 export DOC_DIR := $(ROOT_DIR)/docs
-export OVS_DIR := $(ROOT_DIR)/openvswitch
+export OVS_DIR := $(ROOT_DIR)/openvswitch_2-0
 export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
 #End Directories####################
