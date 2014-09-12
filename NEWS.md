@@ -6,6 +6,9 @@
   - Added Jumbo Frame Support
   - Re-added vEth support. This effectively re-adds OFTest support
   - Bug fixes
+- OVS
+  - Convert 'openvswitch' folder to a subtree
+  - Upgrade from 2.0.0 to 2.1.2
 
 # v1.1 - August 2014
 
