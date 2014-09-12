@@ -33,3 +33,12 @@ be printed instead of the OpenFlow message contents.
 The verbosity of the output may be increased by adding additional "-v"
 flags.  If "-vvv" is used, the raw OpenFlow data is also printed in
 hex and ASCII.
+
+dpi-dummy-plugin
+----------------
+DPI dummy plugin used to test the dpi library binding.
+
+    cd dpi-dummy-plugin
+    make
+then
+    ovs-vswitchd -c 0x10 --proc-type=secondary -- --pidfile -- third-party/dpi-dummy-plugin/dummy_dpi_engine.so

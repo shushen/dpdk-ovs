@@ -16,6 +16,7 @@ vswitchd_ovs_vswitchd_LDADD = \
 	lib/libsflow.a \
 	lib/libopenvswitch.a \
 	$(SSL_LIBS)
+vswitchd_ovs_vswitchd_LDADD += $(dpdk_libs)
 EXTRA_DIST += vswitchd/INTERNALS
 MAN_ROOTS += vswitchd/ovs-vswitchd.8.in
 

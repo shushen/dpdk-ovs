@@ -602,7 +602,7 @@ Default directories with "configure" option and environment variable override:
   user binaries: @bindir@ (--bindir, OVS_BINDIR)
   system binaries: @sbindir@ (--sbindir, OVS_SBINDIR)
 
-Please report bugs to bugs@openvswitch.org (see REPORTING-BUGS for details).
+Please report bugs to https://github.com/01org/dpdk-ovs/issues (see REPORTING-BUGS for details).
 EOF
 
     exit 0

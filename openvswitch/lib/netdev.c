@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -104,7 +105,16 @@ netdev_initialize(void)
         netdev_register_provider(&netdev_internal_class);
         netdev_register_provider(&netdev_tap_class);
         netdev_vport_tunnel_register();
+#elif DPDK_DATAPATH
+        netdev_register_provider(&netdev_dpdk_client_class);
+        netdev_register_provider(&netdev_dpdk_kni_class);
+        netdev_register_provider(&netdev_dpdk_phy_class);
+        netdev_register_provider(&netdev_dpdk_veth_class);
+        netdev_register_provider(&netdev_dpdk_vhost_class);
+        netdev_register_provider(&netdev_dpdk_memnic_class);
+        netdev_register_provider(&netdev_dpdk_internal_class);
 #endif
+
 #if defined(__FreeBSD__) || defined(__NetBSD__)
         netdev_register_provider(&netdev_tap_class);
         netdev_register_provider(&netdev_bsd_class);

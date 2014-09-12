@@ -17,7 +17,8 @@ Most files are licensed under the Apache License, Version 2.0:
     limitations under the License.
 
 Files under the datapath directory are licensed under the GNU General
-Public License, version 2.
+Public License, version 2, unless otherwise stated. Refer to each file for
+details.
 
 Files under the xenserver directory are licensed on a file-by-file
 basis.  Refer to each file for details.

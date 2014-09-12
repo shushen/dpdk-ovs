@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -363,6 +364,7 @@ struct dpif_class {
 
 extern const struct dpif_class dpif_linux_class;
 extern const struct dpif_class dpif_netdev_class;
+extern const struct dpif_class dpif_dpdk_class;
 
 #ifdef  __cplusplus
 }

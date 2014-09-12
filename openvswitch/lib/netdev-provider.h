@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -660,6 +661,13 @@ int netdev_unregister_provider(const char *type);
 extern const struct netdev_class netdev_linux_class;
 extern const struct netdev_class netdev_internal_class;
 extern const struct netdev_class netdev_tap_class;
+extern const struct netdev_class netdev_dpdk_client_class;
+extern const struct netdev_class netdev_dpdk_kni_class;
+extern const struct netdev_class netdev_dpdk_phy_class;
+extern const struct netdev_class netdev_dpdk_veth_class;
+extern const struct netdev_class netdev_dpdk_vhost_class;
+extern const struct netdev_class netdev_dpdk_memnic_class;
+extern const struct netdev_class netdev_dpdk_internal_class;
 #if defined(__FreeBSD__) || defined(__NetBSD__)
 extern const struct netdev_class netdev_bsd_class;
 #endif

@@ -100,21 +100,26 @@ dist_man_MANS += utilities/ovs-ctl.8
 
 utilities_ovs_appctl_SOURCES = utilities/ovs-appctl.c
 utilities_ovs_appctl_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+utilities_ovs_appctl_LDADD += $(dpdk_libs)
 
 utilities_ovs_controller_SOURCES = utilities/ovs-controller.c
 utilities_ovs_controller_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+utilities_ovs_controller_LDADD += $(dpdk_libs)
 
 utilities_ovs_dpctl_SOURCES = utilities/ovs-dpctl.c
 utilities_ovs_dpctl_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+utilities_ovs_dpctl_LDADD += $(dpdk_libs)
 
 utilities_ovs_ofctl_SOURCES = utilities/ovs-ofctl.c
 utilities_ovs_ofctl_LDADD = \
 	ofproto/libofproto.a \
 	lib/libopenvswitch.a \
 	$(SSL_LIBS)
+utilities_ovs_ofctl_LDADD += $(dpdk_libs)
 
 utilities_ovs_vsctl_SOURCES = utilities/ovs-vsctl.c
 utilities_ovs_vsctl_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+utilities_ovs_vsctl_LDADD += $(dpdk_libs)
 
 if LINUX_DATAPATH
 sbin_PROGRAMS += utilities/ovs-vlan-bug-workaround
@@ -131,3 +136,13 @@ utilities_ovs_benchmark_SOURCES = utilities/ovs-benchmark.c
 utilities_ovs_benchmark_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
 
 include utilities/bugtool/automake.mk
+
+# Build IVSHM manager.
+if HAVE_DPDK
+bin_PROGRAMS += utilities/ovs-ivshm-mngr
+utilities_ovs_ivshm_mngr_SOURCES = utilities/ovs-ivshm-mngr.c
+utilities_ovs_ivshm_mngr_SOURCES += datapath/dpdk/ovs-vport.c
+utilities_ovs_ivshm_mngr_CFLAGS = -iquote ./datapath/dpdk
+utilities_ovs_ivshm_mngr_CFLAGS += $(AM_CFLAGS)
+utilities_ovs_ivshm_mngr_LDADD = $(dpdk_libs)
+endif

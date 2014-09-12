@@ -66,5 +66,6 @@ report, plus any other information needed to reproduce the problem.
 Contact 
 -------
 
-bugs@openvswitch.org
+https://github.com/01org/dpdk-ovs/issues
+https://01.org/packet-processing
 http://openvswitch.org/

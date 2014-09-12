@@ -229,6 +229,12 @@ lib_libopenvswitch_a_SOURCES = \
 	lib/vswitch-idl.c \
 	lib/vswitch-idl.h
 
+if HAVE_DPI
+lib_libopenvswitch_a_SOURCES += \
+	lib/dpi.h \
+	lib/dpi.c
+endif
+
 nodist_lib_libopenvswitch_a_SOURCES = \
 	lib/dirs.c
 CLEANFILES += $(nodist_lib_libopenvswitch_a_SOURCES)
@@ -266,6 +272,19 @@ lib_libopenvswitch_a_SOURCES += \
 	lib/route-table.h
 endif
 
+if DPDK_DATAPATH  # can't do 'elif'
+lib_libopenvswitch_a_SOURCES += \
+	lib/netlink-notifier.c \
+	lib/netlink-notifier.h \
+	lib/netlink-protocol.h \
+	lib/netlink-socket.c \
+	lib/netlink-socket.h \
+	lib/rtnetlink-link.c \
+	lib/rtnetlink-link.h \
+	lib/route-table.c \
+	lib/route-table.h
+endif
+
 if HAVE_POSIX_AIO
 lib_libopenvswitch_a_SOURCES += lib/async-append-aio.c
 else
@@ -275,6 +294,18 @@ endif
 if ESX
 lib_libopenvswitch_a_SOURCES += \
         lib/route-table-stub.c
+endif
+
+if HAVE_DPDK
+lib_libopenvswitch_a_SOURCES += \
+	lib/dpdk-link.c \
+	lib/dpif-dpdk.c \
+	lib/dpif-dpdk.h \
+	lib/dpif-dpdk-vport-table.c \
+	lib/dpif-dpdk-vport-table.h \
+	lib/dpif-dpdk-flow-table.c \
+	lib/dpif-dpdk-flow-table.h \
+	lib/netdev-dpdk.c
 endif
 
 if HAVE_IF_DL

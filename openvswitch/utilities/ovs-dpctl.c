@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright 2012-2014 Intel Corporation All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,9 +72,19 @@ static const struct command *get_all_commands(void);
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
 
+extern int rte_eal_init(int argc, char **argv);
+
 int
 main(int argc, char *argv[])
 {
+    int retval = 0;
+
+    if ((retval = rte_eal_init(argc, argv)) < 0) {
+        return EXIT_FAILURE;
+    }
+
+    argc -= retval;
+    argv += retval;
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);
@@ -858,7 +869,7 @@ dpctl_del_flow(int argc, char *argv[])
     ofpbuf_init(&mask, 0);
     run(odp_flow_from_string(key_s, NULL, &key, &mask), "parsing flow key");
 
-    dp_name = argc == 2 ? xstrdup(argv[1]) : get_one_dp();
+    dp_name = argc == 3 ? xstrdup(argv[1]) : get_one_dp();
     run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
     free(dp_name);
 

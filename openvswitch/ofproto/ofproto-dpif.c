@@ -189,7 +189,7 @@ struct subfacet {
 };
 
 #define SUBFACET_DESTROY_MAX_BATCH 50
-
+#define KERNEL_FLOW_TABLE_TIMEOUT 30000
 static struct subfacet *subfacet_create(struct facet *, struct flow_miss *);
 static struct subfacet *subfacet_find(struct dpif_backer *,
                                       const struct nlattr *key, size_t key_len,
@@ -1661,10 +1661,10 @@ get_features(struct ofproto *ofproto_ OVS_UNUSED,
                 OFPUTIL_A_SET_DL_DST |
                 OFPUTIL_A_SET_NW_SRC |
                 OFPUTIL_A_SET_NW_DST |
-                OFPUTIL_A_SET_NW_TOS |
+                /* OFPUTIL_A_SET_NW_TOS | Action not yet supported */
                 OFPUTIL_A_SET_TP_SRC |
-                OFPUTIL_A_SET_TP_DST |
-                OFPUTIL_A_ENQUEUE);
+                OFPUTIL_A_SET_TP_DST);
+                /* OFPUTIL_A_ENQUEUE); Action not yet supported */
 }
 
 static void
@@ -3282,6 +3282,12 @@ handle_flow_miss_with_facet(struct flow_miss *miss, struct facet *facet,
         return;
     }
 
+    /* DPI: do not install the flow in the datapath*/
+    if (miss->upcall_type == DPIF_UC_MISS
+        && miss->put_or_skip) {
+        return;
+    }
+
     subfacet = subfacet_create(facet, miss);
     if (subfacet->path != want_path) {
         struct flow_miss_op *op = &ops[(*n_ops)++];
@@ -3787,7 +3793,7 @@ subfacet_max_idle(const struct dpif_backer *backer)
      * uninstallable subfacets.
      */
     enum { BUCKET_WIDTH = ROUND_UP(100, TIME_UPDATE_INTERVAL) };
-    enum { N_BUCKETS = 5000 / BUCKET_WIDTH };
+    enum { N_BUCKETS = KERNEL_FLOW_TABLE_TIMEOUT / BUCKET_WIDTH };
     int buckets[N_BUCKETS] = { 0 };
     int total, subtotal, bucket;
     struct subfacet *subfacet;

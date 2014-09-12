@@ -309,4 +309,4 @@ configured, so for security you should use only "ssl:" connections.
 Reporting Bugs
 --------------
 
-Please report problems to bugs@openvswitch.org.
+Please report problems at https://github.com/01org/dpdk-ovs/issues.

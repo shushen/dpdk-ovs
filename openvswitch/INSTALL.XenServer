@@ -180,4 +180,4 @@ command in the ovs-ctl(8) manpage).
 Reporting Bugs
 --------------
 
-Please report problems to bugs@openvswitch.org.
+Please report problems at https://github.com/01org/dpdk-ovs/issues.

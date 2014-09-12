@@ -523,3 +523,31 @@ dnl OVS_CHECK_POSIX_AIO
 AC_DEFUN([OVS_CHECK_POSIX_AIO],
   [AC_SEARCH_LIBS([aio_write], [rt])
    AM_CONDITIONAL([HAVE_POSIX_AIO], [test "$ac_cv_search_aio_write" != no])])
+
+dnl Checks for '--with-nodpdk' and defines DPDK_ENABLE if it is *not* specified.
+AC_DEFUN([OVS_CHECK_DPDK],
+  [AC_ARG_VAR([RTE_SDK], [Top level DPDK directory])
+   AC_ARG_WITH([nodpdk],
+               [AS_HELP_STRING([--with-nodpdk],[Disable DPDK Support])],
+               [HAVE_DPDK=no],
+               [HAVE_DPDK=yes])
+   AM_CONDITIONAL([HAVE_DPDK], [test "$HAVE_DPDK" = yes])
+   if test "$HAVE_DPDK" = yes; then
+      AC_DEFINE([HAVE_DPDK], [1],
+                [Define to 1 if DPDK is available])
+   fi
+   if test "${RTE_SDK+set}" != set; then
+      AC_MSG_ERROR([Please set RTE_SDK.])
+   fi])
+
+dnl Checks for '--with-nodpi'.
+AC_DEFUN([OVS_CHECK_DPI],
+   [AC_ARG_WITH([nodpi],
+               [AS_HELP_STRING([--with-nodpi],[Disable DPI Support])],
+               [HAVE_DPI=no],
+               [HAVE_DPI=yes])
+   AM_CONDITIONAL([HAVE_DPI], [test "$HAVE_DPI" = yes])
+   if test "$HAVE_DPI" = yes; then
+      AC_DEFINE([HAVE_DPI], [1],
+                [Define to 1 if DPI is enabled.])
+   fi])

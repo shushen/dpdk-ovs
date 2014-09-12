@@ -1,4 +1,5 @@
 # Copyright (C) 2007, 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+# Copyright (C) 2013-2014 Intel Corporation.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -7,12 +8,29 @@
 
 AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = datapath
+SUBDIRS = datapath datapath/dpdk/fd_link
+
+if HAVE_DPDK
+OVS_DIR = $(abs_top_srcdir)
+export OVS_DIR
+export RTE_SDK
+
+dpdk_dir=$(RTE_SDK)
+dpdk_lib_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/lib
+dpdk_inc_dir=$(dpdk_dir)/x86_64-ivshmem-linuxapp-gcc/include
+
+dpdk_libs=\
+	$(dpdk_lib_dir)/libintel_dpdk.a
+
+endif
 
 AM_CPPFLAGS = $(SSL_CFLAGS)
 AM_CPPFLAGS += -I $(top_srcdir)/include
 AM_CPPFLAGS += -I $(top_srcdir)/lib
 AM_CPPFLAGS += -I $(top_builddir)/lib
+if HAVE_DPDK
+AM_CPPFLAGS += -I $(dpdk_inc_dir)
+endif
 
 AM_CFLAGS = -Wstrict-prototypes
 AM_CFLAGS += $(WARNING_FLAGS)
@@ -20,6 +38,14 @@ AM_CFLAGS += $(WARNING_FLAGS)
 if NDEBUG
 AM_CPPFLAGS += -DNDEBUG
 AM_CFLAGS += -fomit-frame-pointer
+else
+AM_LDFLAGS = -export-dynamic -lpthread
+endif
+
+# Disable GCC flag that produces compilation warnings in DPDK
+if HAVE_DPDK
+AM_CFLAGS += -Wno-bad-function-cast
+AM_CFLAGS += -msse4.2
 endif
 
 # PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo
@@ -274,3 +300,6 @@ include xenserver/automake.mk
 include python/automake.mk
 include python/compat/automake.mk
 include tutorial/automake.mk
+if HAVE_DPDK
+include datapath/dpdk/automake.mk
+endif

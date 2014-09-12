@@ -1,0 +1,51 @@
+#
+# Wrapper macro for groups of dpif-dpdk tests
+#
+# Accepts two parameters: a test group name ($1) and a list of test names to
+# run against the executable ($2).
+#
+m4_define([TEST_DPIF_DPDK],
+  [AT_BANNER([dpif-dpdk -- dpif-dpdk -- $1])
+   m4_foreach(
+     [testname],
+     [$2],
+     [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
+      AT_KEYWORDS(dpdk dpif-dpdk)
+      AT_SKIP_IF([test "$HAVE_DPDK" = no])
+      AT_CHECK([sudo -E $srcdir/test-dpif-dpdk -c 1 -n 4 --no-huge -- testname], [0], [ignore], [ignore])
+      AT_CLEANUP])])
+
+#
+# Tests
+#
+TEST_DPIF_DPDK([port tests], [
+    port-add,
+    port-del,
+    get-stats,
+    port-query-by-number,
+    port-query-by-name,
+    get-max-ports,
+    port-dump-start,
+    port-dump-next,
+    port-dump-done,
+    port-poll,
+    port-poll-wait,
+    port-get-stats,
+    recv,
+    execute])
+
+TEST_DPIF_DPDK([flow tests], [
+    flow-put,
+    flow-del,
+    flow-del-null-key,
+    flow-del-null-dpif-flow-del,
+    flow-del-flow-entry-not-found,
+    flow-get,
+    flow-get-null-key,
+    flow-get-flow-entry-not-found,
+    flow-dump-start,
+    flow-dump-next,
+    flow-dump-next-null-state,
+    flow-dump-done,
+    flow-dump-done-null-state,
+    flow-flush])

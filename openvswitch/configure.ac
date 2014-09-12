@@ -13,13 +13,14 @@
 # limitations under the License.
 
 AC_PREREQ(2.64)
-AC_INIT(openvswitch, 2.0.0, ovs-bugs@openvswitch.org)
+AC_INIT(openvswitch, 2.0.0, https://github.com/01org/dpdk-ovs/issues)
 AC_CONFIG_SRCDIR([datapath/datapath.c])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_TESTDIR([tests])
 AM_INIT_AUTOMAKE
+AM_SILENT_RULES([yes])
 
 AC_PROG_CC
 AM_PROG_CC_C_O
@@ -44,6 +45,7 @@ AC_SYS_LARGEFILE
 AC_SEARCH_LIBS([pow], [m])
 AC_SEARCH_LIBS([clock_gettime], [rt])
 AC_SEARCH_LIBS([timer_create], [rt])
+AC_SEARCH_LIBS([dlopen], [dl])
 AC_SEARCH_LIBS([pthread_sigmask], [pthread])
 AC_FUNC_STRERROR_R
 
@@ -79,6 +81,10 @@ OVS_CHECK_SOCKET_LIBS
 OVS_CHECK_LINKER_SECTIONS
 OVS_CHECK_XENSERVER_VERSION
 OVS_CHECK_GROFF
+OVS_CHECK_DPDK
+AC_SUBST([RTE_SDK])
+OVS_CHECK_DPI
+AM_CONDITIONAL([RTE_SDK_SET], [test ! -z "$RTE_SDK"])
 OVS_CHECK_GNU_MAKE
 OVS_CHECK_CACHE_TIME
 OVS_CHECK_TLS
@@ -115,8 +121,8 @@ AC_ARG_VAR(KARCH, [Kernel Architecture String])
 AC_SUBST(KARCH)
 OVS_CHECK_LINUX
 
-AC_CONFIG_FILES([Makefile 
-datapath/Makefile 
+AC_CONFIG_FILES([Makefile
+datapath/Makefile
 datapath/linux/Kbuild
 datapath/linux/Makefile
 datapath/linux/Makefile.main
@@ -128,9 +134,14 @@ AC_CONFIG_COMMANDS([include/openflow/openflow.h.stamp])
 AC_CONFIG_COMMANDS([ovsdb/ovsdbmonitor/dummy], [:])
 AC_CONFIG_COMMANDS([utilities/bugtool/dummy], [:])
 
-AM_CONDITIONAL([LINUX_DATAPATH], [test "$HAVE_NETLINK" = yes && test "$ESX" = no])
-if test "$HAVE_NETLINK" = yes && test "$ESX" = no; then
+AM_CONDITIONAL([LINUX_DATAPATH], [test "$HAVE_NETLINK" = yes && test "$ESX" = no && test "$HAVE_DPDK" = no])
+if test "$HAVE_NETLINK" = yes && test "$ESX" = no && test "$HAVE_DPDK" = no; then
     AC_DEFINE([LINUX_DATAPATH], [1], [System uses the linux datapath module.])
+fi
+
+AM_CONDITIONAL([DPDK_DATAPATH], [test "$HAVE_DPDK" = yes])
+if test "$HAVE_DPDK" = yes; then
+    AC_DEFINE([DPDK_DATAPATH], [1], [System uses the dpdk datapath module.])
 fi
 
 AC_OUTPUT

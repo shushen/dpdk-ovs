@@ -6,6 +6,7 @@
 # without warranty of any kind.
 
 noinst_LIBRARIES += ofproto/libofproto.a
+noinst_LIBRARIES += $(dpdk_lib)
 ofproto_libofproto_a_SOURCES = \
 	ofproto/collectors.c \
 	ofproto/collectors.h \

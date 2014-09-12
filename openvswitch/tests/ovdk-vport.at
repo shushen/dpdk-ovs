@@ -1,0 +1,70 @@
+#
+# Wrapper macro for groups of ovdk-vport tests
+#
+# Accepts two parameters: a test group name ($1) and a list of test names to
+# run against the executable ($2).
+#
+m4_define([TEST_OVDK_VPORT],
+  [AT_BANNER([ovdk-vport -- ovdk-vport -- $1])
+  m4_foreach(
+    [testname],
+    [$2],
+    [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
+     AT_KEYWORDS(dpdk ovdk-vport)
+     AT_SKIP_IF([test "$HAVE_DPDK" = no])
+     AT_CHECK([sudo -E $srcdir/test-ovdk-vport -c 1 -n 4 -- testname], [0], [ignore], [])
+     AT_CLEANUP])])
+#
+# Tests
+#
+
+TEST_OVDK_VPORT([get-in-portid], [
+    get-in-portid-default,
+    get-in-portid-invalid-vportid,
+    get-in-portid-null-portid])
+
+TEST_OVDK_VPORT([set-in-portid], [
+    set-in-portid-default,
+    set-in-portid-invalid-vportid])
+
+TEST_OVDK_VPORT([get-out-portid], [
+    get-out-portid-default,
+    get-out-portid-invalid-vportid,
+    get-out-portid-null-portid])
+
+TEST_OVDK_VPORT([set-out-portid], [
+    set-out-portid-default,
+    set-out-portid-invalid-vportid])
+
+TEST_OVDK_VPORT([get-vportid], [
+    get-vportid-default,
+    get-vportid-invalid-port-in-id,
+    get-vportid-null-vportid])
+
+TEST_OVDK_VPORT([get-in-params], [
+    get-in-params-default,
+    get-in-params-invalid-vportid,
+    get-in-params-null-params])
+
+TEST_OVDK_VPORT([get-out-params], [
+    get-out-params-default,
+    get-out-params-invalid-vportid,
+    get-out-params-null-params])
+
+TEST_OVDK_VPORT([get-port-name], [
+    get-port-name-default,
+    get-port-name-invalid-vportid,
+    get-port-name-null-portname])
+
+TEST_OVDK_VPORT([set-port-name], [
+    set-port-name-default,
+    set-port-name-invalid-vportid,
+    set-port-name-null-portname])
+
+TEST_OVDK_VPORT([vhost-up], [
+    vhost-up-default,
+    vhost-up-no-such-device])
+
+TEST_OVDK_VPORT([vhost-down], [
+    vhost-down-default,
+    vhost-down-no-such-device])
