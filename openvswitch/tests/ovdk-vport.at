@@ -12,7 +12,7 @@ m4_define([TEST_OVDK_VPORT],
     [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
      AT_KEYWORDS(dpdk ovdk-vport)
      AT_SKIP_IF([test "$HAVE_DPDK" = no])
-     AT_CHECK([sudo $srcdir/test-ovdk-vport -c 1 -n 4 -- testname], [0], [ignore], [])
+     AT_CHECK([sudo -E $srcdir/test-ovdk-vport -c 1 -n 4 -- testname], [0], [ignore], [])
      AT_CLEANUP])])
 #
 # Tests
