@@ -10,7 +10,7 @@ m4_define([TEST_DPIF_DPDK_VPORT_TABLE],
      [testname],
      [$2],
      [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
-      AT_KEYWORDS(dpdk dpif-dpdk dpif-datapath-vport-table)
+      AT_KEYWORDS(dpdk dpif-dpdk dpif-dpdk-vport-table)
       AT_SKIP_IF([test "$HAVE_DPDK" = no])
       AT_CHECK([$srcdir/test-dpif-dpdk-vport-table testname], [0], [ignore], [])
       AT_CLEANUP])])
