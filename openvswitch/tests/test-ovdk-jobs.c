@@ -206,11 +206,11 @@ test_jobs_launch_slave(int argc, char *argv[])
 }
 
 static const struct command commands[] = {
-	{"ovdk_jobs_init", 0, 0, test_jobs_init},
-	{"ovdk_jobs_add_to_lcore", 0, 0, test_jobs_add_to_lcore},
-	{"ovdk_jobs_clear_lcore", 0, 0, test_jobs_clear_lcore},
-	{"ovdk_jobs_launch_master", 0, 0, test_jobs_launch_master},
-	{"ovdk_jobs_launch_slave", 0, 0, test_jobs_launch_slave},
+	{"init", 0, 0, test_jobs_init},
+	{"add-to-lcore", 0, 0, test_jobs_add_to_lcore},
+	{"clear-lcore", 0, 0, test_jobs_clear_lcore},
+	{"launch-master", 0, 0, test_jobs_launch_master},
+	{"launch-slave", 0, 0, test_jobs_launch_slave},
 	{NULL, 0, 0, NULL},
 };
 
