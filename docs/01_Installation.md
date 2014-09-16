@@ -11,8 +11,12 @@ To compile Intel® DPDK vSwitch for stock Fedora 18/20, you will need the follow
 * `kernel-modules-extra-$(uname -r)`
 * `autoconf`
 * `automake`
+* `libtool`
 * `fuse-devel`
 * `pixman-devel`
+* `zlib-devel`
+* `glibc.i686`
+* `glib2-devel`
 * `pciutils` (for Intel DPDK's `dpdk_nic_bind.py` script)
 * `rsvg-convert` (to update PNGs generated from SVGs in `docs`)
 
@@ -21,10 +25,7 @@ In addition, one or more of the following packages may be required:
 * `make`
 * Additional GNU Autotools, i.e. `autom4te`
 * `patch`
-* `zlib-devel`
-* `libtool`
 * `glib-devel`
-* `glib2-devel`
 * `expect`
 * `fuse`
 * `openssl`
