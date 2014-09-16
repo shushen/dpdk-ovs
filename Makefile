@@ -56,7 +56,7 @@ export NUMPROC=$(shell cat /proc/cpuinfo | grep processor | wc -l)
 export ROOT_DIR := $(CURDIR)
 export DPDK_DIR := $(RTE_SDK)
 export DOC_DIR := $(ROOT_DIR)/docs
-export OVS_DIR := $(ROOT_DIR)/openvswitch_2-0
+export OVS_DIR := $(ROOT_DIR)/openvswitch
 export QEMU_DIR := $(ROOT_DIR)/qemu
 export IVSHM_DIR := $(ROOT_DIR)/guest/ovs_client
 #End Directories####################
@@ -128,7 +128,7 @@ check-ovs:
 .PHONY: dpdk ivshm ovs qemu docs
 
 dpdk: config-dpdk
-	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) CONFIG_RTE_BUILD_COMBINE_LIBS=y install T=$(RTE_TARGET) && cd $(ROOT_DIR)
+	cd $(DPDK_DIR) && CC=$(CC) EXTRA_CFLAGS=-fPIC $(MAKE) -j $(NUMPROC) CONFIG_RTE_BUILD_COMBINE_LIBS=y CONFIG_RTE_BUILD_SHARED_LIB=y install T=$(RTE_TARGET) && cd $(ROOT_DIR)
 
 ovs:
 	cd $(OVS_DIR) && $(MAKE) && cd $(ROOT_DIR)
