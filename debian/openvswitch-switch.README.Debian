@@ -1,15 +1,44 @@
 README.Debian for openvswitch-switch
 ---------------------------------
 
-* To use the Linux kernel-based switch implementation, you will need
-  to build and install the Open vSwitch kernel module.  To do so, install
-  the openvswitch-datapath-source package, then follow the instructions
-  given in /usr/share/doc/openvswitch-datapath-source/README.Debian
+To use the Linux kernel-based switch implementation, you will need an
+Open vSwitch kernel module.  There are multiple ways to obtain one.
+In order of increasing manual effort, these are:
 
-* This package does not yet support the userspace datapath-based
-  switch implementation.
+       * Use a Linux kernel 3.3 or later, which has an integrated Open
+	 vSwitch kernel module.
 
- -- Ben Pfaff <blp@nicira.com>, Fri,  6 Jul 2012 15:12:38 -0700
+	 The upstream Linux kernel module lacks a few features that
+	 are in the third-party module.  For details, please see the
+	 FAQ, "What features are not available in the Open vSwitch
+	 kernel datapath that ships as part of the upstream Linux
+	 kernel?".
+
+       * Install the "openvswitch-datapath-dkms" Debian package that
+	 you built earlier.  This should automatically build and
+	 install the Open vSwitch kernel module for your running
+	 kernel.
+
+	 This option requires that you have a compiler and toolchain
+	 installed on the machine where you run Open vSwitch, which
+	 may be unacceptable in some production server environments.
+
+       * Install the "openvswitch-datapath-source" Debian package, use
+	 "module-assistant" to build a Debian package of the Open
+	 vSwitch kernel module for your kernel, and then install that
+	 Debian package.
+
+	 You can install the kernel module Debian packages that you
+	 build this way on the same machine where you built it or on
+	 another machine or machines, which means that you don't
+	 necessarily have to have any build infrastructure on the
+	 machines where you use the kernel module.
+
+	 /usr/share/doc/openvswitch-datapath-source/README.Debian has
+	 details on the build process.
+
+       * Build and install the kernel module by hand.
+
 
 Debian network scripts integration
 ----------------------------------
@@ -27,9 +56,9 @@ allow-br0 eth0
 
 The following OVS specific "command" options are supported:
 
-    - ovs_type: This can either be OVSBridge, OVSPort, OVSIntPort or OVSBond
-      depending on whether you configure a bridge, port, an internal port or
-      a bond. This is a required option.
+    - ovs_type: This can either be OVSBridge, OVSPort, OVSIntPort, OVSBond or
+      OVSTunnel depending on whether you configure a bridge, port, an internal
+      port, a bond or a tunnel. This is a required option.
 
     - ovs_ports: This option specifies all the ports that belong to a bridge.
 
@@ -38,6 +67,12 @@ The following OVS specific "command" options are supported:
 
     - ovs_bonds: This option specifies the list of physical interfaces to be
       bonded together.
+
+    - ovs_tunnel_type: For "OVSTunnel" interfaces, the type of the tunnel.
+      For example, "gre", "vxlan", etc.
+
+    - ovs_tunnel_options: For "OVSTunnel" interfaces, this field should be
+      used to specify the tunnel options like remote_ip, key, etc.
 
     - ovs_options: This option lets you add extra arguments to a ovs-vsctl
       command. See examples.
@@ -121,9 +156,23 @@ iface bond0 inet manual
     ovs_bonds eth2 eth3
     ovs_options bond_mode=balance-tcp lacp=active
 
-ex 6: Create and destroy bridges.
+ex 6: Tunnel.
+
+allow-ovs br1
+iface br1 inet static
+    address 192.168.1.1
+    netmask 255.255.255.0
+    ovs_type OVSBridge
+    ovs_ports gre1
+
+allow-br1 gre1
+iface gre1 inet manual
+    ovs_bridge br1
+    ovs_type OVSTunnel
+    ovs_tunnel_type gre
+    ovs_tunnel_options options:remote_ip=182.168.1.2 options:key=1
+
+ex 7: Create and destroy bridges.
 
 ifup --allow=ovs $list_of_bridges
 ifdown --allow=ovs $list_of_bridges
-
--- Gurucharan Shetty <gshetty@nicira.com>, Fri, 04 May 2012 12:58:19 -0700

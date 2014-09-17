@@ -20,9 +20,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "classifier.h"
 #include "compiler.h"
 #include "flow.h"
+#include "list.h"
 #include "match.h"
 #include "netdev.h"
 #include "openflow/nicira-ext.h"
@@ -30,18 +30,26 @@
 #include "type-props.h"
 
 struct ofpbuf;
+union ofp_action;
+struct ofpact_set_field;
 
 /* Port numbers. */
 enum ofperr ofputil_port_from_ofp11(ovs_be32 ofp11_port,
                                     ofp_port_t *ofp10_port);
 ovs_be32 ofputil_port_to_ofp11(ofp_port_t ofp10_port);
 
-enum ofperr ofputil_check_output_port(ofp_port_t ofp_port,
-                                      ofp_port_t max_ports);
 bool ofputil_port_from_string(const char *, ofp_port_t *portp);
 void ofputil_format_port(ofp_port_t port, struct ds *);
 void ofputil_port_to_string(ofp_port_t, char namebuf[OFP_MAX_PORT_NAME_LEN],
                             size_t bufsize);
+
+/* Group numbers. */
+enum { MAX_GROUP_NAME_LEN = INT_STRLEN(uint32_t) };
+bool ofputil_group_from_string(const char *, uint32_t *group_id);
+void ofputil_format_group(uint32_t group_id, struct ds *);
+void ofputil_group_to_string(uint32_t group_id,
+                             char namebuf[MAX_GROUP_NAME_LEN + 1],
+                             size_t bufsize);
 
 /* Converting OFPFW10_NW_SRC_MASK and OFPFW10_NW_DST_MASK wildcard bit counts
  * to and from IP bitmasks. */
@@ -80,6 +88,7 @@ enum ofputil_protocol {
     OFPUTIL_P_OF10_NXM_TID = 1 << 3,
 #define OFPUTIL_P_OF10_STD_ANY (OFPUTIL_P_OF10_STD | OFPUTIL_P_OF10_STD_TID)
 #define OFPUTIL_P_OF10_NXM_ANY (OFPUTIL_P_OF10_NXM | OFPUTIL_P_OF10_NXM_TID)
+#define OFPUTIL_P_OF10_ANY (OFPUTIL_P_OF10_STD_ANY | OFPUTIL_P_OF10_NXM_ANY)
 
     /* OpenFlow 1.1 protocol.
      *
@@ -219,12 +228,20 @@ struct ofpbuf *ofputil_make_flow_mod_table_id(bool flow_mod_table_id);
 
 /* Protocol-independent flow_mod flags. */
 enum ofputil_flow_mod_flags {
+    /* Flags that are maintained with a flow as part of its state.
+     *
+     * (OFPUTIL_FF_EMERG would be here too, if OVS supported it.) */
     OFPUTIL_FF_SEND_FLOW_REM = 1 << 0, /* All versions. */
-    OFPUTIL_FF_CHECK_OVERLAP = 1 << 1, /* All versions. */
-    OFPUTIL_FF_EMERG         = 1 << 2, /* OpenFlow 1.0 only. */
-    OFPUTIL_FF_RESET_COUNTS  = 1 << 3, /* OpenFlow 1.2+. */
-    OFPUTIL_FF_NO_PKT_COUNTS = 1 << 4, /* OpenFlow 1.3+. */
-    OFPUTIL_FF_NO_BYT_COUNTS = 1 << 5  /* OpenFlow 1.3+. */
+    OFPUTIL_FF_NO_PKT_COUNTS = 1 << 1, /* OpenFlow 1.3+. */
+    OFPUTIL_FF_NO_BYT_COUNTS = 1 << 2, /* OpenFlow 1.3+. */
+#define OFPUTIL_FF_STATE (OFPUTIL_FF_SEND_FLOW_REM      \
+                          | OFPUTIL_FF_NO_PKT_COUNTS    \
+                          | OFPUTIL_FF_NO_BYT_COUNTS)
+
+    /* Flags that affect flow_mod behavior but are not part of flow state. */
+    OFPUTIL_FF_CHECK_OVERLAP = 1 << 3, /* All versions. */
+    OFPUTIL_FF_EMERG         = 1 << 4, /* OpenFlow 1.0 only. */
+    OFPUTIL_FF_RESET_COUNTS  = 1 << 5, /* OpenFlow 1.2+. */
 };
 
 /* Protocol-independent flow_mod.
@@ -268,6 +285,7 @@ struct ofputil_flow_mod {
     uint16_t hard_timeout;
     uint32_t buffer_id;
     ofp_port_t out_port;
+    uint32_t out_group;
     enum ofputil_flow_mod_flags flags;
     struct ofpact *ofpacts;     /* Series of "struct ofpact"s. */
     size_t ofpacts_len;         /* Length of ofpacts, in bytes. */
@@ -276,7 +294,9 @@ struct ofputil_flow_mod {
 enum ofperr ofputil_decode_flow_mod(struct ofputil_flow_mod *,
                                     const struct ofp_header *,
                                     enum ofputil_protocol,
-                                    struct ofpbuf *ofpacts);
+                                    struct ofpbuf *ofpacts,
+                                    ofp_port_t max_port,
+                                    uint8_t max_table);
 struct ofpbuf *ofputil_encode_flow_mod(const struct ofputil_flow_mod *,
                                        enum ofputil_protocol);
 
@@ -287,6 +307,7 @@ struct ofputil_flow_stats_request {
     ovs_be64 cookie;
     ovs_be64 cookie_mask;
     ofp_port_t out_port;
+    uint32_t out_group;
     uint8_t table_id;
 };
 
@@ -300,11 +321,11 @@ struct ofputil_flow_stats {
     struct match match;
     ovs_be64 cookie;
     uint8_t table_id;
-    uint32_t duration_sec;
-    uint32_t duration_nsec;
     uint16_t priority;
     uint16_t idle_timeout;
     uint16_t hard_timeout;
+    uint32_t duration_sec;
+    uint32_t duration_nsec;
     int idle_age;               /* Seconds since last packet, -1 if unknown. */
     int hard_age;               /* Seconds since last change, -1 if unknown. */
     uint64_t packet_count;      /* Packet count, UINT64_MAX if unknown. */
@@ -338,8 +359,8 @@ enum ofperr ofputil_decode_aggregate_stats_reply(
 /* Flow removed message, independent of protocol. */
 struct ofputil_flow_removed {
     struct match match;
-    uint16_t priority;
     ovs_be64 cookie;
+    uint16_t priority;
     uint8_t reason;             /* One of OFPRR_*. */
     uint8_t table_id;           /* 255 if message didn't include table ID. */
     uint32_t duration_sec;
@@ -357,21 +378,33 @@ struct ofpbuf *ofputil_encode_flow_removed(const struct ofputil_flow_removed *,
 
 /* Abstract packet-in message. */
 struct ofputil_packet_in {
-    struct list list_node; /* For queueing packet_ins. */
-
+    /* Packet data and metadata.
+     *
+     * To save bandwidth, in some cases a switch may send only the first
+     * several bytes of a packet, indicated by 'packet_len < total_len'.  When
+     * the full packet is included, 'packet_len == total_len'. */
     const void *packet;
-    size_t packet_len;
+    size_t packet_len;          /* Number of bytes in 'packet'. */
+    size_t total_len;           /* Size of packet, pre-truncation. */
+    struct flow_metadata fmd;
 
-    enum ofp_packet_in_reason reason;    /* One of OFPR_*. */
-    uint16_t controller_id;              /* Controller ID to send to. */
-    uint8_t table_id;
-    ovs_be64 cookie;
-
+    /* Identifies a buffer in the switch that contains the full packet, to
+     * allow the controller to reference it later without having to send the
+     * entire packet back to the switch.
+     *
+     * UINT32_MAX indicates that the packet is not buffered in the switch.  A
+     * switch should only use UINT32_MAX when it sends the entire packet. */
     uint32_t buffer_id;
-    int send_len;
-    uint16_t total_len;         /* Full length of frame. */
 
-    struct flow_metadata fmd;   /* Metadata at creation time. */
+    /* Reason that the packet-in is being sent. */
+    enum ofp_packet_in_reason reason;    /* One of OFPR_*. */
+
+    /* Information about the OpenFlow flow that triggered the packet-in.
+     *
+     * A packet-in triggered by a flow table miss has no associated flow.  In
+     * that case, 'cookie' is UINT64_MAX. */
+    uint8_t table_id;                    /* OpenFlow table ID. */
+    ovs_be64 cookie;                     /* Flow's cookie. */
 };
 
 enum ofperr ofputil_decode_packet_in(struct ofputil_packet_in *,
@@ -555,6 +588,17 @@ enum ofperr ofputil_decode_port_mod(const struct ofp_header *,
 struct ofpbuf *ofputil_encode_port_mod(const struct ofputil_port_mod *,
                                        enum ofputil_protocol);
 
+/* Abstract ofp_table_mod. */
+struct ofputil_table_mod {
+    uint8_t table_id;         /* ID of the table, 0xff indicates all tables. */
+    uint32_t config;
+};
+
+enum ofperr ofputil_decode_table_mod(const struct ofp_header *,
+                                    struct ofputil_table_mod *);
+struct ofpbuf *ofputil_encode_table_mod(const struct ofputil_table_mod *,
+                                       enum ofputil_protocol);
+
 /* Meter band configuration for all supported band types. */
 struct ofputil_meter_band {
     uint16_t type;
@@ -649,11 +693,23 @@ struct ofputil_role_request {
     uint64_t generation_id;
 };
 
+struct ofputil_role_status {
+    enum ofp12_controller_role role;
+    enum ofp14_controller_role_reason reason;
+    uint64_t generation_id;
+};
+
 enum ofperr ofputil_decode_role_message(const struct ofp_header *,
                                         struct ofputil_role_request *);
 struct ofpbuf *ofputil_encode_role_reply(const struct ofp_header *,
                                          const struct ofputil_role_request *);
 
+struct ofpbuf *ofputil_encode_role_status(
+                                const struct ofputil_role_status *status,
+                                enum ofputil_protocol protocol);
+
+enum ofperr ofputil_decode_role_status(const struct ofp_header *oh,
+                                       struct ofputil_role_status *rs);
 /* Abstract table stats.
  *
  * For now we use ofp12_table_stats as a superset of the other protocol
@@ -662,6 +718,34 @@ struct ofpbuf *ofputil_encode_role_reply(const struct ofp_header *,
 struct ofpbuf *ofputil_encode_table_stats_reply(
     const struct ofp12_table_stats[], int n,
     const struct ofp_header *request);
+
+/* Queue configuration request. */
+struct ofpbuf *ofputil_encode_queue_get_config_request(enum ofp_version,
+                                                       ofp_port_t port);
+enum ofperr ofputil_decode_queue_get_config_request(const struct ofp_header *,
+                                                    ofp_port_t *port);
+
+/* Queue configuration reply. */
+struct ofputil_queue_config {
+    uint32_t queue_id;
+
+    /* Each of these optional values is expressed in tenths of a percent.
+     * Values greater than 1000 indicate that the feature is disabled.
+     * UINT16_MAX indicates that the value is omitted. */
+    uint16_t min_rate;
+    uint16_t max_rate;
+};
+
+struct ofpbuf *ofputil_encode_queue_get_config_reply(
+    const struct ofp_header *request);
+void ofputil_append_queue_get_config_reply(
+    struct ofpbuf *reply, const struct ofputil_queue_config *);
+
+enum ofperr ofputil_decode_queue_get_config_reply(struct ofpbuf *reply,
+                                                  ofp_port_t *);
+int ofputil_pull_queue_get_config_reply(struct ofpbuf *reply,
+                                        struct ofputil_queue_config *);
+
 
 /* Abstract nx_flow_monitor_request. */
 struct ofputil_flow_monitor_request {
@@ -686,9 +770,9 @@ struct ofputil_flow_update {
     uint16_t idle_timeout;
     uint16_t hard_timeout;
     uint8_t table_id;
+    uint16_t priority;
     ovs_be64 cookie;
     struct match *match;
-    uint16_t priority;
     struct ofpact *ofpacts;
     size_t ofpacts_len;
 
@@ -778,6 +862,7 @@ enum {
 };
 
 int ofputil_action_code_from_name(const char *);
+const char * ofputil_action_name_from_code(enum ofputil_action_code code);
 
 void *ofputil_put_action(enum ofputil_action_code, struct ofpbuf *buf);
 
@@ -866,5 +951,100 @@ size_t ofputil_count_queue_stats(const struct ofp_header *);
 int ofputil_decode_queue_stats(struct ofputil_queue_stats *qs, struct ofpbuf *msg);
 void ofputil_append_queue_stat(struct list *replies,
                                const struct ofputil_queue_stats *oqs);
+
+/* Bucket for use in groups. */
+struct ofputil_bucket {
+    struct list list_node;
+    uint16_t weight;            /* Relative weight, for "select" groups. */
+    ofp_port_t watch_port;      /* Port whose state affects whether this bucket
+                                 * is live. Only required for fast failover
+                                 * groups. */
+    uint32_t watch_group;       /* Group whose state affects whether this
+                                 * bucket is live. Only required for fast
+                                 * failover groups. */
+    struct ofpact *ofpacts;     /* Series of "struct ofpact"s. */
+    size_t ofpacts_len;         /* Length of ofpacts, in bytes. */
+};
+
+/* Protocol-independent group_mod. */
+struct ofputil_group_mod {
+    uint16_t command;             /* One of OFPGC11_*. */
+    uint8_t type;                 /* One of OFPGT11_*. */
+    uint32_t group_id;            /* Group identifier. */
+    struct list buckets;          /* Contains "struct ofputil_bucket"s. */
+};
+
+struct bucket_counter {
+    uint64_t packet_count;   /* Number of packets processed by bucket. */
+    uint64_t byte_count;     /* Number of bytes processed by bucket. */
+};
+
+/* Group stats reply, independent of protocol. */
+struct ofputil_group_stats {
+    uint32_t group_id;    /* Group identifier. */
+    uint32_t ref_count;
+    uint64_t packet_count;      /* Packet count, UINT64_MAX if unknown. */
+    uint64_t byte_count;        /* Byte count, UINT64_MAX if unknown. */
+    uint32_t duration_sec;      /* UINT32_MAX if unknown. */
+    uint32_t duration_nsec;
+    uint32_t n_buckets;
+    struct bucket_counter *bucket_stats;
+};
+
+/* Group features reply, independent of protocol.
+ *
+ * Only OF1.2 and later support group features replies. */
+struct ofputil_group_features {
+    uint32_t  types;           /* Bitmap of OFPGT_* values supported. */
+    uint32_t  capabilities;    /* Bitmap of OFPGFC12_* capability supported. */
+    uint32_t  max_groups[4];   /* Maximum number of groups for each type. */
+
+    /* Bitmaps of OFPAT_* that are supported.  OF1.2+ actions only. */
+    uint32_t  actions[4];
+};
+
+/* Group desc reply, independent of protocol. */
+struct ofputil_group_desc {
+    uint8_t type;               /* One of OFPGT_*. */
+    uint32_t group_id;          /* Group identifier. */
+    struct list buckets;        /* Contains "struct ofputil_bucket"s. */
+};
+
+void ofputil_bucket_list_destroy(struct list *buckets);
+
+static inline bool
+ofputil_bucket_has_liveness(const struct ofputil_bucket *bucket)
+{
+    return (bucket->watch_port != OFPP_ANY ||
+            bucket->watch_group != OFPG_ANY);
+}
+
+struct ofpbuf *ofputil_encode_group_stats_request(enum ofp_version,
+                                                  uint32_t group_id);
+enum ofperr ofputil_decode_group_stats_request(
+    const struct ofp_header *request, uint32_t *group_id);
+void ofputil_append_group_stats(struct list *replies,
+                                const struct ofputil_group_stats *);
+struct ofpbuf *ofputil_encode_group_features_request(enum ofp_version);
+struct ofpbuf *ofputil_encode_group_features_reply(
+    const struct ofputil_group_features *, const struct ofp_header *request);
+void ofputil_decode_group_features_reply(const struct ofp_header *,
+                                         struct ofputil_group_features *);
+struct ofpbuf *ofputil_encode_group_mod(enum ofp_version ofp_version,
+                                        const struct ofputil_group_mod *gm);
+
+enum ofperr ofputil_decode_group_mod(const struct ofp_header *,
+                                     struct ofputil_group_mod *);
+
+int ofputil_decode_group_stats_reply(struct ofpbuf *,
+                                     struct ofputil_group_stats *);
+
+int ofputil_decode_group_desc_reply(struct ofputil_group_desc *,
+                                    struct ofpbuf *, enum ofp_version);
+
+void ofputil_append_group_desc_reply(const struct ofputil_group_desc *,
+                                     struct list *buckets,
+                                     struct list *replies);
+struct ofpbuf *ofputil_encode_group_desc_request(enum ofp_version);
 
 #endif /* ofp-util.h */

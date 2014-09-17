@@ -1,4 +1,4 @@
-# Copyright (C) 2007, 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+# Copyright (C) 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
@@ -22,15 +22,23 @@ AM_CPPFLAGS += -DNDEBUG
 AM_CFLAGS += -fomit-frame-pointer
 endif
 
+if WIN32
+psep=";"
+else
+psep=":"
+endif
 # PYTHONDONTWRITEBYTECODE=yes keeps Python from creating .pyc and .pyo
 # files.  Creating .py[co] works OK for any given version of Open
 # vSwitch, but it causes trouble if you switch from a version with
 # foo/__init__.py into an (older) version with plain foo.py, since
 # foo/__init__.pyc will cause Python to ignore foo.py.
-run_python = \
-	PYTHONDONTWRITEBYTECODE=yes \
-	PYTHONPATH=$(top_srcdir)/python:$$PYTHONPATH \
-	$(PYTHON)
+if INCLUDE_PYTHON_COMPAT
+run_python = PYTHONPATH=$(top_srcdir)/python$(psep)$(top_srcdir)/python/compat$(psep)$$PYTHONPATH
+else
+run_python = PYTHONPATH=$(top_srcdir)/python$(psep)$$PYTHONPATH
+endif
+run_python += PYTHONDONTWRITEBYTECODE=yes $(PYTHON)
+
 
 ALL_LOCAL =
 BUILT_SOURCES =
@@ -39,6 +47,7 @@ CLEAN_LOCAL =
 DISTCLEANFILES =
 PYCOV_CLEAN_FILES = build-aux/check-structs,cover
 EXTRA_DIST = \
+	BUILD.Windows \
 	CodingStyle \
 	DESIGN \
 	FAQ \
@@ -62,6 +71,7 @@ EXTRA_DIST = \
 	SubmittingPatches \
 	WHY-OVS \
 	boot.sh \
+	build-aux/cccl \
 	build-aux/sodepends.pl \
 	build-aux/soexpand.pl \
 	$(MAN_FRAGMENTS) \
@@ -83,7 +93,7 @@ MAN_FRAGMENTS =
 MAN_ROOTS =
 noinst_DATA =
 noinst_HEADERS =
-noinst_LIBRARIES =
+lib_LTLIBRARIES =
 noinst_man_MANS =
 noinst_PROGRAMS =
 noinst_SCRIPTS =
@@ -123,7 +133,6 @@ SUFFIXES += .in
                 -e 's,[@]bindir[@],$(bindir),g' \
                 -e 's,[@]sbindir[@],$(sbindir),g' \
                 -e 's,[@]abs_top_srcdir[@],$(abs_top_srcdir),g' \
-                -e 's,[@]ovsdbmonitordir[@],$(ovsdbmonitordir),g' \
             > $@.tmp
 	@if head -n 1 $@.tmp | grep '#!' > /dev/null; then \
 	    echo chmod +x $@.tmp; \
@@ -184,6 +193,19 @@ config-h-check:
 	    exit 1; \
 	fi
 .PHONY: config-h-check
+
+# Check for printf() type modifiers that MSVC doesn't support.
+ALL_LOCAL += printf-check
+printf-check:
+	@if test -e $(srcdir)/.git && (git --version) >/dev/null 2>&1 && \
+	   git --no-pager grep -n -E -e '%[-+ #0-9.*]*([ztj]|hh)' --and --not -e 'ovs_scan' `git ls-files $(srcdir) | grep '\.[ch]$$'`; \
+	then \
+	    echo "See above for list of violations of the rule that"; \
+	    echo "'z', 't', 'j', 'hh' printf() type modifiers are"; \
+	    echo "forbidden.  See CodingStyle for replacements."; \
+	    exit 1; \
+	fi
+.PHONY: printf-check
 
 # Check that certain data structures are always declared "static".
 ALL_LOCAL += static-check
@@ -260,6 +282,7 @@ if LINUX_ENABLED
 	cd datapath/linux && $(MAKE) modules_install
 endif
 
+include m4/automake.mk
 include lib/automake.mk
 include ofproto/automake.mk
 include utilities/automake.mk
@@ -274,3 +297,4 @@ include xenserver/automake.mk
 include python/automake.mk
 include python/compat/automake.mk
 include tutorial/automake.mk
+include vtep/automake.mk

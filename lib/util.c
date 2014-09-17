@@ -16,6 +16,7 @@
 
 #include <config.h>
 #include "util.h"
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -26,6 +27,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "bitmap.h"
 #include "byte-order.h"
 #include "coverage.h"
 #include "ovs-thread.h"
@@ -65,7 +67,7 @@ ovs_assert_failure(const char *where, const char *function,
     case 0:
         VLOG_ABORT("%s: assertion %s failed in %s()",
                    where, condition, function);
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case 1:
         fprintf(stderr, "%s: assertion %s failed in %s()",
@@ -399,14 +401,26 @@ get_subprogram_name(void)
     return name ? name : "";
 }
 
-/* Sets 'name' as the name of the currently running thread or process.  (This
- * appears in log messages and may also be visible in system process listings
- * and debuggers.) */
+/* Sets the formatted value of 'format' as the name of the currently running
+ * thread or process.  (This appears in log messages and may also be visible in
+ * system process listings and debuggers.) */
 void
-set_subprogram_name(const char *name)
+set_subprogram_name(const char *format, ...)
 {
-    const char *pname = name[0] ? name : program_name;
-    free(subprogram_name_set(xstrdup(name)));
+    char *pname;
+
+    if (format) {
+        va_list args;
+
+        va_start(args, format);
+        pname = xvasprintf(format, args);
+        va_end(args);
+    } else {
+        pname = xstrdup(program_name);
+    }
+
+    free(subprogram_name_set(pname));
+
 #if HAVE_GLIBC_PTHREAD_SETNAME_NP
     pthread_setname_np(pthread_self(), pname);
 #elif HAVE_NETBSD_PTHREAD_SETNAME_NP
@@ -459,11 +473,11 @@ ovs_hex_dump(FILE *stream, const void *buf_, size_t size,
       n = end - start;
 
       /* Print line. */
-      fprintf(stream, "%08jx  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
+      fprintf(stream, "%08"PRIxMAX"  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
       for (i = 0; i < start; i++)
         fprintf(stream, "   ");
       for (; i < end; i++)
-        fprintf(stream, "%02hhx%c",
+        fprintf(stream, "%02x%c",
                 buf[i - start], i == per_line / 2 - 1? '-' : ' ');
       if (ascii)
         {
@@ -521,24 +535,6 @@ str_to_llong(const char *s, int base, long long *x)
         errno = save_errno;
         return true;
     }
-}
-
-bool
-str_to_uint(const char *s, int base, unsigned int *u)
-{
-    return str_to_int(s, base, (int *) u);
-}
-
-bool
-str_to_ulong(const char *s, int base, unsigned long *ul)
-{
-    return str_to_long(s, base, (long *) ul);
-}
-
-bool
-str_to_ullong(const char *s, int base, unsigned long long *ull)
-{
-    return str_to_llong(s, base, (long long *) ull);
 }
 
 /* Converts floating-point string 's' into a double.  If successful, stores
@@ -834,57 +830,16 @@ english_list_delimiter(size_t index, size_t total)
             : " and ");
 }
 
-/* Given a 32 bit word 'n', calculates floor(log_2('n')).  This is equivalent
- * to finding the bit position of the most significant one bit in 'n'.  It is
- * an error to call this function with 'n' == 0. */
-int
-log_2_floor(uint32_t n)
-{
-    ovs_assert(n);
-
-#if !defined(UINT_MAX) || !defined(UINT32_MAX)
-#error "Someone screwed up the #includes."
-#elif __GNUC__ >= 4 && UINT_MAX == UINT32_MAX
-    return 31 - __builtin_clz(n);
-#else
-    {
-        int log = 0;
-
-#define BIN_SEARCH_STEP(BITS)                   \
-        if (n >= (1 << BITS)) {                 \
-            log += BITS;                        \
-            n >>= BITS;                         \
-        }
-        BIN_SEARCH_STEP(16);
-        BIN_SEARCH_STEP(8);
-        BIN_SEARCH_STEP(4);
-        BIN_SEARCH_STEP(2);
-        BIN_SEARCH_STEP(1);
-#undef BIN_SEARCH_STEP
-        return log;
-    }
-#endif
-}
-
-/* Given a 32 bit word 'n', calculates ceil(log_2('n')).  It is an error to
- * call this function with 'n' == 0. */
-int
-log_2_ceil(uint32_t n)
-{
-    return log_2_floor(n) + !is_pow2(n);
-}
-
 /* Returns the number of trailing 0-bits in 'n'.  Undefined if 'n' == 0. */
-#if !defined(UINT_MAX) || !defined(UINT32_MAX)
-#error "Someone screwed up the #includes."
-#elif __GNUC__ >= 4 && UINT_MAX == UINT32_MAX
+#if __GNUC__ >= 4
 /* Defined inline in util.h. */
 #else
-static int
-raw_ctz(uint32_t n)
+/* Returns the number of trailing 0-bits in 'n'.  Undefined if 'n' == 0. */
+int
+raw_ctz(uint64_t n)
 {
-    unsigned int k;
-    int count = 31;
+    uint64_t k;
+    int count = 63;
 
 #define CTZ_STEP(X)                             \
     k = n << (X);                               \
@@ -892,6 +847,7 @@ raw_ctz(uint32_t n)
         count -= X;                             \
         n = k;                                  \
     }
+    CTZ_STEP(32);
     CTZ_STEP(16);
     CTZ_STEP(8);
     CTZ_STEP(4);
@@ -901,16 +857,33 @@ raw_ctz(uint32_t n)
 
     return count;
 }
+
+/* Returns the number of leading 0-bits in 'n'.  Undefined if 'n' == 0. */
+int
+raw_clz64(uint64_t n)
+{
+    uint64_t k;
+    int count = 63;
+
+#define CLZ_STEP(X)                             \
+    k = n >> (X);                               \
+    if (k) {                                    \
+        count -= X;                             \
+        n = k;                                  \
+    }
+    CLZ_STEP(32);
+    CLZ_STEP(16);
+    CLZ_STEP(8);
+    CLZ_STEP(4);
+    CLZ_STEP(2);
+    CLZ_STEP(1);
+#undef CLZ_STEP
+
+    return count;
+}
 #endif
 
-/* Returns the number of 1-bits in 'x', between 0 and 32 inclusive. */
-unsigned int
-popcount(uint32_t x)
-{
-    /* In my testing, this implementation is over twice as fast as any other
-     * portable implementation that I tried, including GCC 4.4
-     * __builtin_popcount(), although nonportable asm("popcnt") was over 50%
-     * faster. */
+#if NEED_COUNT_1BITS_8
 #define INIT1(X)                                \
     ((((X) & (1 << 0)) != 0) +                  \
      (((X) & (1 << 1)) != 0) +                  \
@@ -927,15 +900,10 @@ popcount(uint32_t x)
 #define INIT32(X) INIT16(X), INIT16((X) + 16)
 #define INIT64(X) INIT32(X), INIT32((X) + 32)
 
-    static const uint8_t popcount8[256] = {
-        INIT64(0), INIT64(64), INIT64(128), INIT64(192)
-    };
-
-    return (popcount8[x & 0xff] +
-            popcount8[(x >> 8) & 0xff] +
-            popcount8[(x >> 16) & 0xff] +
-            popcount8[x >> 24]);
-}
+const uint8_t count_1bits_8[256] = {
+    INIT64(0), INIT64(64), INIT64(128), INIT64(192)
+};
+#endif
 
 /* Returns true if the 'n' bytes starting at 'p' are zeros. */
 bool
@@ -1233,3 +1201,444 @@ bitwise_get(const void *src, unsigned int src_len,
                  n_bits);
     return ntohll(value);
 }
+
+/* ovs_scan */
+
+struct scan_spec {
+    unsigned int width;
+    enum {
+        SCAN_DISCARD,
+        SCAN_CHAR,
+        SCAN_SHORT,
+        SCAN_INT,
+        SCAN_LONG,
+        SCAN_LLONG,
+        SCAN_INTMAX_T,
+        SCAN_PTRDIFF_T,
+        SCAN_SIZE_T
+    } type;
+};
+
+static const char *
+skip_spaces(const char *s)
+{
+    while (isspace((unsigned char) *s)) {
+        s++;
+    }
+    return s;
+}
+
+static const char *
+scan_int(const char *s, const struct scan_spec *spec, int base, va_list *args)
+{
+    const char *start = s;
+    uintmax_t value;
+    bool negative;
+    int n_digits;
+
+    negative = *s == '-';
+    s += *s == '-' || *s == '+';
+
+    if ((!base || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        base = 16;
+        s += 2;
+    } else if (!base) {
+        base = *s == '0' ? 8 : 10;
+    }
+
+    if (s - start >= spec->width) {
+        return NULL;
+    }
+
+    value = 0;
+    n_digits = 0;
+    while (s - start < spec->width) {
+        int digit = hexit_value(*s);
+
+        if (digit < 0 || digit >= base) {
+            break;
+        }
+        value = value * base + digit;
+        n_digits++;
+        s++;
+    }
+    if (!n_digits) {
+        return NULL;
+    }
+
+    if (negative) {
+        value = -value;
+    }
+
+    switch (spec->type) {
+    case SCAN_DISCARD:
+        break;
+    case SCAN_CHAR:
+        *va_arg(*args, char *) = value;
+        break;
+    case SCAN_SHORT:
+        *va_arg(*args, short int *) = value;
+        break;
+    case SCAN_INT:
+        *va_arg(*args, int *) = value;
+        break;
+    case SCAN_LONG:
+        *va_arg(*args, long int *) = value;
+        break;
+    case SCAN_LLONG:
+        *va_arg(*args, long long int *) = value;
+        break;
+    case SCAN_INTMAX_T:
+        *va_arg(*args, intmax_t *) = value;
+        break;
+    case SCAN_PTRDIFF_T:
+        *va_arg(*args, ptrdiff_t *) = value;
+        break;
+    case SCAN_SIZE_T:
+        *va_arg(*args, size_t *) = value;
+        break;
+    }
+    return s;
+}
+
+static const char *
+skip_digits(const char *s)
+{
+    while (*s >= '0' && *s <= '9') {
+        s++;
+    }
+    return s;
+}
+
+static const char *
+scan_float(const char *s, const struct scan_spec *spec, va_list *args)
+{
+    const char *start = s;
+    long double value;
+    char *tail;
+    char *copy;
+    bool ok;
+
+    s += *s == '+' || *s == '-';
+    s = skip_digits(s);
+    if (*s == '.') {
+        s = skip_digits(s + 1);
+    }
+    if (*s == 'e' || *s == 'E') {
+        s++;
+        s += *s == '+' || *s == '-';
+        s = skip_digits(s);
+    }
+
+    if (s - start > spec->width) {
+        s = start + spec->width;
+    }
+
+    copy = xmemdup0(start, s - start);
+    value = strtold(copy, &tail);
+    ok = *tail == '\0';
+    free(copy);
+    if (!ok) {
+        return NULL;
+    }
+
+    switch (spec->type) {
+    case SCAN_DISCARD:
+        break;
+    case SCAN_INT:
+        *va_arg(*args, float *) = value;
+        break;
+    case SCAN_LONG:
+        *va_arg(*args, double *) = value;
+        break;
+    case SCAN_LLONG:
+        *va_arg(*args, long double *) = value;
+        break;
+
+    case SCAN_CHAR:
+    case SCAN_SHORT:
+    case SCAN_INTMAX_T:
+    case SCAN_PTRDIFF_T:
+    case SCAN_SIZE_T:
+        OVS_NOT_REACHED();
+    }
+    return s;
+}
+
+static void
+scan_output_string(const struct scan_spec *spec,
+                   const char *s, size_t n,
+                   va_list *args)
+{
+    if (spec->type != SCAN_DISCARD) {
+        char *out = va_arg(*args, char *);
+        memcpy(out, s, n);
+        out[n] = '\0';
+    }
+}
+
+static const char *
+scan_string(const char *s, const struct scan_spec *spec, va_list *args)
+{
+    size_t n;
+
+    for (n = 0; n < spec->width; n++) {
+        if (!s[n] || isspace((unsigned char) s[n])) {
+            break;
+        }
+    }
+    if (!n) {
+        return NULL;
+    }
+
+    scan_output_string(spec, s, n, args);
+    return s + n;
+}
+
+static const char *
+parse_scanset(const char *p_, unsigned long *set, bool *complemented)
+{
+    const uint8_t *p = (const uint8_t *) p_;
+
+    *complemented = *p == '^';
+    p += *complemented;
+
+    if (*p == ']') {
+        bitmap_set1(set, ']');
+        p++;
+    }
+
+    while (*p && *p != ']') {
+        if (p[1] == '-' && p[2] != ']' && p[2] > *p) {
+            bitmap_set_multiple(set, *p, p[2] - *p + 1, true);
+            p += 3;
+        } else {
+            bitmap_set1(set, *p++);
+        }
+    }
+    if (*p == ']') {
+        p++;
+    }
+    return (const char *) p;
+}
+
+static const char *
+scan_set(const char *s, const struct scan_spec *spec, const char **pp,
+         va_list *args)
+{
+    unsigned long set[BITMAP_N_LONGS(UCHAR_MAX + 1)];
+    bool complemented;
+    unsigned int n;
+
+    /* Parse the scan set. */
+    memset(set, 0, sizeof set);
+    *pp = parse_scanset(*pp, set, &complemented);
+
+    /* Parse the data. */
+    n = 0;
+    while (s[n]
+           && bitmap_is_set(set, (unsigned char) s[n]) == !complemented
+           && n < spec->width) {
+        n++;
+    }
+    if (!n) {
+        return NULL;
+    }
+    scan_output_string(spec, s, n, args);
+    return s + n;
+}
+
+static const char *
+scan_chars(const char *s, const struct scan_spec *spec, va_list *args)
+{
+    unsigned int n = spec->width == UINT_MAX ? 1 : spec->width;
+
+    if (strlen(s) < n) {
+        return NULL;
+    }
+    if (spec->type != SCAN_DISCARD) {
+        memcpy(va_arg(*args, char *), s, n);
+    }
+    return s + n;
+}
+
+/* This is an implementation of the standard sscanf() function, with the
+ * following exceptions:
+ *
+ *   - It returns true if the entire format was successfully scanned and
+ *     converted, false if any conversion failed.
+ *
+ *   - The standard doesn't define sscanf() behavior when an out-of-range value
+ *     is scanned, e.g. if a "%"PRIi8 conversion scans "-1" or "0x1ff".  Some
+ *     implementations consider this an error and stop scanning.  This
+ *     implementation never considers an out-of-range value an error; instead,
+ *     it stores the least-significant bits of the converted value in the
+ *     destination, e.g. the value 255 for both examples earlier.
+ *
+ *   - Only single-byte characters are supported, that is, the 'l' modifier
+ *     on %s, %[, and %c is not supported.  The GNU extension 'a' modifier is
+ *     also not supported.
+ *
+ *   - %p is not supported.
+ */
+bool
+ovs_scan(const char *s, const char *format, ...)
+{
+    const char *const start = s;
+    bool ok = false;
+    const char *p;
+    va_list args;
+
+    va_start(args, format);
+    p = format;
+    while (*p != '\0') {
+        struct scan_spec spec;
+        unsigned char c = *p++;
+        bool discard;
+
+        if (isspace(c)) {
+            s = skip_spaces(s);
+            continue;
+        } else if (c != '%') {
+            if (*s != c) {
+                goto exit;
+            }
+            s++;
+            continue;
+        } else if (*p == '%') {
+            if (*s++ != '%') {
+                goto exit;
+            }
+            p++;
+            continue;
+        }
+
+        /* Parse '*' flag. */
+        discard = *p == '*';
+        p += discard;
+
+        /* Parse field width. */
+        spec.width = 0;
+        while (*p >= '0' && *p <= '9') {
+            spec.width = spec.width * 10 + (*p++ - '0');
+        }
+        if (spec.width == 0) {
+            spec.width = UINT_MAX;
+        }
+
+        /* Parse type modifier. */
+        switch (*p) {
+        case 'h':
+            if (p[1] == 'h') {
+                spec.type = SCAN_CHAR;
+                p += 2;
+            } else {
+                spec.type = SCAN_SHORT;
+                p++;
+            }
+            break;
+
+        case 'j':
+            spec.type = SCAN_INTMAX_T;
+            p++;
+            break;
+
+        case 'l':
+            if (p[1] == 'l') {
+                spec.type = SCAN_LLONG;
+                p += 2;
+            } else {
+                spec.type = SCAN_LONG;
+                p++;
+            }
+            break;
+
+        case 'L':
+        case 'q':
+            spec.type = SCAN_LLONG;
+            p++;
+            break;
+
+        case 't':
+            spec.type = SCAN_PTRDIFF_T;
+            p++;
+            break;
+
+        case 'z':
+            spec.type = SCAN_SIZE_T;
+            p++;
+            break;
+
+        default:
+            spec.type = SCAN_INT;
+            break;
+        }
+
+        if (discard) {
+            spec.type = SCAN_DISCARD;
+        }
+
+        c = *p++;
+        if (c != 'c' && c != 'n' && c != '[') {
+            s = skip_spaces(s);
+        }
+        switch (c) {
+        case 'd':
+            s = scan_int(s, &spec, 10, &args);
+            break;
+
+        case 'i':
+            s = scan_int(s, &spec, 0, &args);
+            break;
+
+        case 'o':
+            s = scan_int(s, &spec, 8, &args);
+            break;
+
+        case 'u':
+            s = scan_int(s, &spec, 10, &args);
+            break;
+
+        case 'x':
+        case 'X':
+            s = scan_int(s, &spec, 16, &args);
+            break;
+
+        case 'e':
+        case 'f':
+        case 'g':
+        case 'E':
+        case 'G':
+            s = scan_float(s, &spec, &args);
+            break;
+
+        case 's':
+            s = scan_string(s, &spec, &args);
+            break;
+
+        case '[':
+            s = scan_set(s, &spec, &p, &args);
+            break;
+
+        case 'c':
+            s = scan_chars(s, &spec, &args);
+            break;
+
+        case 'n':
+            if (spec.type != SCAN_DISCARD) {
+                *va_arg(args, int *) = s - start;
+            }
+            break;
+        }
+
+        if (!s) {
+            goto exit;
+        }
+    }
+    ok = true;
+
+exit:
+    va_end(args);
+    return ok;
+}
+

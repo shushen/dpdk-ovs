@@ -28,9 +28,11 @@
 union user_action_cookie;
 struct dpif_flow_stats;
 struct ofproto_dpif;
+struct ofproto_packet_in;
 struct ofport_dpif;
 struct dpif_backer;
 struct OVS_LOCKABLE rule_dpif;
+struct OVS_LOCKABLE group_dpif;
 
 /* Ofproto-dpif -- DPIF based ofproto implementation.
  *
@@ -73,7 +75,8 @@ void rule_dpif_unref(struct rule_dpif *);
 void rule_dpif_credit_stats(struct rule_dpif *rule ,
                             const struct dpif_flow_stats *);
 
-bool rule_dpif_fail_open(const struct rule_dpif *rule);
+bool rule_dpif_is_fail_open(const struct rule_dpif *);
+bool rule_dpif_is_table_miss(const struct rule_dpif *);
 
 struct rule_actions *rule_dpif_get_actions(const struct rule_dpif *);
 
@@ -87,14 +90,27 @@ void choose_miss_rule(enum ofputil_port_config,
                       struct rule_dpif *no_packet_in_rule,
                       struct rule_dpif **rule);
 
+bool group_dpif_lookup(struct ofproto_dpif *ofproto, uint32_t group_id,
+                       struct group_dpif **group);
+
+void group_dpif_release(struct group_dpif *group);
+
+void group_dpif_get_buckets(const struct group_dpif *group,
+                            const struct list **buckets);
+enum ofp11_group_type group_dpif_get_type(const struct group_dpif *group);
+
 bool ofproto_has_vlan_splinters(const struct ofproto_dpif *);
 ofp_port_t vsp_realdev_to_vlandev(const struct ofproto_dpif *,
                                   ofp_port_t realdev_ofp_port,
                                   ovs_be16 vlan_tci);
 bool vsp_adjust_flow(const struct ofproto_dpif *, struct flow *);
 
+int ofproto_dpif_execute_actions(struct ofproto_dpif *, const struct flow *,
+                                 struct rule_dpif *, const struct ofpact *,
+                                 size_t ofpacts_len, struct ofpbuf *);
 void ofproto_dpif_send_packet_in(struct ofproto_dpif *,
-                                 struct ofputil_packet_in *pin);
+                                 struct ofproto_packet_in *);
+int ofproto_dpif_send_packet(const struct ofport_dpif *, struct ofpbuf *);
 void ofproto_dpif_flow_mod(struct ofproto_dpif *, struct ofputil_flow_mod *);
 
 struct ofport_dpif *odp_port_to_ofport(const struct dpif_backer *, odp_port_t);

@@ -29,9 +29,6 @@
 #include "unaligned.h"
 #include "util.h"
 #include "vlan-bitmap.h"
-#include "vlog.h"
-
-VLOG_DEFINE_THIS_MODULE(mac_learning);
 
 COVERAGE_DEFINE(mac_learning_learned);
 COVERAGE_DEFINE(mac_learning_expired);
@@ -293,7 +290,7 @@ mac_learning_lookup(const struct mac_learning *ml,
     } else {
         struct mac_entry *e = mac_entry_lookup(ml, dst, vlan);
 
-        ovs_assert(e == NULL || e->port.p != NULL)
+        ovs_assert(e == NULL || e->port.p != NULL);
         return e;
     }
 }

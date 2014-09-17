@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ void *nl_msg_push_uninit(struct ofpbuf *, size_t);
 
 /* Appending attributes. */
 void *nl_msg_put_unspec_uninit(struct ofpbuf *, uint16_t type, size_t);
+void *nl_msg_put_unspec_zero(struct ofpbuf *, uint16_t type, size_t);
 void nl_msg_put_unspec(struct ofpbuf *, uint16_t type, const void *, size_t);
 void nl_msg_put_flag(struct ofpbuf *, uint16_t type);
 void nl_msg_put_u8(struct ofpbuf *, uint16_t type, uint8_t value);
@@ -103,6 +104,8 @@ struct nlmsghdr *nl_msg_next(struct ofpbuf *buffer, struct ofpbuf *msg);
 #define NL_A_BE32_SIZE NL_ATTR_SIZE(sizeof(ovs_be32))
 #define NL_A_BE64_SIZE NL_ATTR_SIZE(sizeof(ovs_be64))
 #define NL_A_FLAG_SIZE NL_ATTR_SIZE(0)
+
+bool nl_attr_oversized(size_t payload_size);
 
 /* Netlink attribute types. */
 enum nl_attr_type
@@ -134,14 +137,22 @@ nl_attr_is_valid(const struct nlattr *nla, size_t maxlen)
 {
     return (maxlen >= sizeof *nla
             && nla->nla_len >= sizeof *nla
-            && NLA_ALIGN(nla->nla_len) <= maxlen);
+            && nla->nla_len <= maxlen);
+}
+
+static inline size_t
+nl_attr_len_pad(const struct nlattr *nla, size_t maxlen)
+{
+    size_t len = NLA_ALIGN(nla->nla_len);
+
+    return len <= maxlen ? len : nla->nla_len;
 }
 
 /* This macro is careful to check for attributes with bad lengths. */
 #define NL_ATTR_FOR_EACH(ITER, LEFT, ATTRS, ATTRS_LEN)                  \
     for ((ITER) = (ATTRS), (LEFT) = (ATTRS_LEN);                        \
          nl_attr_is_valid(ITER, LEFT);                                  \
-         (LEFT) -= NLA_ALIGN((ITER)->nla_len), (ITER) = nl_attr_next(ITER))
+         (LEFT) -= nl_attr_len_pad(ITER, LEFT), (ITER) = nl_attr_next(ITER))
 
 
 /* This macro does not check for attributes with bad lengths.  It should only
@@ -150,7 +161,7 @@ nl_attr_is_valid(const struct nlattr *nla, size_t maxlen)
 #define NL_ATTR_FOR_EACH_UNSAFE(ITER, LEFT, ATTRS, ATTRS_LEN)           \
     for ((ITER) = (ATTRS), (LEFT) = (ATTRS_LEN);                        \
          (LEFT) > 0;                                                    \
-         (LEFT) -= NLA_ALIGN((ITER)->nla_len), (ITER) = nl_attr_next(ITER))
+         (LEFT) -= nl_attr_len_pad(ITER, LEFT), (ITER) = nl_attr_next(ITER))
 
 /* These variants are convenient for iterating nested attributes. */
 #define NL_NESTED_FOR_EACH(ITER, LEFT, A)                               \

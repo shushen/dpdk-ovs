@@ -23,6 +23,7 @@
 #include <string.h>
 #include <linux/openvswitch.h>
 #include "hash.h"
+#include "hmap.h"
 #include "openflow/openflow.h"
 #include "util.h"
 
@@ -34,6 +35,36 @@ struct nlattr;
 struct ofpbuf;
 struct simap;
 
+#define SLOW_PATH_REASONS                                               \
+    /* These reasons are mutually exclusive. */                         \
+    SPR(SLOW_CFM,        "cfm",        "Consists of CFM packets")       \
+    SPR(SLOW_BFD,        "bfd",        "Consists of BFD packets")       \
+    SPR(SLOW_LACP,       "lacp",       "Consists of LACP packets")      \
+    SPR(SLOW_STP,        "stp",        "Consists of STP packets")       \
+    SPR(SLOW_CONTROLLER, "controller",                                  \
+        "Sends \"packet-in\" messages to the OpenFlow controller")      \
+    SPR(SLOW_ACTION,     "action",                                      \
+        "Uses action(s) not supported by datapath")
+
+/* Indexes for slow-path reasons.  Client code uses "enum slow_path_reason"
+ * values instead of these, these are just a way to construct those. */
+enum {
+#define SPR(ENUM, STRING, EXPLANATION) ENUM##_INDEX,
+    SLOW_PATH_REASONS
+#undef SPR
+};
+
+/* Reasons why a subfacet might not be fast-pathable.
+ *
+ * Each reason is a separate bit to allow reasons to be combined. */
+enum slow_path_reason {
+#define SPR(ENUM, STRING, EXPLANATION) ENUM = 1 << ENUM##_INDEX,
+    SLOW_PATH_REASONS
+#undef SPR
+};
+
+const char *slow_path_reason_to_explanation(enum slow_path_reason);
+
 #define ODPP_LOCAL ODP_PORT_C(OVSP_LOCAL)
 #define ODPP_NONE  ODP_PORT_C(UINT32_MAX)
 
@@ -42,6 +73,16 @@ void format_odp_actions(struct ds *, const struct nlattr *odp_actions,
 int odp_actions_from_string(const char *, const struct simap *port_names,
                             struct ofpbuf *odp_actions);
 
+/* A map from odp port number to its name. */
+struct odp_portno_names {
+    struct hmap_node hmap_node; /* A node in a port number to name hmap. */
+    odp_port_t port_no;         /* Port number in the datapath. */
+    char *name;                 /* Name associated with the above 'port_no'. */
+};
+
+void odp_portno_names_set(struct hmap *portno_names, odp_port_t port_no,
+                          char *port_name);
+void odp_portno_names_destroy(struct hmap *portno_names);
 /* The maximum number of bytes that odp_flow_key_from_flow() appends to a
  * buffer.  This is the upper bound on the length of a nlattr-formatted flow
  * key that ovs-vswitchd fully understands.
@@ -94,7 +135,8 @@ enum odp_key_fitness odp_tun_key_from_attr(const struct nlattr *,
 
 void odp_flow_format(const struct nlattr *key, size_t key_len,
                      const struct nlattr *mask, size_t mask_len,
-                     struct ds *, bool verbose);
+                     const struct hmap *portno_names, struct ds *,
+                     bool verbose);
 void odp_flow_key_format(const struct nlattr *, size_t, struct ds *);
 int odp_flow_from_string(const char *s,
                          const struct simap *port_names,
@@ -129,9 +171,11 @@ const char *odp_key_fitness_to_string(enum odp_key_fitness);
 
 void commit_odp_tunnel_action(const struct flow *, struct flow *base,
                               struct ofpbuf *odp_actions);
-void commit_odp_actions(const struct flow *, struct flow *base,
-                        struct ofpbuf *odp_actions,
-                        struct flow_wildcards *wc);
+enum slow_path_reason commit_odp_actions(const struct flow *,
+                                         struct flow *base,
+                                         struct ofpbuf *odp_actions,
+                                         struct flow_wildcards *wc,
+                                         int *mpls_depth_delta);
 
 /* ofproto-dpif interface.
  *
@@ -186,15 +230,5 @@ void odp_put_tunnel_action(const struct flow_tnl *tunnel,
                            struct ofpbuf *odp_actions);
 void odp_put_pkt_mark_action(const uint32_t pkt_mark,
                              struct ofpbuf *odp_actions);
-
-/* Reasons why a subfacet might not be fast-pathable. */
-enum slow_path_reason {
-    SLOW_CFM = 1,               /* CFM packets need per-packet processing. */
-    SLOW_LACP,                  /* LACP packets need per-packet processing. */
-    SLOW_STP,                   /* STP packets need per-packet processing. */
-    SLOW_BFD,                   /* BFD packets need per-packet processing. */
-    SLOW_CONTROLLER,            /* Packets must go to OpenFlow controller. */
-    __SLOW_MAX
-};
 
 #endif /* odp-util.h */

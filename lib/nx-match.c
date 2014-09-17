@@ -183,7 +183,7 @@ nx_pull_raw(const uint8_t *p, unsigned int match_len, bool strict,
                 if (NXM_HASMASK(header)) {
                     memcpy(cookie_mask, p + 4 + width, width);
                 } else {
-                    *cookie_mask = htonll(UINT64_MAX);
+                    *cookie_mask = OVS_BE64_MAX;
                 }
                 error = 0;
             }
@@ -215,7 +215,7 @@ nx_pull_match__(struct ofpbuf *b, unsigned int match_len, bool strict,
         if (!p) {
             VLOG_DBG_RL(&rl, "nx_match length %u, rounded up to a "
                         "multiple of 8, is longer than space in message (max "
-                        "length %zu)", match_len, b->size);
+                        "length %"PRIuSIZE")", match_len, b->size);
             return OFPERR_OFPBMC_BAD_LEN;
         }
     }
@@ -272,7 +272,7 @@ oxm_pull_match__(struct ofpbuf *b, bool strict, struct match *match)
     if (!p) {
         VLOG_DBG_RL(&rl, "oxm length %u, rounded up to a "
                     "multiple of 8, is longer than space in message (max "
-                    "length %zu)", match_len, b->size);
+                    "length %"PRIuSIZE")", match_len, b->size);
         return OFPERR_OFPBMC_BAD_LEN;
     }
 
@@ -280,8 +280,8 @@ oxm_pull_match__(struct ofpbuf *b, bool strict, struct match *match)
                        strict, match, NULL, NULL);
 }
 
-/* Parses the oxm formatted match description preceded by a struct ofp11_match
- * in 'b' with length 'match_len'.  Stores the result in 'match'.
+/* Parses the oxm formatted match description preceded by a struct
+ * ofp11_match_header in 'b'.  Stores the result in 'match'.
  *
  * Fails with an error when encountering unknown OXM headers.
  *
@@ -293,7 +293,7 @@ oxm_pull_match(struct ofpbuf *b, struct match *match)
 }
 
 /* Behaves the same as oxm_pull_match() with one exception.  Skips over unknown
- * PXM headers instead of failing with an error when they are encountered. */
+ * OXM headers instead of failing with an error when they are encountered. */
 enum ofperr
 oxm_pull_match_loose(struct ofpbuf *b, struct match *match)
 {
@@ -361,7 +361,7 @@ nxm_put_16m(struct ofpbuf *b, uint32_t header, ovs_be16 value, ovs_be16 mask)
     case 0:
         break;
 
-    case CONSTANT_HTONS(UINT16_MAX):
+    case OVS_BE16_MAX:
         nxm_put_16(b, header, value);
         break;
 
@@ -393,7 +393,7 @@ nxm_put_32m(struct ofpbuf *b, uint32_t header, ovs_be32 value, ovs_be32 mask)
     case 0:
         break;
 
-    case CONSTANT_HTONL(UINT32_MAX):
+    case OVS_BE32_MAX:
         nxm_put_32(b, header, value);
         break;
 
@@ -425,7 +425,7 @@ nxm_put_64m(struct ofpbuf *b, uint32_t header, ovs_be64 value, ovs_be64 mask)
     case 0:
         break;
 
-    case CONSTANT_HTONLL(UINT64_MAX):
+    case OVS_BE64_MAX:
         nxm_put_64(b, header, value);
         break;
 
@@ -530,6 +530,8 @@ nxm_put_ip(struct ofpbuf *b, const struct match *match,
                         flow->tp_src, match->wc.masks.tp_src);
             nxm_put_16m(b, oxm ? OXM_OF_TCP_DST : NXM_OF_TCP_DST,
                         flow->tp_dst, match->wc.masks.tp_dst);
+            nxm_put_16m(b, NXM_NX_TCP_FLAGS,
+                        flow->tcp_flags, match->wc.masks.tcp_flags);
         } else if (flow->nw_proto == IPPROTO_UDP) {
             nxm_put_16m(b, oxm ? OXM_OF_UDP_SRC : NXM_OF_UDP_SRC,
                         flow->tp_src, match->wc.masks.tp_src);
@@ -570,7 +572,7 @@ nx_put_raw(struct ofpbuf *b, bool oxm, const struct match *match,
     int match_len;
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 20);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 23);
 
     /* Metadata. */
     if (match->wc.masks.in_port.ofp_port) {
@@ -1088,38 +1090,13 @@ nxm_format_reg_move(const struct ofpact_reg_move *move, struct ds *s)
     mf_format_subfield(&move->dst, s);
 }
 
-static void
-set_field_format(const struct ofpact_reg_load *load, struct ds *s)
-{
-    const struct mf_field *mf = load->dst.field;
-    union mf_value value;
-
-    ovs_assert(load->ofpact.compat == OFPUTIL_OFPAT12_SET_FIELD);
-    ds_put_format(s, "set_field:");
-    memset(&value, 0, sizeof value);
-    bitwise_copy(&load->subvalue, sizeof load->subvalue, 0,
-                 &value, mf->n_bytes, 0, load->dst.n_bits);
-    mf_format(mf, &value, NULL, s);
-    ds_put_format(s, "->%s", mf->name);
-}
-
-static void
-load_format(const struct ofpact_reg_load *load, struct ds *s)
+void
+nxm_format_reg_load(const struct ofpact_reg_load *load, struct ds *s)
 {
     ds_put_cstr(s, "load:");
     mf_format_subvalue(&load->subvalue, s);
     ds_put_cstr(s, "->");
     mf_format_subfield(&load->dst, s);
-}
-
-void
-nxm_format_reg_load(const struct ofpact_reg_load *load, struct ds *s)
-{
-    if (load->ofpact.compat == OFPUTIL_OFPAT12_SET_FIELD) {
-        set_field_format(load, s);
-    } else {
-        load_format(load, s);
-    }
 }
 
 enum ofperr
@@ -1160,38 +1137,6 @@ nxm_reg_load_from_openflow(const struct nx_action_reg_load *narl,
 
     return nxm_reg_load_check(load, NULL);
 }
-
-enum ofperr
-nxm_reg_load_from_openflow12_set_field(
-    const struct ofp12_action_set_field * oasf, struct ofpbuf *ofpacts)
-{
-    uint16_t oasf_len = ntohs(oasf->len);
-    uint32_t oxm_header = ntohl(oasf->dst);
-    uint8_t oxm_length = NXM_LENGTH(oxm_header);
-    struct ofpact_reg_load *load;
-    const struct mf_field *mf;
-
-    /* ofp12_action_set_field is padded to 64 bits by zero */
-    if (oasf_len != ROUND_UP(sizeof(*oasf) + oxm_length, 8)) {
-        return OFPERR_OFPBAC_BAD_SET_LEN;
-    }
-    if (!is_all_zeros((const uint8_t *)(oasf) + sizeof *oasf + oxm_length,
-                      oasf_len - oxm_length - sizeof *oasf)) {
-        return OFPERR_OFPBAC_BAD_SET_ARGUMENT;
-    }
-
-    if (NXM_HASMASK(oxm_header)) {
-        return OFPERR_OFPBAC_BAD_SET_TYPE;
-    }
-    mf = mf_from_nxm_header(oxm_header);
-    if (!mf) {
-        return OFPERR_OFPBAC_BAD_SET_TYPE;
-    }
-    load = ofpact_put_REG_LOAD(ofpacts);
-    ofpact_set_field_init(load, mf, oasf + 1);
-
-    return nxm_reg_load_check(load, NULL);
-}
 
 enum ofperr
 nxm_reg_move_check(const struct ofpact_reg_move *move, const struct flow *flow)
@@ -1226,8 +1171,9 @@ nxm_reg_move_to_nxast(const struct ofpact_reg_move *move,
     narm->dst = htonl(move->dst.field->nxm_header);
 }
 
-static void
-reg_load_to_nxast(const struct ofpact_reg_load *load, struct ofpbuf *openflow)
+void
+nxm_reg_load_to_nxast(const struct ofpact_reg_load *load,
+                      struct ofpbuf *openflow)
 {
     struct nx_action_reg_load *narl;
 
@@ -1236,71 +1182,6 @@ reg_load_to_nxast(const struct ofpact_reg_load *load, struct ofpbuf *openflow)
     narl->dst = htonl(load->dst.field->nxm_header);
     narl->value = load->subvalue.be64[1];
 }
-
-static void
-set_field_to_ofast(const struct ofpact_reg_load *load,
-                      struct ofpbuf *openflow)
-{
-    const struct mf_field *mf = load->dst.field;
-    uint16_t padded_value_len = ROUND_UP(mf->n_bytes, 8);
-    struct ofp12_action_set_field *oasf;
-    char *value;
-
-    /* Set field is the only action of variable length (so far),
-     * so handling the variable length portion is open-coded here */
-    oasf = ofputil_put_OFPAT12_SET_FIELD(openflow);
-    oasf->dst = htonl(mf->oxm_header);
-    oasf->len = htons(ntohs(oasf->len) + padded_value_len);
-
-    value = ofpbuf_put_zeros(openflow, padded_value_len);
-    bitwise_copy(&load->subvalue, sizeof load->subvalue, load->dst.ofs,
-                 value, mf->n_bytes, load->dst.ofs, load->dst.n_bits);
-}
-
-void
-nxm_reg_load_to_nxast(const struct ofpact_reg_load *load,
-                      struct ofpbuf *openflow)
-{
-
-    if (load->ofpact.compat == OFPUTIL_OFPAT12_SET_FIELD) {
-        struct ofp_header *oh = (struct ofp_header *)openflow->l2;
-
-        switch(oh->version) {
-        case OFP13_VERSION:
-        case OFP12_VERSION:
-            set_field_to_ofast(load, openflow);
-            break;
-
-        case OFP11_VERSION:
-        case OFP10_VERSION:
-            if (load->dst.n_bits < 64) {
-                reg_load_to_nxast(load, openflow);
-            } else {
-                /* Split into 64bit chunks */
-                int chunk, ofs;
-                for (ofs = 0; ofs < load->dst.n_bits; ofs += chunk) {
-                    struct ofpact_reg_load subload = *load;
-
-                    chunk = MIN(load->dst.n_bits - ofs, 64);
-
-                    subload.dst.field =  load->dst.field;
-                    subload.dst.ofs = load->dst.ofs + ofs;
-                    subload.dst.n_bits = chunk;
-                    bitwise_copy(&load->subvalue, sizeof load->subvalue, ofs,
-                                 &subload.subvalue, sizeof subload.subvalue, 0,
-                                 chunk);
-                    reg_load_to_nxast(&subload, openflow);
-                }
-            }
-            break;
-
-        default:
-            NOT_REACHED();
-        }
-    } else {
-        reg_load_to_nxast(load, openflow);
-    }
-}
 
 /* nxm_execute_reg_move(), nxm_execute_reg_load(). */
 
@@ -1308,13 +1189,11 @@ void
 nxm_execute_reg_move(const struct ofpact_reg_move *move,
                      struct flow *flow, struct flow_wildcards *wc)
 {
-    union mf_subvalue mask_value;
     union mf_value src_value;
     union mf_value dst_value;
 
-    memset(&mask_value, 0xff, sizeof mask_value);
-    mf_write_subfield_flow(&move->dst, &mask_value, &wc->masks);
-    mf_write_subfield_flow(&move->src, &mask_value, &wc->masks);
+    mf_mask_field_and_prereqs(move->dst.field, &wc->masks);
+    mf_mask_field_and_prereqs(move->src.field, &wc->masks);
 
     mf_get_value(move->dst.field, flow, &dst_value);
     mf_get_value(move->src.field, flow, &src_value);
@@ -1325,8 +1204,33 @@ nxm_execute_reg_move(const struct ofpact_reg_move *move,
 }
 
 void
-nxm_execute_reg_load(const struct ofpact_reg_load *load, struct flow *flow)
+nxm_execute_reg_load(const struct ofpact_reg_load *load, struct flow *flow,
+                     struct flow_wildcards *wc)
 {
+    /* Since at the datapath interface we do not have set actions for
+     * individual fields, but larger sets of fields for a given protocol
+     * layer, the set action will in practice only ever apply to exactly
+     * matched flows for the given protocol layer.  For example, if the
+     * reg_load changes the IP TTL, the corresponding datapath action will
+     * rewrite also the IP addresses and TOS byte.  Since these other field
+     * values may not be explicitly set, they depend on the incoming flow field
+     * values, and are hence all of them are set in the wildcards masks, when
+     * the action is committed to the datapath.  For the rare case, where the
+     * reg_load action does not actually change the value, and no other flow
+     * field values are set (or loaded), the datapath action is skipped, and
+     * no mask bits are set.  Such a datapath flow should, however, be
+     * dependent on the specific field value, so the corresponding wildcard
+     * mask bits must be set, lest the datapath flow be applied to packets
+     * containing some other value in the field and the field value remain
+     * unchanged regardless of the incoming value.
+     *
+     * We set the masks here for the whole fields, and their prerequisities.
+     * Even if only the lower byte of a TCP destination port is set,
+     * we set the mask for the whole field, and also the ip_proto in the IP
+     * header, so that the kernel flow would not be applied on, e.g., a UDP
+     * packet, or any other IP protocol in addition to TCP packets.
+     */
+    mf_mask_field_and_prereqs(load->dst.field, &wc->masks);
     mf_write_subfield_flow(&load->dst, &load->subvalue, flow);
 }
 

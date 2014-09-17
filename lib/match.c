@@ -21,10 +21,6 @@
 #include "dynamic-string.h"
 #include "ofp-util.h"
 #include "packets.h"
-#include "vlog.h"
-
-VLOG_DEFINE_THIS_MODULE(match);
-
 
 /* Converts the flow in 'flow' into a match in 'match', with the given
  * 'wildcards'. */
@@ -114,6 +110,10 @@ match_wc_init(struct match *match, const struct flow *flow)
 
         if (flow->nw_frag) {
             memset(&wc->masks.nw_frag, 0xff, sizeof wc->masks.nw_frag);
+            if (flow->nw_frag & FLOW_NW_FRAG_LATER) {
+                /* No transport layer header in later fragments. */
+                return;
+            }
         }
 
         if (flow->nw_proto == IPPROTO_ICMP ||
@@ -121,6 +121,9 @@ match_wc_init(struct match *match, const struct flow *flow)
             (flow->tp_src || flow->tp_dst)) {
             memset(&wc->masks.tp_src, 0xff, sizeof wc->masks.tp_src);
             memset(&wc->masks.tp_dst, 0xff, sizeof wc->masks.tp_dst);
+        }
+        if (flow->nw_proto == IPPROTO_TCP) {
+            memset(&wc->masks.tcp_flags, 0xff, sizeof wc->masks.tcp_flags);
         }
 
         if (flow->nw_proto == IPPROTO_ICMPV6) {
@@ -130,15 +133,6 @@ match_wc_init(struct match *match, const struct flow *flow)
     }
 
     return;
-}
-
-/* Converts the flow in 'flow' into an exact-match match in 'match'. */
-void
-match_init_exact(struct match *match, const struct flow *flow)
-{
-    match->flow = *flow;
-    match->flow.skb_priority = 0;
-    flow_wildcards_init_exact(&match->wc);
 }
 
 /* Initializes 'match' as a "catch-all" match that matches every packet. */
@@ -181,7 +175,7 @@ match_set_reg_masked(struct match *match, unsigned int reg_idx,
 void
 match_set_metadata(struct match *match, ovs_be64 metadata)
 {
-    match_set_metadata_masked(match, metadata, htonll(UINT64_MAX));
+    match_set_metadata_masked(match, metadata, OVS_BE64_MAX);
 }
 
 void
@@ -195,7 +189,7 @@ match_set_metadata_masked(struct match *match,
 void
 match_set_tun_id(struct match *match, ovs_be64 tun_id)
 {
-    match_set_tun_id_masked(match, tun_id, htonll(UINT64_MAX));
+    match_set_tun_id_masked(match, tun_id, OVS_BE64_MAX);
 }
 
 void
@@ -208,7 +202,7 @@ match_set_tun_id_masked(struct match *match, ovs_be64 tun_id, ovs_be64 mask)
 void
 match_set_tun_src(struct match *match, ovs_be32 src)
 {
-    match_set_tun_src_masked(match, src, htonl(UINT32_MAX));
+    match_set_tun_src_masked(match, src, OVS_BE32_MAX);
 }
 
 void
@@ -221,7 +215,7 @@ match_set_tun_src_masked(struct match *match, ovs_be32 src, ovs_be32 mask)
 void
 match_set_tun_dst(struct match *match, ovs_be32 dst)
 {
-    match_set_tun_dst_masked(match, dst, htonl(UINT32_MAX));
+    match_set_tun_dst_masked(match, dst, OVS_BE32_MAX);
 }
 
 void
@@ -300,7 +294,7 @@ match_set_pkt_mark_masked(struct match *match, uint32_t pkt_mark, uint32_t mask)
 void
 match_set_dl_type(struct match *match, ovs_be16 dl_type)
 {
-    match->wc.masks.dl_type = htons(UINT16_MAX);
+    match->wc.masks.dl_type = OVS_BE16_MAX;
     match->flow.dl_type = dl_type;
 }
 
@@ -411,7 +405,7 @@ match_set_dl_vlan(struct match *match, ovs_be16 dl_vlan)
 {
     flow_set_dl_vlan(&match->flow, dl_vlan);
     if (dl_vlan == htons(OFP10_VLAN_NONE)) {
-        match->wc.masks.vlan_tci = htons(UINT16_MAX);
+        match->wc.masks.vlan_tci = OVS_BE16_MAX;
     } else {
         match->wc.masks.vlan_tci |= htons(VLAN_VID_MASK | VLAN_CFI);
     }
@@ -518,7 +512,7 @@ match_set_mpls_bos(struct match *match, uint8_t mpls_bos)
 void
 match_set_tp_src(struct match *match, ovs_be16 tp_src)
 {
-    match_set_tp_src_masked(match, tp_src, htons(UINT16_MAX));
+    match_set_tp_src_masked(match, tp_src, OVS_BE16_MAX);
 }
 
 void
@@ -531,7 +525,7 @@ match_set_tp_src_masked(struct match *match, ovs_be16 port, ovs_be16 mask)
 void
 match_set_tp_dst(struct match *match, ovs_be16 tp_dst)
 {
-    match_set_tp_dst_masked(match, tp_dst, htons(UINT16_MAX));
+    match_set_tp_dst_masked(match, tp_dst, OVS_BE16_MAX);
 }
 
 void
@@ -539,6 +533,19 @@ match_set_tp_dst_masked(struct match *match, ovs_be16 port, ovs_be16 mask)
 {
     match->flow.tp_dst = port & mask;
     match->wc.masks.tp_dst = mask;
+}
+
+void
+match_set_tcp_flags(struct match *match, ovs_be16 flags)
+{
+    match_set_tcp_flags_masked(match, flags, OVS_BE16_MAX);
+}
+
+void
+match_set_tcp_flags_masked(struct match *match, ovs_be16 flags, ovs_be16 mask)
+{
+    match->flow.tcp_flags = flags & mask;
+    match->wc.masks.tcp_flags = mask;
 }
 
 void
@@ -552,7 +559,7 @@ void
 match_set_nw_src(struct match *match, ovs_be32 nw_src)
 {
     match->flow.nw_src = nw_src;
-    match->wc.masks.nw_src = htonl(UINT32_MAX);
+    match->wc.masks.nw_src = OVS_BE32_MAX;
 }
 
 void
@@ -567,7 +574,7 @@ void
 match_set_nw_dst(struct match *match, ovs_be32 nw_dst)
 {
     match->flow.nw_dst = nw_dst;
-    match->wc.masks.nw_dst = htonl(UINT32_MAX);
+    match->wc.masks.nw_dst = OVS_BE32_MAX;
 }
 
 void
@@ -692,7 +699,7 @@ match_set_ipv6_dst_masked(struct match *match, const struct in6_addr *dst,
 void
 match_set_ipv6_label(struct match *match, ovs_be32 ipv6_label)
 {
-    match->wc.masks.ipv6_label = htonl(UINT32_MAX);
+    match->wc.masks.ipv6_label = OVS_BE32_MAX;
     match->flow.ipv6_label = ipv6_label;
 }
 
@@ -772,18 +779,43 @@ format_ipv6_netmask(struct ds *s, const char *name,
     }
 }
 
-
 static void
 format_be16_masked(struct ds *s, const char *name,
                    ovs_be16 value, ovs_be16 mask)
 {
     if (mask != htons(0)) {
         ds_put_format(s, "%s=", name);
-        if (mask == htons(UINT16_MAX)) {
+        if (mask == OVS_BE16_MAX) {
             ds_put_format(s, "%"PRIu16, ntohs(value));
         } else {
             ds_put_format(s, "0x%"PRIx16"/0x%"PRIx16,
                           ntohs(value), ntohs(mask));
+        }
+        ds_put_char(s, ',');
+    }
+}
+
+static void
+format_uint32_masked(struct ds *s, const char *name,
+                   uint32_t value, uint32_t mask)
+{
+    if (mask) {
+        ds_put_format(s, "%s=%#"PRIx32, name, value);
+        if (mask != UINT32_MAX) {
+            ds_put_format(s, "/%#"PRIx32, mask);
+        }
+        ds_put_char(s, ',');
+    }
+}
+
+static void
+format_be64_masked(struct ds *s, const char *name,
+                   ovs_be64 value, ovs_be64 mask)
+{
+    if (mask != htonll(0)) {
+        ds_put_format(s, "%s=%#"PRIx64, name, ntohll(value));
+        if (mask != OVS_BE64_MAX) {
+            ds_put_format(s, "/%#"PRIx64, ntohll(mask));
         }
         ds_put_char(s, ',');
     }
@@ -795,18 +827,7 @@ format_flow_tunnel(struct ds *s, const struct match *match)
     const struct flow_wildcards *wc = &match->wc;
     const struct flow_tnl *tnl = &match->flow.tunnel;
 
-    switch (wc->masks.tunnel.tun_id) {
-    case 0:
-        break;
-    case CONSTANT_HTONLL(UINT64_MAX):
-        ds_put_format(s, "tun_id=%#"PRIx64",", ntohll(tnl->tun_id));
-        break;
-    default:
-        ds_put_format(s, "tun_id=%#"PRIx64"/%#"PRIx64",",
-                      ntohll(tnl->tun_id),
-                      ntohll(wc->masks.tunnel.tun_id));
-        break;
-    }
+    format_be64_masked(s, "tun_id", tnl->tun_id, wc->masks.tunnel.tun_id);
     format_ip_netmask(s, "tun_src", tnl->ip_src, wc->masks.tunnel.ip_src);
     format_ip_netmask(s, "tun_dst", tnl->ip_dst, wc->masks.tunnel.ip_dst);
 
@@ -835,23 +856,13 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
 
     int i;
 
-    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 20);
+    BUILD_ASSERT_DECL(FLOW_WC_SEQ == 23);
 
     if (priority != OFP_DEFAULT_PRIORITY) {
         ds_put_format(s, "priority=%u,", priority);
     }
 
-    switch (wc->masks.pkt_mark) {
-    case 0:
-        break;
-    case UINT32_MAX:
-        ds_put_format(s, "pkt_mark=%#"PRIx32",", f->pkt_mark);
-        break;
-    default:
-        ds_put_format(s, "pkt_mark=%#"PRIx32"/%#"PRIx32",",
-                      f->pkt_mark, wc->masks.pkt_mark);
-        break;
-    }
+    format_uint32_masked(s, "pkt_mark", f->pkt_mark, wc->masks.pkt_mark);
 
     if (wc->masks.skb_priority) {
         ds_put_format(s, "skb_priority=%#"PRIx32",", f->skb_priority);
@@ -908,32 +919,18 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
         }
     }
     for (i = 0; i < FLOW_N_REGS; i++) {
-        switch (wc->masks.regs[i]) {
-        case 0:
-            break;
-        case UINT32_MAX:
-            ds_put_format(s, "reg%d=0x%"PRIx32",", i, f->regs[i]);
-            break;
-        default:
-            ds_put_format(s, "reg%d=0x%"PRIx32"/0x%"PRIx32",",
-                          i, f->regs[i], wc->masks.regs[i]);
-            break;
+        #define REGNAME_LEN 20
+        char regname[REGNAME_LEN];
+        if (snprintf(regname, REGNAME_LEN, "reg%d", i) >= REGNAME_LEN) {
+            strcpy(regname, "reg?");
         }
+        format_uint32_masked(s, regname, f->regs[i], wc->masks.regs[i]);
     }
 
     format_flow_tunnel(s, match);
 
-    switch (wc->masks.metadata) {
-    case 0:
-        break;
-    case CONSTANT_HTONLL(UINT64_MAX):
-        ds_put_format(s, "metadata=%#"PRIx64",", ntohll(f->metadata));
-        break;
-    default:
-        ds_put_format(s, "metadata=%#"PRIx64"/%#"PRIx64",",
-                      ntohll(f->metadata), ntohll(wc->masks.metadata));
-        break;
-    }
+    format_be64_masked(s, "metadata", f->metadata, wc->masks.metadata);
+
     if (wc->masks.in_port.ofp_port) {
         ds_put_cstr(s, "in_port=");
         ofputil_format_port(f->in_port.ofp_port, s);
@@ -972,7 +969,7 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
         format_ipv6_netmask(s, "ipv6_src", &f->ipv6_src, &wc->masks.ipv6_src);
         format_ipv6_netmask(s, "ipv6_dst", &f->ipv6_dst, &wc->masks.ipv6_dst);
         if (wc->masks.ipv6_label) {
-            if (wc->masks.ipv6_label == htonl(UINT32_MAX)) {
+            if (wc->masks.ipv6_label == OVS_BE32_MAX) {
                 ds_put_format(s, "ipv6_label=0x%05"PRIx32",",
                               ntohl(f->ipv6_label));
             } else {
@@ -1061,6 +1058,15 @@ match_format(const struct match *match, struct ds *s, unsigned int priority)
         format_be16_masked(s, "tp_src", f->tp_src, wc->masks.tp_src);
         format_be16_masked(s, "tp_dst", f->tp_dst, wc->masks.tp_dst);
     }
+    if (is_ip_any(f) && f->nw_proto == IPPROTO_TCP && wc->masks.tcp_flags) {
+        uint16_t mask = TCP_FLAGS(wc->masks.tcp_flags);
+        if (mask == TCP_FLAGS(OVS_BE16_MAX)) {
+            ds_put_format(s, "tcp_flags=0x%03"PRIx16",", ntohs(f->tcp_flags));
+        } else {
+            format_flags_masked(s, "tcp_flags", packet_tcp_flag_to_string,
+                                ntohs(f->tcp_flags), mask);
+        }
+    }
 
     if (s->length > start_len && ds_last(s) == ',') {
         s->length--;
@@ -1091,8 +1097,8 @@ match_print(const struct match *match)
 void
 minimatch_init(struct minimatch *dst, const struct match *src)
 {
-    miniflow_init(&dst->flow, &src->flow);
     minimask_init(&dst->mask, &src->wc);
+    miniflow_init_with_minimask(&dst->flow, &src->flow, &dst->mask);
 }
 
 /* Initializes 'dst' as a copy of 'src'.  The caller must eventually free 'dst'
@@ -1143,6 +1149,56 @@ uint32_t
 minimatch_hash(const struct minimatch *match, uint32_t basis)
 {
     return miniflow_hash(&match->flow, minimask_hash(&match->mask, basis));
+}
+
+/* Returns true if 'target' satisifies 'match', that is, if each bit for which
+ * 'match' specifies a particular value has the correct value in 'target'.
+ *
+ * This function is equivalent to miniflow_equal_flow_in_minimask(&match->flow,
+ * target, &match->mask) but it is faster because of the invariant that
+ * match->flow.map and match->mask.map are the same. */
+bool
+minimatch_matches_flow(const struct minimatch *match,
+                       const struct flow *target)
+{
+    const uint32_t *target_u32 = (const uint32_t *) target;
+    const uint32_t *flowp = match->flow.values;
+    const uint32_t *maskp = match->mask.masks.values;
+    uint64_t map;
+
+    for (map = match->flow.map; map; map = zero_rightmost_1bit(map)) {
+        if ((*flowp++ ^ target_u32[raw_ctz(map)]) & *maskp++) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* Returns a hash value for the bits of range [start, end) in 'minimatch',
+ * given 'basis'.
+ *
+ * The hash values returned by this function are the same as those returned by
+ * flow_hash_in_minimask_range(), only the form of the arguments differ. */
+uint32_t
+minimatch_hash_range(const struct minimatch *match, uint8_t start, uint8_t end,
+                     uint32_t *basis)
+{
+    unsigned int offset;
+    const uint32_t *p, *q;
+    uint32_t hash = *basis;
+    int n, i;
+
+    n = count_1bits(miniflow_get_map_in_range(&match->mask.masks, start, end,
+                                              &offset));
+    q = match->mask.masks.values + offset;
+    p = match->flow.values + offset;
+
+    for (i = 0; i < n; i++) {
+        hash = mhash_add(hash, p[i] & q[i]);
+    }
+    *basis = hash; /* Allow continuation from the unfinished value. */
+    return mhash_finish(hash, (offset + n) * 4);
 }
 
 /* Appends a string representation of 'match' to 's'.  If 'priority' is

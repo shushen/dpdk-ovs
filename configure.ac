@@ -1,4 +1,4 @@
-# Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+# Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 AC_PREREQ(2.64)
-AC_INIT(openvswitch, 2.0.0, ovs-bugs@openvswitch.org)
+AC_INIT(openvswitch, 2.1.2, ovs-bugs@openvswitch.org)
 AC_CONFIG_SRCDIR([datapath/datapath.c])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -24,7 +24,6 @@ AM_INIT_AUTOMAKE
 AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_CPP
-AC_PROG_RANLIB
 AC_PROG_MKDIR_P
 AC_PROG_FGREP
 AC_PROG_EGREP
@@ -41,6 +40,7 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_C_BIGENDIAN
 AC_SYS_LARGEFILE
 
+LT_INIT([disable-shared])
 AC_SEARCH_LIBS([pow], [m])
 AC_SEARCH_LIBS([clock_gettime], [rt])
 AC_SEARCH_LIBS([timer_create], [rt])
@@ -48,14 +48,14 @@ AC_SEARCH_LIBS([pthread_sigmask], [pthread])
 AC_FUNC_STRERROR_R
 
 OVS_CHECK_ESX
+OVS_CHECK_WIN32
 OVS_CHECK_COVERAGE
 OVS_CHECK_NDEBUG
 OVS_CHECK_NETLINK
 OVS_CHECK_OPENSSL
 OVS_CHECK_LOGDIR
 OVS_CHECK_PYTHON
-OVS_CHECK_PYUIC4
-OVS_CHECK_OVSDBMONITOR
+OVS_CHECK_PYTHON_COMPAT
 OVS_CHECK_DOT
 OVS_CHECK_IF_PACKET
 OVS_CHECK_IF_DL
@@ -76,12 +76,11 @@ OVS_CHECK_BACKTRACE
 OVS_CHECK_MALLOC_HOOKS
 OVS_CHECK_VALGRIND
 OVS_CHECK_SOCKET_LIBS
-OVS_CHECK_LINKER_SECTIONS
 OVS_CHECK_XENSERVER_VERSION
 OVS_CHECK_GROFF
 OVS_CHECK_GNU_MAKE
-OVS_CHECK_CACHE_TIME
 OVS_CHECK_TLS
+OVS_CHECK_ATOMIC_LIBS
 OVS_CHECK_GCC4_ATOMICS
 OVS_CHECK_ATOMIC_ALWAYS_LOCK_FREE(1)
 OVS_CHECK_ATOMIC_ALWAYS_LOCK_FREE(2)
@@ -90,12 +89,16 @@ OVS_CHECK_ATOMIC_ALWAYS_LOCK_FREE(8)
 OVS_CHECK_POSIX_AIO
 OVS_CHECK_PTHREAD_SET_NAME
 
+OVS_CHECK_INCLUDE_NEXT([string.h])
+AC_CONFIG_FILES([lib/string.h])
+
 OVS_ENABLE_OPTION([-Wall])
 OVS_ENABLE_OPTION([-Wextra])
 OVS_ENABLE_OPTION([-Wno-sign-compare])
 OVS_ENABLE_OPTION([-Wpointer-arith])
 OVS_ENABLE_OPTION([-Wdeclaration-after-statement])
 OVS_ENABLE_OPTION([-Wformat-security])
+OVS_ENABLE_OPTION([-Wno-format-zero-length])
 OVS_ENABLE_OPTION([-Wswitch-enum])
 OVS_ENABLE_OPTION([-Wunused-parameter])
 OVS_ENABLE_OPTION([-Wstrict-aliasing])
@@ -115,17 +118,16 @@ AC_ARG_VAR(KARCH, [Kernel Architecture String])
 AC_SUBST(KARCH)
 OVS_CHECK_LINUX
 
-AC_CONFIG_FILES([Makefile 
-datapath/Makefile 
-datapath/linux/Kbuild
-datapath/linux/Makefile
-datapath/linux/Makefile.main
-tests/atlocal])
+AC_CONFIG_FILES(Makefile)
+AC_CONFIG_FILES(datapath/Makefile)
+AC_CONFIG_FILES(datapath/linux/Kbuild)
+AC_CONFIG_FILES(datapath/linux/Makefile)
+AC_CONFIG_FILES(datapath/linux/Makefile.main)
+AC_CONFIG_FILES(tests/atlocal)
 
 dnl This makes sure that include/openflow gets created in the build directory.
 AC_CONFIG_COMMANDS([include/openflow/openflow.h.stamp])
 
-AC_CONFIG_COMMANDS([ovsdb/ovsdbmonitor/dummy], [:])
 AC_CONFIG_COMMANDS([utilities/bugtool/dummy], [:])
 
 AM_CONDITIONAL([LINUX_DATAPATH], [test "$HAVE_NETLINK" = yes && test "$ESX" = no])

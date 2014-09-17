@@ -40,8 +40,6 @@
 #include "util.h"
 #include "vlog.h"
 
-VLOG_DEFINE_THIS_MODULE(ovsdb_tool);
-
 /* -m, --more: Verbosity level for "show-log" command output. */
 static int show_log_verbosity;
 
@@ -526,7 +524,7 @@ do_show_log(int argc, char *argv[])
                     t *= 1000;
                 }
 
-		s = xastrftime_msec(" %Y-%m-%d %H:%M:%S.###", t, true);
+                s = xastrftime_msec(" %Y-%m-%d %H:%M:%S.###", t, true);
                 fputs(s, stdout);
                 free(s);
             }

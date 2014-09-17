@@ -73,6 +73,12 @@ struct xlate_in {
      * not if we are just revalidating. */
     bool may_learn;
 
+    /* If the caller of xlate_actions() doesn't need the flow_wildcards
+     * contained in struct xlate_out.  'skip_wildcards' can be set to true
+     * disabling the expensive wildcard computation.  When true, 'wc' in struct
+     * xlate_out is undefined and should not be read. */
+    bool skip_wildcards;
+
     /* The rule initiating translation or NULL. If both 'rule' and 'ofpacts'
      * are NULL, xlate_actions() will do the initial rule lookup itself. */
     struct rule_dpif *rule;
@@ -84,7 +90,7 @@ struct xlate_in {
     /* Union of the set of TCP flags seen so far in this flow.  (Used only by
      * NXAST_FIN_TIMEOUT.  Set to zero to avoid updating updating rules'
      * timeouts.) */
-    uint8_t tcp_flags;
+    uint16_t tcp_flags;
 
     /* If nonnull, flow translation calls this function just before executing a
      * resubmit or OFPP_TABLE action.  In addition, disables logging of traces
@@ -121,8 +127,9 @@ void xlate_ofproto_set(struct ofproto_dpif *, const char *name,
                        struct rule_dpif *no_packet_in_rule,
                        const struct mac_learning *, struct stp *,
                        const struct mbridge *, const struct dpif_sflow *,
-                       const struct dpif_ipfix *, enum ofp_config_flags,
-                       bool forward_bpdu, bool has_in_band, bool has_netflow)
+                       const struct dpif_ipfix *, const struct netflow *,
+                       enum ofp_config_flags, bool forward_bpdu,
+                       bool has_in_band)
     OVS_REQ_WRLOCK(xlate_rwlock);
 void xlate_remove_ofproto(struct ofproto_dpif *) OVS_REQ_WRLOCK(xlate_rwlock);
 
@@ -138,22 +145,28 @@ void xlate_ofport_set(struct ofproto_dpif *, struct ofbundle *,
                       const struct netdev *, const struct cfm *,
                       const struct bfd *, struct ofport_dpif *peer,
                       int stp_port_no, const struct ofproto_port_queue *qdscp,
-                      size_t n_qdscp, enum ofputil_port_config, bool is_tunnel,
+                      size_t n_qdscp, enum ofputil_port_config,
+                      enum ofputil_port_state, bool is_tunnel,
                       bool may_enable) OVS_REQ_WRLOCK(xlate_rwlock);
 void xlate_ofport_remove(struct ofport_dpif *) OVS_REQ_WRLOCK(xlate_rwlock);
 
 int xlate_receive(const struct dpif_backer *, struct ofpbuf *packet,
                   const struct nlattr *key, size_t key_len,
                   struct flow *, enum odp_key_fitness *,
-                  struct ofproto_dpif **, odp_port_t *odp_in_port)
+                  struct ofproto_dpif **, struct dpif_ipfix **,
+                  struct dpif_sflow **, struct netflow **,
+                  odp_port_t *odp_in_port)
     OVS_EXCLUDED(xlate_rwlock);
 
 void xlate_actions(struct xlate_in *, struct xlate_out *)
     OVS_EXCLUDED(xlate_rwlock);
 void xlate_in_init(struct xlate_in *, struct ofproto_dpif *,
-                   const struct flow *, struct rule_dpif *,
-                   uint8_t tcp_flags, const struct ofpbuf *packet);
+                   const struct flow *, struct rule_dpif *, uint16_t tcp_flags,
+                   const struct ofpbuf *packet);
 void xlate_out_uninit(struct xlate_out *);
 void xlate_actions_for_side_effects(struct xlate_in *);
 void xlate_out_copy(struct xlate_out *dst, const struct xlate_out *src);
+
+int xlate_send_packet(const struct ofport_dpif *, struct ofpbuf *);
+
 #endif /* ofproto-dpif-xlate.h */

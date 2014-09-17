@@ -3352,6 +3352,7 @@ set_column(const struct vsctl_table_class *table,
 
         ovsdb_datum_union(&datum, ovsdb_idl_read(row, column),
                           &column->type, false);
+        ovsdb_idl_txn_verify(row, column);
         ovsdb_idl_txn_write(row, column, &datum);
     } else {
         struct ovsdb_datum datum;
@@ -3630,7 +3631,7 @@ post_create(struct vsctl_context *ctx)
     struct uuid dummy;
 
     if (!uuid_from_string(&dummy, ds_cstr(&ctx->output))) {
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
     real = ovsdb_idl_txn_get_insert_uuid(ctx->txn, &dummy);
     if (real) {
@@ -3748,7 +3749,7 @@ evaluate_relop(const struct ovsdb_datum *a, const struct ovsdb_datum *b,
         return ovsdb_datum_includes_all(b, a, type);
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -4058,7 +4059,7 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
     switch (status) {
     case TXN_UNCOMMITTED:
     case TXN_INCOMPLETE:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case TXN_ABORTED:
         /* Should not happen--we never call ovsdb_idl_txn_abort(). */
@@ -4079,7 +4080,7 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
         vsctl_fatal("database not locked");
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
     free(error);
 
@@ -4122,6 +4123,11 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
     free(commands);
 
     if (wait_for_reload && status != TXN_UNCHANGED) {
+        /* Even, if --retry flag was not specified, ovs-vsctl still
+         * has to retry to establish OVSDB connection, if wait_for_reload
+         * was set.  Otherwise, ovs-vsctl would end up waiting forever
+         * until cur_cfg would be updated. */
+        ovsdb_idl_enable_reconnect(idl);
         for (;;) {
             ovsdb_idl_run(idl);
             OVSREC_OPEN_VSWITCH_FOR_EACH (ovs, idl) {

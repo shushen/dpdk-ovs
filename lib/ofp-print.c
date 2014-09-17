@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ ofp_packet_to_string(const void *data, size_t len)
         } else if (flow.nw_proto == IPPROTO_SCTP) {
             struct sctp_header *sh = buf.l4;
             ds_put_format(&ds, " sctp_csum:%"PRIx32,
-                          ntohl(sh->sctp_csum));
+                          ntohl(get_16aligned_be32(&sh->sctp_csum)));
         }
     }
 
@@ -105,11 +105,11 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
         ds_put_format(string, " table_id=%"PRIu8, pin.table_id);
     }
 
-    if (pin.cookie) {
+    if (pin.cookie != OVS_BE64_MAX) {
         ds_put_format(string, " cookie=0x%"PRIx64, ntohll(pin.cookie));
     }
 
-    ds_put_format(string, " total_len=%"PRIu16" in_port=", pin.total_len);
+    ds_put_format(string, " total_len=%"PRIuSIZE" in_port=", pin.total_len);
     ofputil_format_port(pin.fmd.in_port, string);
 
     if (pin.fmd.tun_id != htonll(0)) {
@@ -142,7 +142,7 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
                   ofputil_packet_in_reason_to_string(pin.reason, reasonbuf,
                                                      sizeof reasonbuf));
 
-    ds_put_format(string, " data_len=%zu", pin.packet_len);
+    ds_put_format(string, " data_len=%"PRIuSIZE, pin.packet_len);
     if (pin.buffer_id == UINT32_MAX) {
         ds_put_format(string, " (unbuffered)");
         if (pin.total_len != pin.packet_len) {
@@ -185,11 +185,11 @@ ofp_print_packet_out(struct ds *string, const struct ofp_header *oh,
     ds_put_cstr(string, " in_port=");
     ofputil_format_port(po.in_port, string);
 
-    ds_put_char(string, ' ');
+    ds_put_cstr(string, " actions=");
     ofpacts_format(po.ofpacts, po.ofpacts_len, string);
 
     if (po.buffer_id == UINT32_MAX) {
-        ds_put_format(string, " data_len=%zu", po.packet_len);
+        ds_put_format(string, " data_len=%"PRIuSIZE, po.packet_len);
         if (verbosity > 0 && po.packet_len > 0) {
             char *packet = ofp_packet_to_string(po.packet, po.packet_len);
             ds_put_char(string, '\n');
@@ -540,7 +540,7 @@ ofp_print_switch_features(struct ds *string, const struct ofp_header *oh)
     case OFP13_VERSION:
         return; /* no ports in ofp13_switch_features */
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 
     ofp_print_phy_ports(string, oh->version, &b);
@@ -757,7 +757,8 @@ ofp_print_flow_mod(struct ds *s, const struct ofp_header *oh, int verbosity)
     protocol = ofputil_protocol_set_tid(protocol, true);
 
     ofpbuf_init(&ofpacts, 64);
-    error = ofputil_decode_flow_mod(&fm, oh, protocol, &ofpacts);
+    error = ofputil_decode_flow_mod(&fm, oh, protocol, &ofpacts,
+                                    OFPP_MAX, 255);
     if (error) {
         ofpbuf_uninit(&ofpacts);
         ofp_print_error(s, error);
@@ -817,7 +818,7 @@ ofp_print_flow_mod(struct ds *s, const struct ofp_header *oh, int verbosity)
     if (ds_last(s) != ' ') {
         ds_put_char(s, ' ');
     }
-    if (fm.new_cookie != htonll(0) && fm.new_cookie != htonll(UINT64_MAX)) {
+    if (fm.new_cookie != htonll(0) && fm.new_cookie != OVS_BE64_MAX) {
         ds_put_format(s, "cookie:0x%"PRIx64" ", ntohll(fm.new_cookie));
     }
     if (fm.cookie_mask != htonll(0)) {
@@ -850,6 +851,7 @@ ofp_print_flow_mod(struct ds *s, const struct ofp_header *oh, int verbosity)
     }
     ofp_print_flow_flags(s, fm.flags);
 
+    ds_put_cstr(s, "actions=");
     ofpacts_format(fm.ofpacts, fm.ofpacts_len, s);
     ofpbuf_uninit(&ofpacts);
 }
@@ -858,10 +860,26 @@ static void
 ofp_print_duration(struct ds *string, unsigned int sec, unsigned int nsec)
 {
     ds_put_format(string, "%u", sec);
+
+    /* If there are no fractional seconds, don't print any decimals.
+     *
+     * If the fractional seconds can be expressed exactly as milliseconds,
+     * print 3 decimals.  Open vSwitch provides millisecond precision for most
+     * time measurements, so printing 3 decimals every time makes it easier to
+     * spot real changes in flow dumps that refresh themselves quickly.
+     *
+     * If the fractional seconds are more precise than milliseconds, print the
+     * number of decimals needed to express them exactly.
+     */
     if (nsec > 0) {
-        ds_put_format(string, ".%09u", nsec);
-        while (string->string[string->length - 1] == '0') {
-            string->length--;
+        unsigned int msec = nsec / 1000000;
+        if (msec * 1000000 == nsec) {
+            ds_put_format(string, ".%03u", msec);
+        } else {
+            ds_put_format(string, ".%09u", nsec);
+            while (string->string[string->length - 1] == '0') {
+                string->length--;
+            }
         }
     }
     ds_put_char(string, 's');
@@ -961,6 +979,114 @@ ofp_print_port_mod(struct ds *string, const struct ofp_header *oh)
         ofp_print_port_features(string, pm.advertise);
     } else {
         ds_put_cstr(string, "UNCHANGED\n");
+    }
+}
+
+static void
+ofp_print_table_miss_config(struct ds *string, const uint32_t config)
+{
+    uint32_t table_miss_config = config & OFPTC11_TABLE_MISS_MASK;
+
+    switch (table_miss_config) {
+    case OFPTC11_TABLE_MISS_CONTROLLER:
+        ds_put_cstr(string, "controller\n");
+        break;
+    case OFPTC11_TABLE_MISS_CONTINUE:
+        ds_put_cstr(string, "continue\n");
+        break;
+    case OFPTC11_TABLE_MISS_DROP:
+        ds_put_cstr(string, "drop\n");
+        break;
+    default:
+        ds_put_cstr(string, "Unknown\n");
+        break;
+    }
+}
+
+static void
+ofp_print_table_mod(struct ds *string, const struct ofp_header *oh)
+{
+    struct ofputil_table_mod pm;
+    enum ofperr error;
+
+    error = ofputil_decode_table_mod(oh, &pm);
+    if (error) {
+        ofp_print_error(string, error);
+        return;
+    }
+
+    if (pm.table_id == 0xff) {
+        ds_put_cstr(string, " table_id: ALL_TABLES");
+    } else {
+        ds_put_format(string, " table_id=%"PRIu8, pm.table_id);
+    }
+
+    ds_put_cstr(string, ", flow_miss_config=");
+    ofp_print_table_miss_config(string, pm.config);
+}
+
+static void
+ofp_print_queue_get_config_request(struct ds *string,
+                                   const struct ofp_header *oh)
+{
+    enum ofperr error;
+    ofp_port_t port;
+
+    error = ofputil_decode_queue_get_config_request(oh, &port);
+    if (error) {
+        ofp_print_error(string, error);
+        return;
+    }
+
+    ds_put_cstr(string, " port=");
+    ofputil_format_port(port, string);
+}
+
+static void
+print_queue_rate(struct ds *string, const char *name, unsigned int rate)
+{
+    if (rate <= 1000) {
+        ds_put_format(string, " %s:%u.%u%%", name, rate / 10, rate % 10);
+    } else if (rate < UINT16_MAX) {
+        ds_put_format(string, " %s:(disabled)", name);
+    }
+}
+
+static void
+ofp_print_queue_get_config_reply(struct ds *string,
+                                 const struct ofp_header *oh)
+{
+    enum ofperr error;
+    struct ofpbuf b;
+    ofp_port_t port;
+
+    ofpbuf_use_const(&b, oh, ntohs(oh->length));
+    error = ofputil_decode_queue_get_config_reply(&b, &port);
+    if (error) {
+        ofp_print_error(string, error);
+        return;
+    }
+
+    ds_put_cstr(string, " port=");
+    ofputil_format_port(port, string);
+    ds_put_char(string, '\n');
+
+    for (;;) {
+        struct ofputil_queue_config queue;
+        int retval;
+
+        retval = ofputil_pull_queue_get_config_reply(&b, &queue);
+        if (retval) {
+            if (retval != EOF) {
+                ofp_print_error(string, retval);
+            }
+            break;
+        }
+
+        ds_put_format(string, "queue %"PRIu32":", queue.queue_id);
+        print_queue_rate(string, "min_rate", queue.min_rate);
+        print_queue_rate(string, "max_rate", queue.max_rate);
+        ds_put_char(string, '\n');
     }
 }
 
@@ -1240,6 +1366,7 @@ ofp_print_error_msg(struct ds *string, const struct ofp_header *oh)
         ds_put_cstr(string, s);
         free(s);
     }
+    ofpbuf_uninit(&payload);
 }
 
 static void
@@ -1339,6 +1466,7 @@ ofp_print_flow_stats(struct ds *string, struct ofputil_flow_stats *fs)
         ds_put_char(string, ' ');
     }
 
+    ds_put_cstr(string, "actions=");
     ofpacts_format(fs->ofpacts, fs->ofpacts_len, string);
 }
 
@@ -1422,7 +1550,7 @@ ofp_print_ofpst_port_reply(struct ds *string, const struct ofp_header *oh,
 {
     struct ofpbuf b;
 
-    ds_put_format(string, " %zu ports\n", ofputil_count_port_stats(oh));
+    ds_put_format(string, " %"PRIuSIZE" ports\n", ofputil_count_port_stats(oh));
     if (verbosity < 1) {
         return;
     }
@@ -1536,7 +1664,7 @@ ofp_print_ofpst_table_reply13(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1566,7 +1694,7 @@ ofp_print_ofpst_table_reply12(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1593,7 +1721,7 @@ ofp_print_ofpst_table_reply11(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1633,7 +1761,7 @@ ofp_print_ofpst_table_reply10(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1678,7 +1806,7 @@ ofp_print_ofpst_table_reply(struct ds *string, const struct ofp_header *oh,
         break;
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -1717,7 +1845,7 @@ ofp_print_ofpst_queue_reply(struct ds *string, const struct ofp_header *oh,
 {
     struct ofpbuf b;
 
-    ds_put_format(string, " %zu queues\n", ofputil_count_queue_stats(oh));
+    ds_put_format(string, " %"PRIuSIZE" queues\n", ofputil_count_queue_stats(oh));
     if (verbosity < 1) {
         return;
     }
@@ -1800,9 +1928,37 @@ ofp_print_echo(struct ds *string, const struct ofp_header *oh, int verbosity)
 {
     size_t len = ntohs(oh->length);
 
-    ds_put_format(string, " %zu bytes of payload\n", len - sizeof *oh);
+    ds_put_format(string, " %"PRIuSIZE" bytes of payload\n", len - sizeof *oh);
     if (verbosity > 1) {
         ds_put_hex_dump(string, oh + 1, len - sizeof *oh, 0, true);
+    }
+}
+
+static void
+ofp_print_role_generic(struct ds *string, enum ofp12_controller_role role,
+                       uint64_t generation_id)
+{
+    ds_put_cstr(string, " role=");
+
+    switch (role) {
+    case OFPCR12_ROLE_NOCHANGE:
+        ds_put_cstr(string, "nochange");
+        break;
+    case OFPCR12_ROLE_EQUAL:
+        ds_put_cstr(string, "equal"); /* OF 1.2 wording */
+        break;
+    case OFPCR12_ROLE_MASTER:
+        ds_put_cstr(string, "master");
+        break;
+    case OFPCR12_ROLE_SLAVE:
+        ds_put_cstr(string, "slave");
+        break;
+    default:
+        OVS_NOT_REACHED();
+    }
+
+    if (generation_id != UINT64_MAX) {
+        ds_put_format(string, " generation_id=%"PRIu64, generation_id);
     }
 }
 
@@ -1818,27 +1974,37 @@ ofp_print_role_message(struct ds *string, const struct ofp_header *oh)
         return;
     }
 
-    ds_put_cstr(string, " role=");
+    ofp_print_role_generic(string, rr.role, rr.have_generation_id ? rr.generation_id : UINT64_MAX);
+}
 
-    switch (rr.role) {
-    case OFPCR12_ROLE_NOCHANGE:
-        ds_put_cstr(string, "nochange");
-        break;
-    case OFPCR12_ROLE_EQUAL:
-        ds_put_cstr(string, "equal"); /* OF 1.2 wording */
-        break;
-    case OFPCR12_ROLE_MASTER:
-        ds_put_cstr(string, "master");
-        break;
-    case OFPCR12_ROLE_SLAVE:
-        ds_put_cstr(string, "slave");
-        break;
-    default:
-        NOT_REACHED();
+static void
+ofp_print_role_status_message(struct ds *string, const struct ofp_header *oh)
+{
+    struct ofputil_role_status rs;
+    enum ofperr error;
+
+    error = ofputil_decode_role_status(oh, &rs);
+    if (error) {
+        ofp_print_error(string, error);
+        return;
     }
 
-    if (rr.have_generation_id) {
-        ds_put_format(string, " generation_id=%"PRIu64, rr.generation_id);
+    ofp_print_role_generic(string, rs.role, rs.generation_id);
+
+    ds_put_cstr(string, " reason=");
+
+    switch (rs.reason) {
+    case OFPCRR_MASTER_REQUEST:
+        ds_put_cstr(string, "master_request");
+        break;
+    case OFPCRR_CONFIG:
+        ds_put_cstr(string, "configuration_changed");
+        break;
+    case OFPCRR_EXPERIMENTER:
+        ds_put_cstr(string, "experimenter_data_changed");
+        break;
+    default:
+        OVS_NOT_REACHED();
     }
 }
 
@@ -2098,6 +2264,7 @@ ofp_print_nxst_flow_monitor_reply(struct ds *string,
             if (string->string[string->length - 1] != ' ') {
                 ds_put_char(string, ' ');
             }
+            ds_put_cstr(string, "actions=");
             ofpacts_format(update.ofpacts, update.ofpacts_len, string);
         }
     }
@@ -2141,6 +2308,201 @@ ofp_print_not_implemented(struct ds *string)
 }
 
 static void
+ofp_print_group(struct ds *s, uint32_t group_id, uint8_t type,
+                struct list *p_buckets)
+{
+    static const char *type_str[] = { "all", "select", "indirect",
+                                      "ff", "unknown" };
+    struct ofputil_bucket *bucket;
+
+    ds_put_format(s, "group_id=%"PRIu32",type=%s",
+                  group_id, type_str[type > 4 ? 4 : type]);
+    if (!p_buckets) {
+        return;
+    }
+
+    LIST_FOR_EACH (bucket, list_node, p_buckets) {
+        ds_put_cstr(s, ",bucket=");
+
+        if (bucket->weight != 1) {
+            ds_put_format(s, "weight:%"PRIu16",", bucket->weight);
+        }
+        if (bucket->watch_port != OFPP_NONE) {
+            ds_put_format(s, "watch_port:%"PRIu32",", bucket->watch_port);
+        }
+        if (bucket->watch_group != OFPG11_ANY) {
+            ds_put_format(s, "watch_group:%"PRIu32",", bucket->watch_group);
+        }
+
+        ds_put_cstr(s, "actions=");
+        ofpacts_format(bucket->ofpacts, bucket->ofpacts_len, s);
+    }
+}
+
+static void
+ofp_print_group_desc(struct ds *s, const struct ofp_header *oh)
+{
+    struct ofpbuf b;
+
+    ofpbuf_use_const(&b, oh, ntohs(oh->length));
+    for (;;) {
+        struct ofputil_group_desc gd;
+        int retval;
+
+        retval = ofputil_decode_group_desc_reply(&gd, &b, oh->version);
+        if (retval) {
+            if (retval != EOF) {
+                ds_put_cstr(s, " ***parse error***");
+            }
+            break;
+        }
+
+        ds_put_char(s, '\n');
+        ds_put_char(s, ' ');
+        ofp_print_group(s, gd.group_id, gd.type, &gd.buckets);
+     }
+}
+
+static void
+ofp_print_ofpst_group_request(struct ds *string, const struct ofp_header *oh)
+{
+    enum ofperr error;
+    uint32_t group_id;
+
+    error = ofputil_decode_group_stats_request(oh, &group_id);
+    if (error) {
+        ofp_print_error(string, error);
+        return;
+    }
+
+    ds_put_cstr(string, " group_id=");
+    ofputil_format_group(group_id, string);
+}
+
+static void
+ofp_print_group_stats(struct ds *s, const struct ofp_header *oh)
+{
+    struct ofpbuf b;
+    uint32_t bucket_i;
+
+    ofpbuf_use_const(&b, oh, ntohs(oh->length));
+
+    for (;;) {
+        struct ofputil_group_stats gs;
+        int retval;
+
+        retval = ofputil_decode_group_stats_reply(&b, &gs);
+        if (retval) {
+            if (retval != EOF) {
+                ds_put_cstr(s, " ***parse error***");
+            }
+            break;
+        }
+
+        ds_put_char(s, '\n');
+
+        ds_put_char(s, ' ');
+        ds_put_format(s, "group_id=%"PRIu32",", gs.group_id);
+
+        if (gs.duration_sec != UINT32_MAX) {
+            ds_put_cstr(s, "duration=");
+            ofp_print_duration(s, gs.duration_sec, gs.duration_nsec);
+            ds_put_char(s, ',');
+        }
+        ds_put_format(s, "ref_count=%"PRIu32",", gs.ref_count);
+        ds_put_format(s, "packet_count=%"PRIu64",", gs.packet_count);
+        ds_put_format(s, "byte_count=%"PRIu64"", gs.byte_count);
+
+        for (bucket_i = 0; bucket_i < gs.n_buckets; bucket_i++) {
+            if (gs.bucket_stats[bucket_i].packet_count != UINT64_MAX) {
+                ds_put_format(s, ",bucket%"PRIu32":", bucket_i);
+                ds_put_format(s, "packet_count=%"PRIu64",", gs.bucket_stats[bucket_i].packet_count);
+                ds_put_format(s, "byte_count=%"PRIu64"", gs.bucket_stats[bucket_i].byte_count);
+            }
+        }
+
+        free(gs.bucket_stats);
+     }
+}
+
+static void
+ofp_print_group_features(struct ds *string, const struct ofp_header *oh)
+{
+    struct ofputil_group_features features;
+
+    ofputil_decode_group_features_reply(oh, &features);
+
+    ds_put_format(string, "\n Group table:\n");
+    ds_put_format(string, "    Types:  0x%"PRIx32"\n", features.types);
+    ds_put_format(string, "    Capabilities:  0x%"PRIx32"\n",
+                  features.capabilities);
+
+    if (features.types & (1u << OFPGT11_ALL)) {
+        ds_put_format(string, "    All group :\n");
+        ds_put_format(string,
+                      "        max_groups = %#"PRIx32" actions=0x%08"PRIx32"\n",
+                      features.max_groups[0], features.actions[0]);
+    }
+
+    if (features.types & (1u << OFPGT11_SELECT)) {
+        ds_put_format(string, "    Select group :\n");
+        ds_put_format(string, "        max_groups = %#"PRIx32" "
+                      "actions=0x%08"PRIx32"\n",
+                      features.max_groups[1], features.actions[1]);
+    }
+
+    if (features.types & (1u << OFPGT11_INDIRECT)) {
+        ds_put_format(string, "    Indirect group :\n");
+        ds_put_format(string, "        max_groups = %#"PRIx32" "
+                      "actions=0x%08"PRIx32"\n",
+                      features.max_groups[2], features.actions[2]);
+    }
+
+    if (features.types & (1u << OFPGT11_FF)) {
+        ds_put_format(string, "    Fast Failover group :\n");
+        ds_put_format(string, "        max_groups = %#"PRIx32" "
+                      "actions=0x%08"PRIx32"\n",
+                      features.max_groups[3], features.actions[3]);
+    }
+}
+
+static void
+ofp_print_group_mod(struct ds *s, const struct ofp_header *oh)
+{
+    struct ofputil_group_mod gm;
+    int error;
+
+    error = ofputil_decode_group_mod(oh, &gm);
+    if (error) {
+        ofp_print_error(s, error);
+        return;
+    }
+
+    ds_put_char(s, '\n');
+
+    ds_put_char(s, ' ');
+    switch (gm.command) {
+    case OFPGC11_ADD:
+        ds_put_cstr(s, "ADD");
+        break;
+
+    case OFPGC11_MODIFY:
+        ds_put_cstr(s, "MOD");
+        break;
+
+    case OFPGC11_DELETE:
+        ds_put_cstr(s, "DEL");
+        break;
+
+    default:
+        ds_put_format(s, "cmd:%"PRIu16"", gm.command);
+    }
+    ds_put_char(s, ' ');
+
+    ofp_print_group(s, gm.group_id, gm.type, &gm.buckets);
+}
+
+static void
 ofp_to_string__(const struct ofp_header *oh, enum ofpraw raw,
                 struct ds *string, int verbosity)
 {
@@ -2149,17 +2511,35 @@ ofp_to_string__(const struct ofp_header *oh, enum ofpraw raw,
     ofp_header_to_string__(oh, raw, string);
     switch (ofptype_from_ofpraw(raw)) {
 
-        /* FIXME: Change the following once they are implemented: */
-    case OFPTYPE_QUEUE_GET_CONFIG_REQUEST:
-    case OFPTYPE_QUEUE_GET_CONFIG_REPLY:
-    case OFPTYPE_GET_ASYNC_REQUEST:
-    case OFPTYPE_GET_ASYNC_REPLY:
     case OFPTYPE_GROUP_STATS_REQUEST:
+        ofp_print_stats_request(string, oh);
+        ofp_print_ofpst_group_request(string, oh);
+        break;
+
     case OFPTYPE_GROUP_STATS_REPLY:
+        ofp_print_group_stats(string, oh);
+        break;
+
     case OFPTYPE_GROUP_DESC_STATS_REQUEST:
+        ofp_print_stats_request(string, oh);
+        break;
+
     case OFPTYPE_GROUP_DESC_STATS_REPLY:
+        ofp_print_group_desc(string, oh);
+        break;
+
     case OFPTYPE_GROUP_FEATURES_STATS_REQUEST:
+        ofp_print_stats_request(string, oh);
+        break;
+
     case OFPTYPE_GROUP_FEATURES_STATS_REPLY:
+        ofp_print_group_features(string, oh);
+        break;
+
+    case OFPTYPE_GROUP_MOD:
+        ofp_print_group_mod(string, oh);
+        break;
+
     case OFPTYPE_TABLE_FEATURES_STATS_REQUEST:
     case OFPTYPE_TABLE_FEATURES_STATS_REPLY:
         ofp_print_not_implemented(string);
@@ -2217,6 +2597,10 @@ ofp_to_string__(const struct ofp_header *oh, enum ofpraw raw,
         ofp_print_port_mod(string, oh);
         break;
 
+    case OFPTYPE_TABLE_MOD:
+        ofp_print_table_mod(string, oh);
+        break;
+
     case OFPTYPE_METER_MOD:
         ofp_print_meter_mod(string, oh);
         break;
@@ -2225,9 +2609,20 @@ ofp_to_string__(const struct ofp_header *oh, enum ofpraw raw,
     case OFPTYPE_BARRIER_REPLY:
         break;
 
+    case OFPTYPE_QUEUE_GET_CONFIG_REQUEST:
+        ofp_print_queue_get_config_request(string, oh);
+        break;
+
+    case OFPTYPE_QUEUE_GET_CONFIG_REPLY:
+        ofp_print_queue_get_config_reply(string, oh);
+        break;
+
     case OFPTYPE_ROLE_REQUEST:
     case OFPTYPE_ROLE_REPLY:
         ofp_print_role_message(string, oh);
+        break;
+    case OFPTYPE_ROLE_STATUS:
+        ofp_print_role_status_message(string, oh);
         break;
 
     case OFPTYPE_METER_STATS_REQUEST:
@@ -2331,10 +2726,12 @@ ofp_to_string__(const struct ofp_header *oh, enum ofpraw raw,
         ofp_print_nxt_set_controller_id(string, ofpmsg_body(oh));
         break;
 
+    case OFPTYPE_GET_ASYNC_REPLY:
     case OFPTYPE_SET_ASYNC_CONFIG:
         ofp_print_nxt_set_async_config(string, ofpmsg_body(oh));
         break;
-
+    case OFPTYPE_GET_ASYNC_REQUEST:
+        break;
     case OFPTYPE_FLOW_MONITOR_CANCEL:
         ofp_print_nxt_flow_monitor_cancel(string, msg);
         break;
@@ -2366,7 +2763,7 @@ ofp_to_string(const void *oh_, size_t len, int verbosity)
     if (!len) {
         ds_put_cstr(&string, "OpenFlow message is empty\n");
     } else if (len < sizeof(struct ofp_header)) {
-        ds_put_format(&string, "OpenFlow packet too short (only %zu bytes):\n",
+        ds_put_format(&string, "OpenFlow packet too short (only %"PRIuSIZE" bytes):\n",
                       len);
     } else if (ntohs(oh->length) > len) {
         enum ofperr error;
@@ -2379,11 +2776,11 @@ ofp_to_string(const void *oh_, size_t len, int verbosity)
         }
 
         ds_put_format(&string,
-                      "(***truncated to %zu bytes from %"PRIu16"***)\n",
+                      "(***truncated to %"PRIuSIZE" bytes from %"PRIu16"***)\n",
                       len, ntohs(oh->length));
     } else if (ntohs(oh->length) < len) {
         ds_put_format(&string,
-                      "(***only uses %"PRIu16" bytes out of %zu***)\n",
+                      "(***only uses %"PRIu16" bytes out of %"PRIuSIZE"***)\n",
                       ntohs(oh->length), len);
     } else {
         enum ofperr error;

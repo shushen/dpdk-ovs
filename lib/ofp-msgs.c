@@ -260,20 +260,46 @@ ofphdrs_decode_assert(struct ofphdrs *hdrs,
 }
 
 static bool
-ofphdrs_is_stat(const struct ofphdrs *hdrs)
+ofp_is_stat_request(enum ofp_version version, uint8_t type)
 {
-    switch ((enum ofp_version) hdrs->version) {
+    switch (version) {
     case OFP10_VERSION:
-        return (hdrs->type == OFPT10_STATS_REQUEST ||
-                hdrs->type == OFPT10_STATS_REPLY);
+        return type == OFPT10_STATS_REQUEST;
     case OFP11_VERSION:
     case OFP12_VERSION:
     case OFP13_VERSION:
-        return (hdrs->type == OFPT11_STATS_REQUEST ||
-                hdrs->type == OFPT11_STATS_REPLY);
+        return type == OFPT11_STATS_REQUEST;
     }
 
     return false;
+}
+
+static bool
+ofp_is_stat_reply(enum ofp_version version, uint8_t type)
+{
+    switch (version) {
+    case OFP10_VERSION:
+        return type == OFPT10_STATS_REPLY;
+    case OFP11_VERSION:
+    case OFP12_VERSION:
+    case OFP13_VERSION:
+        return type == OFPT11_STATS_REPLY;
+    }
+
+    return false;
+}
+
+static bool
+ofp_is_stat(enum ofp_version version, uint8_t type)
+{
+    return (ofp_is_stat_request(version, type) ||
+            ofp_is_stat_reply(version, type));
+}
+
+static bool
+ofphdrs_is_stat(const struct ofphdrs *hdrs)
+{
+    return ofp_is_stat(hdrs->version, hdrs->type);
 }
 
 size_t
@@ -667,7 +693,7 @@ ofpraw_put__(enum ofpraw raw, uint8_t version, ovs_be32 xid,
                 nsm->subtype = htonl(hdrs->subtype);
                 memset(nsm->pad, 0, sizeof nsm->pad);
             } else {
-                NOT_REACHED();
+                OVS_NOT_REACHED();
             }
         }
     } else if (version != OFP10_VERSION
@@ -688,7 +714,7 @@ ofpraw_put__(enum ofpraw raw, uint8_t version, ovs_be32 xid,
 
                 nsm->subtype = htonl(hdrs->subtype);
             } else {
-                NOT_REACHED();
+                OVS_NOT_REACHED();
             }
         }
     }
@@ -731,7 +757,7 @@ ofpraw_stats_request_to_reply(enum ofpraw raw, uint8_t version)
         hdrs.type = OFPT11_STATS_REPLY;
         break;
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 
     error = ofpraw_from_ofphdrs(&reply_raw, &hdrs);
@@ -810,6 +836,13 @@ ofpmsg_body(const struct ofp_header *oh)
 
     ofphdrs_decode_assert(&hdrs, oh, ntohs(oh->length));
     return (const uint8_t *) oh + ofphdrs_len(&hdrs);
+}
+
+/* Return if it's a stat/multipart (OFPST) request message. */
+bool
+ofpmsg_is_stat_request(const struct ofp_header *oh)
+{
+    return ofp_is_stat_request(oh->version, oh->type);
 }
 
 static ovs_be16 *ofpmp_flags__(const struct ofp_header *);
@@ -908,7 +941,7 @@ ofpmp_flags__(const struct ofp_header *oh)
     case OFP13_VERSION:
         return &((struct ofp11_stats_msg *) oh)->flags;
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 

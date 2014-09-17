@@ -63,7 +63,7 @@ multipath_from_openflow(const struct nx_action_multipath *nam,
         VLOG_WARN_RL(&rl, "unsupported algorithm %d", (int) mp->algorithm);
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     } else if (mp->dst.n_bits < min_n_bits) {
-        VLOG_WARN_RL(&rl, "multipath action requires at least %zu bits for "
+        VLOG_WARN_RL(&rl, "multipath action requires at least %"PRIuSIZE" bits for "
                      "%"PRIu32" links", min_n_bits, n_links);
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     }
@@ -189,7 +189,7 @@ multipath_algorithm(uint32_t hash, enum nx_mp_algorithm algorithm,
         return algorithm_iter_hash(hash, n_links, arg);
     }
 
-    NOT_REACHED();
+    OVS_NOT_REACHED();
 }
 
 /* Parses 's_' as a set of arguments to the "multipath" action and initializes

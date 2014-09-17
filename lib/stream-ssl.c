@@ -189,7 +189,7 @@ want_to_poll_events(int want)
 {
     switch (want) {
     case SSL_NOTHING:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case SSL_READING:
         return POLLIN;
@@ -198,14 +198,13 @@ want_to_poll_events(int want)
         return POLLOUT;
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
 static int
 new_ssl_stream(const char *name, int fd, enum session_type type,
-               enum ssl_state state, const struct sockaddr_in *remote,
-               struct stream **streamp)
+               enum ssl_state state, struct stream **streamp)
 {
     struct sockaddr_in local;
     socklen_t local_len = sizeof local;
@@ -270,10 +269,6 @@ new_ssl_stream(const char *name, int fd, enum session_type type,
     /* Create and return the ssl_stream. */
     sslv = xmalloc(sizeof *sslv);
     stream_init(&sslv->stream, &ssl_stream_class, EAGAIN, name);
-    stream_set_remote_ip(&sslv->stream, remote->sin_addr.s_addr);
-    stream_set_remote_port(&sslv->stream, remote->sin_port);
-    stream_set_local_ip(&sslv->stream, local.sin_addr.s_addr);
-    stream_set_local_port(&sslv->stream, local.sin_port);
     sslv->state = state;
     sslv->type = type;
     sslv->fd = fd;
@@ -309,7 +304,6 @@ ssl_stream_cast(struct stream *stream)
 static int
 ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
 {
-    struct sockaddr_in sin;
     int error, fd;
 
     error = ssl_init();
@@ -317,11 +311,11 @@ ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
         return error;
     }
 
-    error = inet_open_active(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, &fd,
+    error = inet_open_active(SOCK_STREAM, suffix, OFP_OLD_PORT, NULL, &fd,
                              dscp);
     if (fd >= 0) {
         int state = error ? STATE_TCP_CONNECTING : STATE_SSL_CONNECTING;
-        return new_ssl_stream(name, fd, CLIENT, state, &sin, streamp);
+        return new_ssl_stream(name, fd, CLIENT, state, streamp);
     } else {
         VLOG_ERR("%s: connect: %s", name, ovs_strerror(error));
         return error;
@@ -484,7 +478,7 @@ ssl_connect(struct stream *stream)
         }
     }
 
-    NOT_REACHED();
+    OVS_NOT_REACHED();
 }
 
 static void
@@ -724,7 +718,7 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
                 break;
 
             default:
-                NOT_REACHED();
+                OVS_NOT_REACHED();
             }
         }
         break;
@@ -748,7 +742,7 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
         break;
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -797,7 +791,7 @@ pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp,
         return retval;
     }
 
-    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, dscp);
+    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_OLD_PORT, &sin, dscp);
     if (fd < 0) {
         return -fd;
     }
@@ -846,10 +840,10 @@ pssl_accept(struct pstream *pstream, struct stream **new_streamp)
     }
 
     sprintf(name, "ssl:"IP_FMT, IP_ARGS(sin.sin_addr.s_addr));
-    if (sin.sin_port != htons(OFP_SSL_PORT)) {
+    if (sin.sin_port != htons(OFP_OLD_PORT)) {
         sprintf(strchr(name, '\0'), ":%"PRIu16, ntohs(sin.sin_port));
     }
-    return new_ssl_stream(name, new_fd, SERVER, STATE_SSL_CONNECTING, &sin,
+    return new_ssl_stream(name, new_fd, SERVER, STATE_SSL_CONNECTING,
                           new_streamp);
 }
 
@@ -1212,7 +1206,7 @@ log_ca_cert(const char *file_name, X509 *cert)
             if (i) {
                 ds_put_char(&fp, ':');
             }
-            ds_put_format(&fp, "%02hhx", digest[i]);
+            ds_put_format(&fp, "%02x", digest[i]);
         }
     }
     subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
@@ -1247,7 +1241,7 @@ stream_ssl_set_ca_cert_file__(const char *file_name,
         for (i = 0; i < n_certs; i++) {
             /* SSL_CTX_add_client_CA makes a copy of the relevant data. */
             if (SSL_CTX_add_client_CA(ctx, certs[i]) != 1) {
-                VLOG_ERR("failed to add client certificate %zu from %s: %s",
+                VLOG_ERR("failed to add client certificate %"PRIuSIZE" from %s: %s",
                          i, file_name,
                          ERR_error_string(ERR_get_error(), NULL));
             } else {
@@ -1369,7 +1363,7 @@ ssl_protocol_cb(int write_p, int version OVS_UNUSED, int content_type,
         ds_put_format(&details, "type %d", content_type);
     }
 
-    VLOG_DBG("%s%u%s%s %s (%zu bytes)",
+    VLOG_DBG("%s%u%s%s %s (%"PRIuSIZE" bytes)",
              sslv->type == CLIENT ? "client" : "server",
              sslv->session_nr, write_p ? "-->" : "<--",
              stream_get_name(&sslv->stream), ds_cstr(&details), len);

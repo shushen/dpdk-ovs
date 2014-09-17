@@ -7,8 +7,6 @@
 .TH ovsdb\-server 1 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .\" This program's name:
 .ds PN ovsdb\-server
-.\" SSL peer program's name:
-.ds SN ovsdb\-client
 .
 .SH NAME
 ovsdb\-server \- Open vSwitch database server
@@ -72,6 +70,10 @@ client before sending an inactivity probe message.
 .IP
 It is an error for \fIcolumn\fR to have another type.
 .RE
+.
+.IP
+To connect or listen on multiple connection methods, use multiple
+\fB\-\-remote\fR options.
 .
 .IP "\fB\-\-run=\fIcommand\fR]"
 Ordinarily \fBovsdb\-server\fR runs forever, or until it is told to

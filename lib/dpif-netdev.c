@@ -31,6 +31,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "classifier.h"
 #include "csum.h"
 #include "dpif.h"
 #include "dpif-provider.h"
@@ -39,6 +40,7 @@
 #include "flow.h"
 #include "hmap.h"
 #include "list.h"
+#include "meta-flow.h"
 #include "netdev.h"
 #include "netdev-vport.h"
 #include "netlink.h"
@@ -58,6 +60,9 @@
 #include "vlog.h"
 
 VLOG_DEFINE_THIS_MODULE(dpif_netdev);
+
+/* By default, choose a priority in the middle. */
+#define NETDEV_RULE_PRIORITY 0x8000
 
 /* Configuration parameters. */
 enum { MAX_PORTS = 256 };       /* Maximum number of ports. */
@@ -92,6 +97,7 @@ struct dp_netdev {
     int max_mtu;                /* Maximum MTU of any port added so far. */
 
     struct dp_netdev_queue queues[N_QUEUES];
+    struct classifier cls;      /* Classifier. */
     struct hmap flow_table;     /* Flow table. */
     struct seq *queue_seq;      /* Incremented whenever a packet is queued. */
 
@@ -118,14 +124,18 @@ struct dp_netdev_port {
 
 /* A flow in dp_netdev's 'flow_table'. */
 struct dp_netdev_flow {
-    struct hmap_node node;      /* Element in dp_netdev's 'flow_table'. */
-    struct flow key;
+    /* Packet classification. */
+    struct cls_rule cr;         /* In owning dp_netdev's 'cls'. */
+
+    /* Hash table index by unmasked flow.*/
+    struct hmap_node node;      /* In owning dp_netdev's 'flow_table'. */
+    struct flow flow;           /* The flow that created this entry. */
 
     /* Statistics. */
     long long int used;         /* Last used time, in monotonic msecs. */
     long long int packet_count; /* Number of packets matched. */
     long long int byte_count;   /* Number of bytes matched. */
-    uint8_t tcp_flags;          /* Bitwise-OR of seen tcp_flags values. */
+    uint16_t tcp_flags;         /* Bitwise-OR of seen tcp_flags values. */
 
     /* Actions. */
     struct nlattr *actions;
@@ -156,17 +166,16 @@ static int do_add_port(struct dp_netdev *, const char *devname,
 static int do_del_port(struct dp_netdev *, odp_port_t port_no);
 static int dpif_netdev_open(const struct dpif_class *, const char *name,
                             bool create, struct dpif **);
-static int dp_netdev_output_userspace(struct dp_netdev *, const struct ofpbuf *,
+static int dp_netdev_output_userspace(struct dp_netdev *, struct ofpbuf *,
                                     int queue_no, const struct flow *,
                                     const struct nlattr *userdata);
-static void dp_netdev_execute_actions(struct dp_netdev *,
-                                      struct ofpbuf *, struct flow *,
+static void dp_netdev_execute_actions(struct dp_netdev *, const struct flow *,
+                                      struct ofpbuf *,
                                       const struct nlattr *actions,
                                       size_t actions_len);
 static void dp_netdev_port_input(struct dp_netdev *dp,
                                  struct dp_netdev_port *port,
-                                 struct ofpbuf *packet, uint32_t skb_priority,
-                                 uint32_t pkt_mark, const struct flow_tnl *tnl);
+                                 struct ofpbuf *packet);
 
 static struct dpif_netdev *
 dpif_netdev_cast(const struct dpif *dpif)
@@ -283,6 +292,7 @@ create_dp_netdev(const char *name, const struct dpif_class *class,
         dp->queues[i].head = dp->queues[i].tail = 0;
     }
     dp->queue_seq = seq_create();
+    classifier_init(&dp->cls, NULL);
     hmap_init(&dp->flow_table);
     list_init(&dp->port_list);
     dp->port_seq = seq_create();
@@ -333,6 +343,7 @@ dp_netdev_purge_queues(struct dp_netdev *dp)
 
         while (q->tail != q->head) {
             struct dp_netdev_upcall *u = &q->upcalls[q->tail++ & QUEUE_MASK];
+            ofpbuf_uninit(&u->upcall.packet);
             ofpbuf_uninit(&u->buf);
         }
     }
@@ -349,6 +360,7 @@ dp_netdev_free(struct dp_netdev *dp)
     }
     dp_netdev_purge_queues(dp);
     seq_destroy(dp->queue_seq);
+    classifier_destroy(&dp->cls);
     hmap_destroy(&dp->flow_table);
     seq_destroy(dp->port_seq);
     free(dp->name);
@@ -394,6 +406,8 @@ dpif_netdev_get_stats(const struct dpif *dpif, struct dpif_dp_stats *stats)
     stats->n_hit = dp->n_hit;
     stats->n_missed = dp->n_missed;
     stats->n_lost = dp->n_lost;
+    stats->n_masks = UINT32_MAX;
+    stats->n_mask_hit = UINT64_MAX;
     ovs_mutex_unlock(&dp_netdev_mutex);
 
     return 0;
@@ -407,6 +421,7 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     struct dp_netdev_port *port;
     struct netdev *netdev;
     struct netdev_rx *rx;
+    enum netdev_flags flags;
     const char *open_type;
     int mtu;
     int error;
@@ -419,8 +434,14 @@ do_add_port(struct dp_netdev *dp, const char *devname, const char *type,
     if (error) {
         return error;
     }
-    /* XXX reject loopback devices */
     /* XXX reject non-Ethernet devices */
+
+    netdev_get_flags(netdev, &flags);
+    if (flags & NETDEV_LOOPBACK) {
+        VLOG_ERR("%s: cannot add a loopback device", devname);
+        netdev_close(netdev);
+        return EINVAL;
+    }
 
     error = netdev_rx_open(netdev, &rx);
     if (error
@@ -615,20 +636,25 @@ dpif_netdev_get_max_ports(const struct dpif *dpif OVS_UNUSED)
 }
 
 static void
-dp_netdev_free_flow(struct dp_netdev *dp, struct dp_netdev_flow *flow)
+dp_netdev_free_flow(struct dp_netdev *dp, struct dp_netdev_flow *netdev_flow)
 {
-    hmap_remove(&dp->flow_table, &flow->node);
-    free(flow->actions);
-    free(flow);
+    fat_rwlock_wrlock(&dp->cls.rwlock);
+    classifier_remove(&dp->cls, &netdev_flow->cr);
+    fat_rwlock_unlock(&dp->cls.rwlock);
+    cls_rule_destroy(&netdev_flow->cr);
+
+    hmap_remove(&dp->flow_table, &netdev_flow->node);
+    free(netdev_flow->actions);
+    free(netdev_flow);
 }
 
 static void
 dp_netdev_flow_flush(struct dp_netdev *dp)
 {
-    struct dp_netdev_flow *flow, *next;
+    struct dp_netdev_flow *netdev_flow, *next;
 
-    HMAP_FOR_EACH_SAFE (flow, next, node, &dp->flow_table) {
-        dp_netdev_free_flow(dp, flow);
+    HMAP_FOR_EACH_SAFE (netdev_flow, next, node, &dp->flow_table) {
+        dp_netdev_free_flow(dp, netdev_flow);
     }
 }
 
@@ -725,25 +751,96 @@ dpif_netdev_port_poll_wait(const struct dpif *dpif_)
 }
 
 static struct dp_netdev_flow *
-dp_netdev_lookup_flow(const struct dp_netdev *dp, const struct flow *key)
+dp_netdev_lookup_flow(const struct dp_netdev *dp, const struct flow *flow)
 {
-    struct dp_netdev_flow *flow;
+    struct cls_rule *cr;
 
-    HMAP_FOR_EACH_WITH_HASH (flow, node, flow_hash(key, 0), &dp->flow_table) {
-        if (flow_equal(&flow->key, key)) {
-            return flow;
+    fat_rwlock_wrlock(&dp->cls.rwlock);
+    cr = classifier_lookup(&dp->cls, flow, NULL);
+    fat_rwlock_unlock(&dp->cls.rwlock);
+
+    return (cr
+            ? CONTAINER_OF(cr, struct dp_netdev_flow, cr)
+            : NULL);
+}
+
+static struct dp_netdev_flow *
+dp_netdev_find_flow(const struct dp_netdev *dp, const struct flow *flow)
+{
+    struct dp_netdev_flow *netdev_flow;
+
+    HMAP_FOR_EACH_WITH_HASH (netdev_flow, node, flow_hash(flow, 0),
+                             &dp->flow_table) {
+        if (flow_equal(&netdev_flow->flow, flow)) {
+            return netdev_flow;
         }
     }
     return NULL;
 }
 
 static void
-get_dpif_flow_stats(struct dp_netdev_flow *flow, struct dpif_flow_stats *stats)
+get_dpif_flow_stats(struct dp_netdev_flow *netdev_flow,
+                    struct dpif_flow_stats *stats)
 {
-    stats->n_packets = flow->packet_count;
-    stats->n_bytes = flow->byte_count;
-    stats->used = flow->used;
-    stats->tcp_flags = flow->tcp_flags;
+    stats->n_packets = netdev_flow->packet_count;
+    stats->n_bytes = netdev_flow->byte_count;
+    stats->used = netdev_flow->used;
+    stats->tcp_flags = netdev_flow->tcp_flags;
+}
+
+static int
+dpif_netdev_mask_from_nlattrs(const struct nlattr *key, uint32_t key_len,
+                              const struct nlattr *mask_key,
+                              uint32_t mask_key_len, const struct flow *flow,
+                              struct flow *mask)
+{
+    if (mask_key_len) {
+        if (odp_flow_key_to_mask(mask_key, mask_key_len, mask, flow)) {
+            /* This should not happen: it indicates that
+             * odp_flow_key_from_mask() and odp_flow_key_to_mask()
+             * disagree on the acceptable form of a mask.  Log the problem
+             * as an error, with enough details to enable debugging. */
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+
+            if (!VLOG_DROP_ERR(&rl)) {
+                struct ds s;
+
+                ds_init(&s);
+                odp_flow_format(key, key_len, mask_key, mask_key_len, NULL, &s,
+                                true);
+                VLOG_ERR("internal error parsing flow mask %s", ds_cstr(&s));
+                ds_destroy(&s);
+            }
+
+            return EINVAL;
+        }
+    } else {
+        enum mf_field_id id;
+        /* No mask key, unwildcard everything except fields whose
+         * prerequisities are not met. */
+        memset(mask, 0x0, sizeof *mask);
+
+        for (id = 0; id < MFF_N_IDS; ++id) {
+            /* Skip registers and metadata. */
+            if (!(id >= MFF_REG0 && id < MFF_REG0 + FLOW_N_REGS)
+                && id != MFF_METADATA) {
+                const struct mf_field *mf = mf_from_id(id);
+                if (mf_are_prereqs_ok(mf, flow)) {
+                    mf_mask_field(mf, mask);
+                }
+            }
+        }
+    }
+
+    /* Force unwildcard the in_port.
+     *
+     * We need to do this even in the case where we unwildcard "everything"
+     * above because "everything" only includes the 16-bit OpenFlow port number
+     * mask->in_port.ofp_port, which only covers half of the 32-bit datapath
+     * port number mask->in_port.odp_port. */
+    mask->in_port.odp_port = u32_to_odp(UINT32_MAX);
+
+    return 0;
 }
 
 static int
@@ -752,7 +849,7 @@ dpif_netdev_flow_from_nlattrs(const struct nlattr *key, uint32_t key_len,
 {
     odp_port_t in_port;
 
-    if (odp_flow_key_to_flow(key, key_len, flow) != ODP_FIT_PERFECT) {
+    if (odp_flow_key_to_flow(key, key_len, flow)) {
         /* This should not happen: it indicates that odp_flow_key_from_flow()
          * and odp_flow_key_to_flow() disagree on the acceptable form of a
          * flow.  Log the problem as an error, with enough details to enable
@@ -763,7 +860,7 @@ dpif_netdev_flow_from_nlattrs(const struct nlattr *key, uint32_t key_len,
             struct ds s;
 
             ds_init(&s);
-            odp_flow_key_format(key, key_len, &s);
+            odp_flow_format(key, key_len, NULL, 0, NULL, &s, true);
             VLOG_ERR("internal error parsing flow key %s", ds_cstr(&s));
             ds_destroy(&s);
         }
@@ -785,7 +882,7 @@ dpif_netdev_flow_get(const struct dpif *dpif,
                      struct ofpbuf **actionsp, struct dpif_flow_stats *stats)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct dp_netdev_flow *flow;
+    struct dp_netdev_flow *netdev_flow;
     struct flow key;
     int error;
 
@@ -795,13 +892,14 @@ dpif_netdev_flow_get(const struct dpif *dpif,
     }
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    flow = dp_netdev_lookup_flow(dp, &key);
-    if (flow) {
+    netdev_flow = dp_netdev_find_flow(dp, &key);
+    if (netdev_flow) {
         if (stats) {
-            get_dpif_flow_stats(flow, stats);
+            get_dpif_flow_stats(netdev_flow, stats);
         }
         if (actionsp) {
-            *actionsp = ofpbuf_clone_data(flow->actions, flow->actions_len);
+            *actionsp = ofpbuf_clone_data(netdev_flow->actions,
+                                          netdev_flow->actions_len);
         }
     } else {
         error = ENOENT;
@@ -812,66 +910,87 @@ dpif_netdev_flow_get(const struct dpif *dpif,
 }
 
 static int
-set_flow_actions(struct dp_netdev_flow *flow,
+set_flow_actions(struct dp_netdev_flow *netdev_flow,
                  const struct nlattr *actions, size_t actions_len)
 {
-    flow->actions = xrealloc(flow->actions, actions_len);
-    flow->actions_len = actions_len;
-    memcpy(flow->actions, actions, actions_len);
+    netdev_flow->actions = xrealloc(netdev_flow->actions, actions_len);
+    netdev_flow->actions_len = actions_len;
+    memcpy(netdev_flow->actions, actions, actions_len);
     return 0;
 }
 
 static int
-dp_netdev_flow_add(struct dp_netdev *dp, const struct flow *key,
-                   const struct nlattr *actions, size_t actions_len)
+dp_netdev_flow_add(struct dp_netdev *dp, const struct flow *flow,
+                   const struct flow_wildcards *wc,
+                   const struct nlattr *actions,
+                   size_t actions_len)
 {
-    struct dp_netdev_flow *flow;
+    struct dp_netdev_flow *netdev_flow;
+    struct match match;
     int error;
 
-    flow = xzalloc(sizeof *flow);
-    flow->key = *key;
+    netdev_flow = xzalloc(sizeof *netdev_flow);
+    netdev_flow->flow = *flow;
 
-    error = set_flow_actions(flow, actions, actions_len);
+    match_init(&match, flow, wc);
+    cls_rule_init(&netdev_flow->cr, &match, NETDEV_RULE_PRIORITY);
+    fat_rwlock_wrlock(&dp->cls.rwlock);
+    classifier_insert(&dp->cls, &netdev_flow->cr);
+    fat_rwlock_unlock(&dp->cls.rwlock);
+
+    error = set_flow_actions(netdev_flow, actions, actions_len);
     if (error) {
-        free(flow);
+        fat_rwlock_wrlock(&dp->cls.rwlock);
+        classifier_remove(&dp->cls, &netdev_flow->cr);
+        fat_rwlock_unlock(&dp->cls.rwlock);
+        cls_rule_destroy(&netdev_flow->cr);
+
+        free(netdev_flow);
         return error;
     }
 
-    hmap_insert(&dp->flow_table, &flow->node, flow_hash(&flow->key, 0));
+    hmap_insert(&dp->flow_table, &netdev_flow->node, flow_hash(flow, 0));
     return 0;
 }
 
 static void
-clear_stats(struct dp_netdev_flow *flow)
+clear_stats(struct dp_netdev_flow *netdev_flow)
 {
-    flow->used = 0;
-    flow->packet_count = 0;
-    flow->byte_count = 0;
-    flow->tcp_flags = 0;
+    netdev_flow->used = 0;
+    netdev_flow->packet_count = 0;
+    netdev_flow->byte_count = 0;
+    netdev_flow->tcp_flags = 0;
 }
 
 static int
 dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct dp_netdev_flow *flow;
-    struct flow key;
+    struct dp_netdev_flow *netdev_flow;
+    struct flow flow;
+    struct flow_wildcards wc;
     int error;
 
-    error = dpif_netdev_flow_from_nlattrs(put->key, put->key_len, &key);
+    error = dpif_netdev_flow_from_nlattrs(put->key, put->key_len, &flow);
+    if (error) {
+        return error;
+    }
+    error = dpif_netdev_mask_from_nlattrs(put->key, put->key_len,
+                                          put->mask, put->mask_len,
+                                          &flow, &wc.masks);
     if (error) {
         return error;
     }
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    flow = dp_netdev_lookup_flow(dp, &key);
-    if (!flow) {
+    netdev_flow = dp_netdev_lookup_flow(dp, &flow);
+    if (!netdev_flow) {
         if (put->flags & DPIF_FP_CREATE) {
             if (hmap_count(&dp->flow_table) < MAX_FLOWS) {
                 if (put->stats) {
                     memset(put->stats, 0, sizeof *put->stats);
                 }
-                error = dp_netdev_flow_add(dp, &key, put->actions,
+                error = dp_netdev_flow_add(dp, &flow, &wc, put->actions,
                                            put->actions_len);
             } else {
                 error = EFBIG;
@@ -880,18 +999,23 @@ dpif_netdev_flow_put(struct dpif *dpif, const struct dpif_flow_put *put)
             error = ENOENT;
         }
     } else {
-        if (put->flags & DPIF_FP_MODIFY) {
-            error = set_flow_actions(flow, put->actions, put->actions_len);
+        if (put->flags & DPIF_FP_MODIFY
+            && flow_equal(&flow, &netdev_flow->flow)) {
+            error = set_flow_actions(netdev_flow, put->actions,
+                                     put->actions_len);
             if (!error) {
                 if (put->stats) {
-                    get_dpif_flow_stats(flow, put->stats);
+                    get_dpif_flow_stats(netdev_flow, put->stats);
                 }
                 if (put->flags & DPIF_FP_ZERO_STATS) {
-                    clear_stats(flow);
+                    clear_stats(netdev_flow);
                 }
             }
-        } else {
+        } else if (put->flags & DPIF_FP_CREATE) {
             error = EEXIST;
+        } else {
+            /* Overlapping flow. */
+            error = EINVAL;
         }
     }
     ovs_mutex_unlock(&dp_netdev_mutex);
@@ -903,7 +1027,7 @@ static int
 dpif_netdev_flow_del(struct dpif *dpif, const struct dpif_flow_del *del)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct dp_netdev_flow *flow;
+    struct dp_netdev_flow *netdev_flow;
     struct flow key;
     int error;
 
@@ -913,12 +1037,12 @@ dpif_netdev_flow_del(struct dpif *dpif, const struct dpif_flow_del *del)
     }
 
     ovs_mutex_lock(&dp_netdev_mutex);
-    flow = dp_netdev_lookup_flow(dp, &key);
-    if (flow) {
+    netdev_flow = dp_netdev_find_flow(dp, &key);
+    if (netdev_flow) {
         if (del->stats) {
-            get_dpif_flow_stats(flow, del->stats);
+            get_dpif_flow_stats(netdev_flow, del->stats);
         }
-        dp_netdev_free_flow(dp, flow);
+        dp_netdev_free_flow(dp, netdev_flow);
     } else {
         error = ENOENT;
     }
@@ -932,6 +1056,7 @@ struct dp_netdev_flow_state {
     uint32_t offset;
     struct nlattr *actions;
     struct odputil_keybuf keybuf;
+    struct odputil_keybuf maskbuf;
     struct dpif_flow_stats stats;
 };
 
@@ -956,7 +1081,7 @@ dpif_netdev_flow_dump_next(const struct dpif *dpif, void *state_,
 {
     struct dp_netdev_flow_state *state = state_;
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct dp_netdev_flow *flow;
+    struct dp_netdev_flow *netdev_flow;
     struct hmap_node *node;
 
     ovs_mutex_lock(&dp_netdev_mutex);
@@ -966,33 +1091,43 @@ dpif_netdev_flow_dump_next(const struct dpif *dpif, void *state_,
         return EOF;
     }
 
-    flow = CONTAINER_OF(node, struct dp_netdev_flow, node);
+    netdev_flow = CONTAINER_OF(node, struct dp_netdev_flow, node);
 
     if (key) {
         struct ofpbuf buf;
 
         ofpbuf_use_stack(&buf, &state->keybuf, sizeof state->keybuf);
-        odp_flow_key_from_flow(&buf, &flow->key, flow->key.in_port.odp_port);
+        odp_flow_key_from_flow(&buf, &netdev_flow->flow,
+                               netdev_flow->flow.in_port.odp_port);
 
         *key = buf.data;
         *key_len = buf.size;
     }
 
-    if (mask) {
-        *mask = NULL;
-        *mask_len = 0;
+    if (key && mask) {
+        struct ofpbuf buf;
+        struct flow_wildcards wc;
+
+        ofpbuf_use_stack(&buf, &state->maskbuf, sizeof state->maskbuf);
+        minimask_expand(&netdev_flow->cr.match.mask, &wc);
+        odp_flow_key_from_mask(&buf, &wc.masks, &netdev_flow->flow,
+                               odp_to_u32(wc.masks.in_port.odp_port));
+
+        *mask = buf.data;
+        *mask_len = buf.size;
     }
 
     if (actions) {
         free(state->actions);
-        state->actions = xmemdup(flow->actions, flow->actions_len);
+        state->actions = xmemdup(netdev_flow->actions,
+                         netdev_flow->actions_len);
 
         *actions = state->actions;
-        *actions_len = flow->actions_len;
+        *actions_len = netdev_flow->actions_len;
     }
 
     if (stats) {
-        get_dpif_flow_stats(flow, &state->stats);
+        get_dpif_flow_stats(netdev_flow, &state->stats);
         *stats = &state->stats;
     }
 
@@ -1014,8 +1149,7 @@ static int
 dpif_netdev_execute(struct dpif *dpif, const struct dpif_execute *execute)
 {
     struct dp_netdev *dp = get_dp_netdev(dpif);
-    struct ofpbuf copy;
-    struct flow key;
+    struct flow md;
     int error;
 
     if (execute->packet->size < ETH_HEADER_LEN ||
@@ -1023,22 +1157,19 @@ dpif_netdev_execute(struct dpif *dpif, const struct dpif_execute *execute)
         return EINVAL;
     }
 
-    /* Make a deep copy of 'packet', because we might modify its data. */
-    ofpbuf_init(&copy, DP_NETDEV_HEADROOM + execute->packet->size);
-    ofpbuf_reserve(&copy, DP_NETDEV_HEADROOM);
-    ofpbuf_put(&copy, execute->packet->data, execute->packet->size);
-
-    flow_extract(&copy, 0, 0, NULL, NULL, &key);
-    error = dpif_netdev_flow_from_nlattrs(execute->key, execute->key_len,
-                                          &key);
+    /* Get packet metadata. */
+    error = dpif_netdev_flow_from_nlattrs(execute->key, execute->key_len, &md);
     if (!error) {
+        struct flow key;
+
+        /* Extract flow key. */
+        flow_extract(execute->packet, md.skb_priority, md.pkt_mark, &md.tunnel,
+                     &md.in_port, &key);
         ovs_mutex_lock(&dp_netdev_mutex);
-        dp_netdev_execute_actions(dp, &copy, &key,
+        dp_netdev_execute_actions(dp, &key, execute->packet,
                                   execute->actions, execute->actions_len);
         ovs_mutex_unlock(&dp_netdev_mutex);
     }
-
-    ofpbuf_uninit(&copy);
     return error;
 }
 
@@ -1084,7 +1215,6 @@ dpif_netdev_recv(struct dpif *dpif, struct dpif_upcall *upcall,
         struct dp_netdev_upcall *u = &q->upcalls[q->tail++ & QUEUE_MASK];
 
         *upcall = u->upcall;
-        upcall->packet = buf;
 
         ofpbuf_uninit(buf);
         *buf = u->buf;
@@ -1124,20 +1254,21 @@ dpif_netdev_recv_purge(struct dpif *dpif)
 }
 
 static void
-dp_netdev_flow_used(struct dp_netdev_flow *flow, const struct ofpbuf *packet)
+dp_netdev_flow_used(struct dp_netdev_flow *netdev_flow,
+                    const struct ofpbuf *packet,
+                    const struct flow *key)
 {
-    flow->used = time_msec();
-    flow->packet_count++;
-    flow->byte_count += packet->size;
-    flow->tcp_flags |= packet_get_tcp_flags(packet, &flow->key);
+    netdev_flow->used = time_msec();
+    netdev_flow->packet_count++;
+    netdev_flow->byte_count += packet->size;
+    netdev_flow->tcp_flags |= packet_get_tcp_flags(packet, key);
 }
 
 static void
 dp_netdev_port_input(struct dp_netdev *dp, struct dp_netdev_port *port,
-                     struct ofpbuf *packet, uint32_t skb_priority,
-                     uint32_t pkt_mark, const struct flow_tnl *tnl)
+                     struct ofpbuf *packet)
 {
-    struct dp_netdev_flow *flow;
+    struct dp_netdev_flow *netdev_flow;
     struct flow key;
     union flow_in_port in_port_;
 
@@ -1145,12 +1276,13 @@ dp_netdev_port_input(struct dp_netdev *dp, struct dp_netdev_port *port,
         return;
     }
     in_port_.odp_port = port->port_no;
-    flow_extract(packet, skb_priority, pkt_mark, tnl, &in_port_, &key);
-    flow = dp_netdev_lookup_flow(dp, &key);
-    if (flow) {
-        dp_netdev_flow_used(flow, packet);
-        dp_netdev_execute_actions(dp, packet, &key,
-                                  flow->actions, flow->actions_len);
+    flow_extract(packet, 0, 0, NULL, &in_port_, &key);
+    netdev_flow = dp_netdev_lookup_flow(dp, &key);
+    if (netdev_flow) {
+        dp_netdev_flow_used(netdev_flow, packet, &key);
+        dp_netdev_execute_actions(dp, &key, packet,
+                                  netdev_flow->actions,
+                                  netdev_flow->actions_len);
         dp->n_hit++;
     } else {
         dp->n_missed++;
@@ -1164,22 +1296,24 @@ dpif_netdev_run(struct dpif *dpif)
     struct dp_netdev_port *port;
     struct dp_netdev *dp;
     struct ofpbuf packet;
+    size_t buf_size;
 
     ovs_mutex_lock(&dp_netdev_mutex);
     dp = get_dp_netdev(dpif);
-    ofpbuf_init(&packet,
-                DP_NETDEV_HEADROOM + VLAN_ETH_HEADER_LEN + dp->max_mtu);
+    ofpbuf_init(&packet, 0);
+
+    buf_size = DP_NETDEV_HEADROOM + VLAN_ETH_HEADER_LEN + dp->max_mtu;
 
     LIST_FOR_EACH (port, node, &dp->port_list) {
         int error;
 
-        /* Reset packet contents. */
+        /* Reset packet contents. Packet data may have been stolen. */
         ofpbuf_clear(&packet);
-        ofpbuf_reserve(&packet, DP_NETDEV_HEADROOM);
+        ofpbuf_reserve_with_tailroom(&packet, DP_NETDEV_HEADROOM, buf_size);
 
         error = port->rx ? netdev_rx_recv(port->rx, &packet) : EOPNOTSUPP;
         if (!error) {
-            dp_netdev_port_input(dp, port, &packet, 0, 0, NULL);
+            dp_netdev_port_input(dp, port, &packet);
         } else if (error != EAGAIN && error != EOPNOTSUPP) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -1218,18 +1352,8 @@ dpif_netdev_wait(struct dpif *dpif)
     ovs_mutex_unlock(&dp_netdev_mutex);
 }
 
-static void
-dp_netdev_output_port(void *dp_, struct ofpbuf *packet, uint32_t out_port)
-{
-    struct dp_netdev *dp = dp_;
-    struct dp_netdev_port *p = dp->ports[out_port];
-    if (p) {
-        netdev_send(p->netdev, packet);
-    }
-}
-
 static int
-dp_netdev_output_userspace(struct dp_netdev *dp, const struct ofpbuf *packet,
+dp_netdev_output_userspace(struct dp_netdev *dp, struct ofpbuf *packet,
                            int queue_no, const struct flow *flow,
                            const struct nlattr *userdata)
 {
@@ -1243,7 +1367,7 @@ dp_netdev_output_userspace(struct dp_netdev *dp, const struct ofpbuf *packet,
         upcall->type = queue_no;
 
         /* Allocate buffer big enough for everything. */
-        buf_size = ODPUTIL_FLOW_KEY_BYTES + 2 + packet->size;
+        buf_size = ODPUTIL_FLOW_KEY_BYTES;
         if (userdata) {
             buf_size += NLA_ALIGN(userdata->nla_len);
         }
@@ -1260,15 +1384,10 @@ dp_netdev_output_userspace(struct dp_netdev *dp, const struct ofpbuf *packet,
                                           NLA_ALIGN(userdata->nla_len));
         }
 
-        /* Put packet.
-         *
-         * We adjust 'data' and 'size' in 'buf' so that only the packet itself
-         * is visible in 'upcall->packet'.  The ODP flow and (if present)
-         * userdata become part of the headroom. */
-        ofpbuf_put_zeros(buf, 2);
-        buf->data = ofpbuf_put(buf, packet->data, packet->size);
-        buf->size = packet->size;
-        upcall->packet = buf;
+        /* Steal packet data. */
+        ovs_assert(packet->source == OFPBUF_MALLOC);
+        upcall->packet = *packet;
+        ofpbuf_use(packet, NULL, 0);
 
         seq_change(dp->queue_seq);
 
@@ -1279,22 +1398,54 @@ dp_netdev_output_userspace(struct dp_netdev *dp, const struct ofpbuf *packet,
     }
 }
 
+struct dp_netdev_execute_aux {
+    struct dp_netdev *dp;
+    const struct flow *key;
+};
+
 static void
-dp_netdev_action_userspace(void *dp, struct ofpbuf *packet,
-                           const struct flow *key,
-                           const struct nlattr *userdata)
+dp_netdev_action_output(void *aux_, struct ofpbuf *packet,
+                        const struct flow *flow OVS_UNUSED,
+                        odp_port_t out_port)
 {
-    dp_netdev_output_userspace(dp, packet, DPIF_UC_ACTION, key, userdata);
+    struct dp_netdev_execute_aux *aux = aux_;
+    struct dp_netdev_port *p = aux->dp->ports[odp_to_u32(out_port)];
+    if (p) {
+        netdev_send(p->netdev, packet);
+    }
 }
 
 static void
-dp_netdev_execute_actions(struct dp_netdev *dp,
-                          struct ofpbuf *packet, struct flow *key,
-                          const struct nlattr *actions,
-                          size_t actions_len)
+dp_netdev_action_userspace(void *aux_, struct ofpbuf *packet,
+                           const struct flow *flow OVS_UNUSED,
+                           const struct nlattr *a, bool may_steal)
 {
-    odp_execute_actions(dp, packet, key, actions, actions_len,
-                        dp_netdev_output_port, dp_netdev_action_userspace);
+    struct dp_netdev_execute_aux *aux = aux_;
+    const struct nlattr *userdata;
+
+    userdata = nl_attr_find_nested(a, OVS_USERSPACE_ATTR_USERDATA);
+
+    /* Make a copy if we are not allowed to steal the packet's data. */
+    if (!may_steal) {
+        packet = ofpbuf_clone_with_headroom(packet, DP_NETDEV_HEADROOM);
+    }
+    dp_netdev_output_userspace(aux->dp, packet, DPIF_UC_ACTION, aux->key,
+                               userdata);
+    if (!may_steal) {
+        ofpbuf_uninit(packet);
+    }
+}
+
+static void
+dp_netdev_execute_actions(struct dp_netdev *dp, const struct flow *key,
+                          struct ofpbuf *packet,
+                          const struct nlattr *actions, size_t actions_len)
+{
+    struct dp_netdev_execute_aux aux = {dp, key};
+    struct flow md = *key;   /* Packet metadata, may be modified by actions. */
+
+    odp_execute_actions(&aux, packet, &md, actions, actions_len,
+                        dp_netdev_action_output, dp_netdev_action_userspace);
 }
 
 const struct dpif_class dpif_netdev_class = {

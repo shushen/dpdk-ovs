@@ -35,10 +35,10 @@
  * The terms written in quotes below are defined in later sections.
  *
  * When a datapath "port" receives a packet, it extracts the headers (the
- * "flow").  If the datapath's "flow table" contains a "flow entry" whose flow
- * is the same as the packet's, then it executes the "actions" in the flow
- * entry and increments the flow's statistics.  If there is no matching flow
- * entry, the datapath instead appends the packet to an "upcall" queue.
+ * "flow").  If the datapath's "flow table" contains a "flow entry" matching
+ * the packet, then it executes the "actions" in the flow entry and increments
+ * the flow's statistics.  If there is no matching flow entry, the datapath
+ * instead appends the packet to an "upcall" queue.
  *
  *
  * Ports
@@ -103,12 +103,12 @@
  * Flow Table
  * ==========
  *
- * The flow table is a hash table of "flow entries".  Each flow entry contains:
+ * The flow table is a collection of "flow entries".  Each flow entry contains:
  *
  *    - A "flow", that is, a summary of the headers in an Ethernet packet.  The
- *      flow is the hash key and thus must be unique within the flow table.
- *      Flows are fine-grained entities that include L2, L3, and L4 headers.  A
- *      single TCP connection consists of two flows, one in each direction.
+ *      flow must be unique within the flow table.  Flows are fine-grained
+ *      entities that include L2, L3, and L4 headers.  A single TCP connection
+ *      consists of two flows, one in each direction.
  *
  *      In Open vSwitch userspace, "struct flow" is the typical way to describe
  *      a flow, but the datapath interface uses a different data format to
@@ -117,11 +117,37 @@
  *      "struct ovs_key_*" in include/linux/openvswitch.h for details.
  *      lib/odp-util.h defines several functions for working with these flows.
  *
- *      (In case you are familiar with OpenFlow, datapath flows are analogous
- *      to OpenFlow flow matches.  The most important difference is that
- *      OpenFlow allows fields to be wildcarded and prioritized, whereas a
- *      datapath's flow table is a hash table so every flow must be
- *      exact-match, thus without priorities.)
+ *    - A "mask" that, for each bit in the flow, specifies whether the datapath
+ *      should consider the corresponding flow bit when deciding whether a
+ *      given packet matches the flow entry.  The original datapath design did
+ *      not support matching: every flow entry was exact match.  With the
+ *      addition of a mask, the interface supports datapaths with a spectrum of
+ *      wildcard matching capabilities, from those that only support exact
+ *      matches to those that support bitwise wildcarding on the entire flow
+ *      key, as well as datapaths with capabilities somewhere in between.
+ *
+ *      Datapaths do not provide a way to query their wildcarding capabilities,
+ *      nor is it expected that the client should attempt to probe for the
+ *      details of their support.  Instead, a client installs flows with masks
+ *      that wildcard as many bits as acceptable.  The datapath then actually
+ *      wildcards as many of those bits as it can and changes the wildcard bits
+ *      that it does not support into exact match bits.  A datapath that can
+ *      wildcard any bit, for example, would install the supplied mask, an
+ *      exact-match only datapath would install an exact-match mask regardless
+ *      of what mask the client supplied, and a datapath in the middle of the
+ *      spectrum would selectively change some wildcard bits into exact match
+ *      bits.
+ *
+ *      Regardless of the requested or installed mask, the datapath retains the
+ *      original flow supplied by the client.  (It does not, for example, "zero
+ *      out" the wildcarded bits.)  This allows the client to unambiguously
+ *      identify the flow entry in later flow table operations.
+ *
+ *      The flow table does not have priorities; that is, all flow entries have
+ *      equal priority.  Detecting overlapping flow entries is expensive in
+ *      general, so the datapath is not required to do it.  It is primarily the
+ *      client's responsibility not to install flow entries whose flow and mask
+ *      combinations overlap.
  *
  *    - A list of "actions" that tell the datapath what to do with packets
  *      within a flow.  Some examples of actions are OVS_ACTION_ATTR_OUTPUT,
@@ -342,6 +368,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "netdev.h"
 #include "util.h"
@@ -354,7 +381,6 @@ struct dpif;
 struct ds;
 struct flow;
 struct nlattr;
-struct ofpbuf;
 struct sset;
 struct dpif_class;
 
@@ -387,6 +413,9 @@ struct dpif_dp_stats {
     uint64_t n_missed;          /* Number of flow table misses. */
     uint64_t n_lost;            /* Number of misses not sent to userspace. */
     uint64_t n_flows;           /* Number of flows present. */
+    uint64_t n_mask_hit;        /* Number of mega flow masks visited for
+                                   flow table matches. */
+    uint32_t n_masks;           /* Number of mega flow masks. */
 };
 int dpif_get_dp_stats(const struct dpif *, struct dpif_dp_stats *);
 
@@ -415,7 +444,6 @@ int dpif_port_query_by_name(const struct dpif *, const char *devname,
                             struct dpif_port *);
 int dpif_port_get_name(struct dpif *, odp_port_t port_no,
                        char *name, size_t name_size);
-uint32_t dpif_get_max_ports(const struct dpif *);
 uint32_t dpif_port_get_pid(const struct dpif *, odp_port_t port_no);
 
 struct dpif_port_dump {
@@ -449,7 +477,7 @@ struct dpif_flow_stats {
     uint64_t n_packets;
     uint64_t n_bytes;
     long long int used;
-    uint8_t tcp_flags;
+    uint16_t tcp_flags;
 };
 
 void dpif_flow_stats_extract(const struct flow *, const struct ofpbuf *packet,
@@ -493,7 +521,7 @@ int dpif_flow_dump_done(struct dpif_flow_dump *);
 int dpif_execute(struct dpif *,
                  const struct nlattr *key, size_t key_len,
                  const struct nlattr *actions, size_t actions_len,
-                 const struct ofpbuf *);
+                 struct ofpbuf *, bool needs_help);
 
 /* Operation batching interface.
  *
@@ -531,11 +559,21 @@ struct dpif_flow_del {
 };
 
 struct dpif_execute {
+    /* Raw support for execute passed along to the provider. */
     const struct nlattr *key;       /* Partial flow key (only for metadata). */
     size_t key_len;                 /* Length of 'key' in bytes. */
     const struct nlattr *actions;   /* Actions to execute on packet. */
     size_t actions_len;             /* Length of 'actions' in bytes. */
-    const struct ofpbuf *packet;    /* Packet to execute. */
+    struct ofpbuf *packet;          /* Packet to execute. */
+
+    /* Some dpif providers do not implement every action.  The Linux kernel
+     * datapath, in particular, does not implement ARP field modification.
+     *
+     * If this member is set to true, the dpif layer executes in userspace all
+     * of the actions that it can, and for OVS_ACTION_ATTR_OUTPUT and
+     * OVS_ACTION_ATTR_USERSPACE actions it passes the packet through to the
+     * dpif implementation. */
+    bool needs_help;
 };
 
 struct dpif_op {
@@ -562,15 +600,17 @@ const char *dpif_upcall_type_to_string(enum dpif_upcall_type);
 
 /* A packet passed up from the datapath to userspace.
  *
- * If 'key', 'actions', or 'userdata' is nonnull, then it points into data
- * owned by 'packet', so their memory cannot be freed separately.  (This is
- * hardly a great way to do things but it works out OK for the dpif providers
- * and clients that exist so far.)
+ * The 'packet', 'key' and 'userdata' may point into data in a buffer
+ * provided by the caller, so the buffer should be released only after the
+ * upcall processing has been finished.
+ *
+ * While being processed, the 'packet' may be reallocated, so the packet must
+ * be separately released with ofpbuf_uninit().
  */
 struct dpif_upcall {
     /* All types. */
     enum dpif_upcall_type type;
-    struct ofpbuf *packet;      /* Packet data. */
+    struct ofpbuf packet;       /* Packet data. */
     struct nlattr *key;         /* Flow key. */
     size_t key_len;             /* Length of 'key' in bytes. */
 

@@ -15,10 +15,14 @@
 /flex_array.c
 /flow.c
 /flow_dissector.c
+/flow_netlink.c
+/flow_table.c
 /genetlink-openvswitch.c
 /genl_exec.c
 /gre.c
 /gso.c
+/hash.c
+/hash-x86.c
 /ip_output-openvswitch.c
 /ip_tunnels_core.c
 /kcompat.h
@@ -34,6 +38,7 @@
 /time.c
 /tmp
 /tunnel.c
+/utils.c
 /vlan.c
 /vport-generic.c
 /vport-gre.c

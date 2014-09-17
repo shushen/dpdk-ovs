@@ -48,6 +48,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "connectivity.h"
 #include "coverage.h"
 #include "dpif-linux.h"
 #include "dynamic-string.h"
@@ -61,9 +62,11 @@
 #include "netlink.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
+#include "ovs-atomic.h"
 #include "packets.h"
 #include "poll-loop.h"
 #include "rtnetlink-link.h"
+#include "seq.h"
 #include "shash.h"
 #include "socket-util.h"
 #include "sset.h"
@@ -356,7 +359,6 @@ struct netdev_linux {
     struct ovs_mutex mutex;
 
     unsigned int cache_valid;
-    unsigned int change_seq;
 
     bool miimon;                    /* Link status of last poll. */
     long long int miimon_interval;  /* Miimon Poll rate. Disabled if <= 0. */
@@ -402,6 +404,11 @@ struct netdev_rx_linux {
  * additional log messages. */
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
+/* Polling miimon status for all ports causes performance degradation when
+ * handling a large number of ports. If there are no devices using miimon, then
+ * we skip netdev_linux_miimon_run() and netdev_linux_miimon_wait(). */
+static atomic_int miimon_cnt = ATOMIC_VAR_INIT(0);
+
 static void netdev_linux_run(void);
 
 static int netdev_linux_do_ethtool(const char *name, struct ethtool_cmd *,
@@ -423,6 +430,7 @@ static int set_etheraddr(const char *netdev_name, const uint8_t[ETH_ADDR_LEN]);
 static int get_stats_via_netlink(int ifindex, struct netdev_stats *stats);
 static int get_stats_via_proc(const char *netdev_name, struct netdev_stats *stats);
 static int af_packet_sock(void);
+static bool netdev_linux_miimon_enabled(void);
 static void netdev_linux_miimon_run(void);
 static void netdev_linux_miimon_wait(void);
 
@@ -485,13 +493,24 @@ netdev_linux_notify_sock(void)
     return sock;
 }
 
+static bool
+netdev_linux_miimon_enabled(void)
+{
+    int miimon;
+
+    atomic_read(&miimon_cnt, &miimon);
+    return miimon > 0;
+}
+
 static void
 netdev_linux_run(void)
 {
     struct nl_sock *sock;
     int error;
 
-    netdev_linux_miimon_run();
+    if (netdev_linux_miimon_enabled()) {
+        netdev_linux_miimon_run();
+    }
 
     sock = netdev_linux_notify_sock();
     if (!sock) {
@@ -553,7 +572,9 @@ netdev_linux_wait(void)
 {
     struct nl_sock *sock;
 
-    netdev_linux_miimon_wait();
+    if (netdev_linux_miimon_enabled()) {
+        netdev_linux_miimon_wait();
+    }
     sock = netdev_linux_notify_sock();
     if (sock) {
         nl_sock_wait(sock, POLLIN);
@@ -565,10 +586,7 @@ netdev_linux_changed(struct netdev_linux *dev,
                      unsigned int ifi_flags, unsigned int mask)
     OVS_REQUIRES(dev->mutex)
 {
-    dev->change_seq++;
-    if (!dev->change_seq) {
-        dev->change_seq++;
-    }
+    seq_change(connectivity_seq_get());
 
     if ((dev->ifi_flags ^ ifi_flags) & IFF_RUNNING) {
         dev->carrier_resets++;
@@ -620,7 +638,6 @@ static void
 netdev_linux_common_construct(struct netdev_linux *netdev)
 {
     ovs_mutex_init(&netdev->mutex);
-    netdev->change_seq = 1;
 }
 
 /* Creates system and internal devices. */
@@ -709,6 +726,11 @@ netdev_linux_destruct(struct netdev *netdev_)
         && netdev->tap_fd >= 0)
     {
         close(netdev->tap_fd);
+    }
+
+    if (netdev->miimon_interval > 0) {
+        int junk;
+        atomic_sub(&miimon_cnt, 1, &junk);
     }
 
     ovs_mutex_destroy(&netdev->mutex);
@@ -950,8 +972,8 @@ netdev_linux_send(struct netdev *netdev_, const void *data, size_t size)
             }
             return errno;
         } else if (retval != size) {
-            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%zd bytes of "
-                         "%zu) on %s", retval, size, netdev_get_name(netdev_));
+            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%"PRIuSIZE"d bytes of "
+                         "%"PRIuSIZE") on %s", retval, size, netdev_get_name(netdev_));
             return EMSGSIZE;
         } else {
             return 0;
@@ -1222,6 +1244,14 @@ netdev_linux_set_miimon_interval(struct netdev *netdev_,
     ovs_mutex_lock(&netdev->mutex);
     interval = interval > 0 ? MAX(interval, 100) : 0;
     if (netdev->miimon_interval != interval) {
+        int junk;
+
+        if (interval && !netdev->miimon_interval) {
+            atomic_add(&miimon_cnt, 1, &junk);
+        } else if (!interval && netdev->miimon_interval) {
+            atomic_sub(&miimon_cnt, 1, &junk);
+        }
+
         netdev->miimon_interval = interval;
         timer_set_expired(&netdev->miimon_timer);
     }
@@ -2276,14 +2306,14 @@ parse_if_inet6_line(const char *line,
 {
     uint8_t *s6 = in6->s6_addr;
 #define X8 "%2"SCNx8
-    return sscanf(line,
-                  " "X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8
-                  "%*x %*x %*x %*x %16s\n",
-                  &s6[0], &s6[1], &s6[2], &s6[3],
-                  &s6[4], &s6[5], &s6[6], &s6[7],
-                  &s6[8], &s6[9], &s6[10], &s6[11],
-                  &s6[12], &s6[13], &s6[14], &s6[15],
-                  ifname) == 17;
+    return ovs_scan(line,
+                    " "X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8 X8
+                    "%*x %*x %*x %*x %16s\n",
+                    &s6[0], &s6[1], &s6[2], &s6[3],
+                    &s6[4], &s6[5], &s6[6], &s6[7],
+                    &s6[8], &s6[9], &s6[10], &s6[11],
+                    &s6[12], &s6[13], &s6[14], &s6[15],
+                    ifname);
 }
 
 /* If 'netdev' has an assigned IPv6 address, sets '*in6' to that address (if
@@ -2391,12 +2421,11 @@ netdev_linux_get_next_hop(const struct in_addr *host, struct in_addr *next_hop,
             int refcnt, metric, mtu;
             unsigned int flags, use, window, irtt;
 
-            if (sscanf(line,
-                       "%16s %"SCNx32" %"SCNx32" %04X %d %u %d %"SCNx32
-                       " %d %u %u\n",
-                       iface, &dest, &gateway, &flags, &refcnt,
-                       &use, &metric, &mask, &mtu, &window, &irtt) != 11) {
-
+            if (!ovs_scan(line,
+                          "%16s %"SCNx32" %"SCNx32" %04X %d %u %d %"SCNx32
+                          " %d %u %u\n",
+                          iface, &dest, &gateway, &flags, &refcnt,
+                          &use, &metric, &mask, &mtu, &window, &irtt)) {
                 VLOG_WARN_RL(&rl, "%s: could not parse line %d: %s",
                         fn, ln, line);
                 continue;
@@ -2510,6 +2539,9 @@ nd_to_iff_flags(enum netdev_flags nd)
     if (nd & NETDEV_PROMISC) {
         iff |= IFF_PROMISC;
     }
+    if (nd & NETDEV_LOOPBACK) {
+        iff |= IFF_LOOPBACK;
+    }
     return iff;
 }
 
@@ -2522,6 +2554,9 @@ iff_to_nd_flags(int iff)
     }
     if (iff & IFF_PROMISC) {
         nd |= NETDEV_PROMISC;
+    }
+    if (iff & IFF_LOOPBACK) {
+        nd |= NETDEV_LOOPBACK;
     }
     return nd;
 }
@@ -2557,19 +2592,6 @@ netdev_linux_update_flags(struct netdev *netdev_, enum netdev_flags off,
     ovs_mutex_unlock(&netdev->mutex);
 
     return error;
-}
-
-static unsigned int
-netdev_linux_change_seq(const struct netdev *netdev_)
-{
-    struct netdev_linux *netdev = netdev_linux_cast(netdev_);
-    unsigned int change_seq;
-
-    ovs_mutex_lock(&netdev->mutex);
-    change_seq = netdev->change_seq;
-    ovs_mutex_unlock(&netdev->mutex);
-
-    return change_seq;
 }
 
 #define NETDEV_LINUX_CLASS(NAME, CONSTRUCT, GET_STATS, SET_STATS,  \
@@ -2629,8 +2651,6 @@ netdev_linux_change_seq(const struct netdev *netdev_)
     netdev_linux_arp_lookup,                                    \
                                                                 \
     netdev_linux_update_flags,                                  \
-                                                                \
-    netdev_linux_change_seq,                                    \
                                                                 \
     netdev_linux_rx_alloc,                                      \
     netdev_linux_rx_construct,                                  \
@@ -4521,25 +4541,25 @@ get_stats_via_proc(const char *netdev_name, struct netdev_stats *stats)
         if (++ln >= 3) {
             char devname[16];
 #define X64 "%"SCNu64
-            if (sscanf(line,
-                       " %15[^:]:"
-                       X64 X64 X64 X64 X64 X64 X64 "%*u"
-                       X64 X64 X64 X64 X64 X64 X64 "%*u",
-                       devname,
-                       &stats->rx_bytes,
-                       &stats->rx_packets,
-                       &stats->rx_errors,
-                       &stats->rx_dropped,
-                       &stats->rx_fifo_errors,
-                       &stats->rx_frame_errors,
-                       &stats->multicast,
-                       &stats->tx_bytes,
-                       &stats->tx_packets,
-                       &stats->tx_errors,
-                       &stats->tx_dropped,
-                       &stats->tx_fifo_errors,
-                       &stats->collisions,
-                       &stats->tx_carrier_errors) != 15) {
+            if (!ovs_scan(line,
+                          " %15[^:]:"
+                          X64 X64 X64 X64 X64 X64 X64 "%*u"
+                          X64 X64 X64 X64 X64 X64 X64 "%*u",
+                          devname,
+                          &stats->rx_bytes,
+                          &stats->rx_packets,
+                          &stats->rx_errors,
+                          &stats->rx_dropped,
+                          &stats->rx_fifo_errors,
+                          &stats->rx_frame_errors,
+                          &stats->multicast,
+                          &stats->tx_bytes,
+                          &stats->tx_packets,
+                          &stats->tx_errors,
+                          &stats->tx_dropped,
+                          &stats->tx_fifo_errors,
+                          &stats->collisions,
+                          &stats->tx_carrier_errors)) {
                 VLOG_WARN_RL(&rl, "%s:%d: parse error", fn, ln);
             } else if (!strcmp(devname, netdev_name)) {
                 stats->rx_length_errors = UINT64_MAX;

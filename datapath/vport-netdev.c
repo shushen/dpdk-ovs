@@ -34,17 +34,6 @@
 #include "vport-internal_dev.h"
 #include "vport-netdev.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37) && \
-	!defined(HAVE_VLAN_BUG_WORKAROUND)
-#include <linux/module.h>
-
-static int vlan_tso __read_mostly;
-module_param(vlan_tso, int, 0644);
-MODULE_PARM_DESC(vlan_tso, "Enable TSO for VLAN packets");
-#else
-#define vlan_tso true
-#endif
-
 static void netdev_port_receive(struct vport *vport, struct sk_buff *skb);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)
@@ -93,36 +82,6 @@ static struct sk_buff *netdev_frame_hook(struct net_bridge_port *p,
 }
 #else
 #error
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36) || \
-    defined HAVE_RHEL_OVS_HOOK
-static int netdev_init(void) { return 0; }
-static void netdev_exit(void) { }
-#else
-static int port_count;
-
-static void netdev_init(void)
-{
-	port_count++;
-	if (port_count > 1)
-		return;
-
-	/* Hook into callback used by the bridge to intercept packets.
-	 * Parasites we are. */
-	br_handle_frame_hook = netdev_frame_hook;
-
-	return;
-}
-
-static void netdev_exit(void)
-{
-	port_count--;
-	if (port_count > 0)
-		return;
-
-	br_handle_frame_hook = NULL;
-}
 #endif
 
 static struct net_device *get_dpdev(struct datapath *dp)
@@ -177,7 +136,6 @@ static struct vport *netdev_create(const struct vport_parms *parms)
 	netdev_vport->dev->priv_flags |= IFF_OVS_DATAPATH;
 	rtnl_unlock();
 
-	netdev_init();
 	return vport;
 
 error_master_upper_dev_unlink:
@@ -201,16 +159,25 @@ static void free_port_rcu(struct rcu_head *rcu)
 	ovs_vport_free(vport_from_priv(netdev_vport));
 }
 
+void ovs_netdev_detach_dev(struct vport *vport)
+{
+	struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
+
+	ASSERT_RTNL();
+	netdev_vport->dev->priv_flags &= ~IFF_OVS_DATAPATH;
+	netdev_rx_handler_unregister(netdev_vport->dev);
+	netdev_upper_dev_unlink(netdev_vport->dev,
+				netdev_master_upper_dev_get(netdev_vport->dev));
+	dev_set_promiscuity(netdev_vport->dev, -1);
+}
+
 static void netdev_destroy(struct vport *vport)
 {
 	struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
 
-	netdev_exit();
 	rtnl_lock();
-	netdev_vport->dev->priv_flags &= ~IFF_OVS_DATAPATH;
-	netdev_rx_handler_unregister(netdev_vport->dev);
-	netdev_upper_dev_unlink(netdev_vport->dev, get_dpdev(vport->dp));
-	dev_set_promiscuity(netdev_vport->dev, -1);
+	if (ovs_netdev_get_vport(netdev_vport->dev))
+		ovs_netdev_detach_dev(vport);
 	rtnl_unlock();
 
 	call_rcu(&netdev_vport->rcu, free_port_rcu);
@@ -259,19 +226,6 @@ static unsigned int packet_length(const struct sk_buff *skb)
 	return length;
 }
 
-static bool dev_supports_vlan_tx(struct net_device *dev)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
-	/* Software fallback means every device supports vlan_tci on TX. */
-	return true;
-#elif defined(HAVE_VLAN_BUG_WORKAROUND)
-	return dev->features & NETIF_F_HW_VLAN_TX;
-#else
-	/* Assume that the driver is buggy. */
-	return false;
-#endif
-}
-
 static int netdev_send(struct vport *vport, struct sk_buff *skb)
 {
 	struct netdev_vport *netdev_vport = netdev_vport_priv(vport);
@@ -286,59 +240,6 @@ static int netdev_send(struct vport *vport, struct sk_buff *skb)
 	}
 
 	skb->dev = netdev_vport->dev;
-
-	if (vlan_tx_tag_present(skb) && !dev_supports_vlan_tx(skb->dev)) {
-		int features;
-
-		features = netif_skb_features(skb);
-
-		if (!vlan_tso)
-			features &= ~(NETIF_F_TSO | NETIF_F_TSO6 |
-				      NETIF_F_UFO | NETIF_F_FSO);
-
-		if (netif_needs_gso(skb, features)) {
-			struct sk_buff *nskb;
-
-			nskb = skb_gso_segment(skb, features);
-			if (!nskb) {
-				if (unlikely(skb_cloned(skb) &&
-				    pskb_expand_head(skb, 0, 0, GFP_ATOMIC)))
-					goto drop;
-
-				skb_shinfo(skb)->gso_type &= ~SKB_GSO_DODGY;
-				goto tag;
-			}
-
-			if (IS_ERR(nskb))
-				goto drop;
-			consume_skb(skb);
-			skb = nskb;
-
-			len = 0;
-			do {
-				nskb = skb->next;
-				skb->next = NULL;
-
-				skb = __vlan_put_tag(skb, skb->vlan_proto, vlan_tx_tag_get(skb));
-				if (likely(skb)) {
-					len += skb->len;
-					vlan_set_tci(skb, 0);
-					dev_queue_xmit(skb);
-				}
-
-				skb = nskb;
-			} while (skb);
-
-			return len;
-		}
-
-tag:
-		skb = __vlan_put_tag(skb, skb->vlan_proto, vlan_tx_tag_get(skb));
-		if (unlikely(!skb))
-			return 0;
-		vlan_set_tci(skb, 0);
-	}
-
 	len = skb->len;
 	dev_queue_xmit(skb);
 

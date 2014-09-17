@@ -80,6 +80,26 @@ lib/common.man:
 lib/vlog-syn.man:
 lib/vlog.man:
 
+tests/test-controller.8: \
+	tests/test-controller.8.in \
+	lib/common.man \
+	lib/daemon.man \
+	lib/ssl-peer-ca-cert.man \
+	lib/ssl.man \
+	lib/unixctl.man \
+	lib/vconn-active.man \
+	lib/vconn-passive.man \
+	lib/vlog.man
+tests/test-controller.8.in:
+lib/common.man:
+lib/daemon.man:
+lib/ssl-peer-ca-cert.man:
+lib/ssl.man:
+lib/unixctl.man:
+lib/vconn-active.man:
+lib/vconn-passive.man:
+lib/vlog.man:
+
 utilities/bugtool/ovs-bugtool.8: \
 	utilities/bugtool/ovs-bugtool.8.in
 utilities/bugtool/ovs-bugtool.8.in:
@@ -95,26 +115,6 @@ utilities/ovs-benchmark.1: \
 	lib/ovs.tmac
 utilities/ovs-benchmark.1.in:
 lib/ovs.tmac:
-
-utilities/ovs-controller.8: \
-	utilities/ovs-controller.8.in \
-	lib/common.man \
-	lib/daemon.man \
-	lib/ssl-peer-ca-cert.man \
-	lib/ssl.man \
-	lib/unixctl.man \
-	lib/vconn-active.man \
-	lib/vconn-passive.man \
-	lib/vlog.man
-utilities/ovs-controller.8.in:
-lib/common.man:
-lib/daemon.man:
-lib/ssl-peer-ca-cert.man:
-lib/ssl.man:
-lib/unixctl.man:
-lib/vconn-active.man:
-lib/vconn-passive.man:
-lib/vlog.man:
 
 utilities/ovs-dpctl-top.8: \
 	utilities/ovs-dpctl-top.8.in
@@ -252,4 +252,26 @@ lib/vlog.man:
 ofproto/ofproto-dpif-unixctl.man:
 ofproto/ofproto-unixctl.man:
 ovsdb/remote-active.man:
+ovsdb/remote-passive.man:
+
+vtep/vtep-ctl.8: \
+	vtep/vtep-ctl.8.in \
+	lib/ssl-bootstrap.man \
+	lib/ssl-peer-ca-cert.man \
+	lib/ssl.man \
+	lib/table.man \
+	lib/vlog.man \
+	ovsdb/remote-active.man \
+	ovsdb/remote-active.man \
+	ovsdb/remote-passive.man \
+	ovsdb/remote-passive.man
+vtep/vtep-ctl.8.in:
+lib/ssl-bootstrap.man:
+lib/ssl-peer-ca-cert.man:
+lib/ssl.man:
+lib/table.man:
+lib/vlog.man:
+ovsdb/remote-active.man:
+ovsdb/remote-active.man:
+ovsdb/remote-passive.man:
 ovsdb/remote-passive.man:

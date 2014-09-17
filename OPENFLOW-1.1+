@@ -54,32 +54,10 @@ OpenFlow 1.1
 The list of remaining work items for OpenFlow 1.1 is below.  It is
 probably incomplete.
 
-    * Implement Write-Actions instruction.
-      [required for 1.1+]
-
-    * The new in_phy_port field in OFPT_PACKET_IN needs some kind of
-      implementation.  It has a sensible interpretation for tunnels
-      but in general the physical port is not in the datapath for OVS
-      so the value is not necessarily meaningful.  We might have to
-      just fix it as the same as in_port.
-      [required for OF1.1; optional for OF1.2+]
-
     * OFPT_TABLE_MOD message.  This is new in OF1.1, so we need to
       implement it.  It should be implemented so that the default OVS
       behavior does not change.
       [required for OF1.1 and OF1.2]
-
-    * Flow table stats (OFPST_TABLE).
-
-        * Reference count (active entries)
-          [implemented]
-          [required for OF1.1 and OF1.2]
-
-        * Packet Lookups
-          [required for OF1.1; optional for OF1.2]
-
-        * Packet Matches
-          [required for OF1.1; optional for OF1.2]
 
     * MPLS.  Simon Horman maintains a patch series that adds this
       feature.  This is partially merged.
@@ -93,37 +71,13 @@ probably incomplete.
       reasonable performance.
       [required for OF1.1+]
 
-    * Groups.
-
-        * Type all
-          [required for OF1.1+]
-
-        * Type select
-          [optional for OF1.1+]
-
-        * Type indirect
-          [required for OF1.1+]
-
-        * Type fast failover
-          [optional for OF1.1+]
-
-        * Statistics
-          [optional for OF1.1+]
-
 OpenFlow 1.2
 ------------
 
-OpenFlow 1.2 support requires OpenFlow 1.1 as a prerequisite, plus the
-following additional work.  (This is based on the change log at the
-end of the OF1.2 spec.  I didn't compare the specs carefully yet.)
-
-    * OFPT_FLOW_MOD:
-
-        * Add ability to delete flow in all tables.
-          [required for OF1.2+]
-
-        * Update DESIGN to describe OF1.2 behavior also.
-          [required for OF1.2+]
+OpenFlow 1.2 support requires OpenFlow 1.1 as a prerequisite. All the
+additional work specific to Openflow 1.2 are complete.  (This is based
+on the change log at the end of the OF1.2 spec.  I didn't compare the
+specs carefully yet.)
 
 OpenFlow 1.3
 ------------
@@ -133,16 +87,18 @@ following additional work.  (This is based on the change log at the
 end of the OF1.3 spec, reusing most of the section titles directly.  I
 didn't compare the specs carefully yet.)
 
-    * Send errors for unsupported multipart requests.
-      [required for OF1.3+]
-
     * Add support for multipart requests.
+      Currently we always report OFPBRC_MULTIPART_BUFFER_OVERFLOW.
       [optional for OF1.3+]
 
     * Add OFPMP_TABLE_FEATURES statistics.
       [optional for OF1.3+]
 
     * More flexible table miss support.
+      This requires the following.
+      - Change the default table-miss action (in the absense of table-miss
+        entry) from packet_in to drop for OF1.3+.  Decide what to do if
+        a switch is configured to support multiple OF versions.
       [required for OF1.3+]
 
     * IPv6 extension header handling support.  Fully implementing this
@@ -151,17 +107,10 @@ didn't compare the specs carefully yet.)
       that is all done, is probably 2 or 3 days work.
       [optional for OF1.3+]
 
-    * Per-flow meters.  Similar to IPv6 extension headers in kernel
-      and design requirements.  Might be politically difficult to add
-      directly to the kernel module, since its functionality overlaps
-      with tc.  Ideally, therefore, we could implement these somehow
-      with tc, but I haven't investigated whether that makes sense.
+    * Per-flow meters.  OpenFlow protocol support is now implemented.
+      Support for the special OFPM_SLOWPATH and OFPM_CONTROLLER meters
+      is missing.  Support for the software switch is under review.
       [optional for OF1.3+]
-
-    * Per-connection event filtering.  OF1.3 adopted Open vSwitch's
-      existing design for this feature so implementation should be
-      easy.
-      [required for OF1.3+]
 
     * Auxiliary connections.  An implementation in generic code might
       be a week's worth of work.  The value of an implementation in
@@ -172,24 +121,117 @@ didn't compare the specs carefully yet.)
       some kind of "hardware" support, if we judged it useful enough.)
       [optional for OF1.3+]
 
-    * MPLS BoS matching.  (Included in Simon's MPLS series?)
+    * MPLS BoS matching.
+      Part of MPLS patchset by Simon Horman.
       [optional for OF1.3+]
 
     * Provider Backbone Bridge tagging.  I don't plan to implement
       this (but we'd accept an implementation).
       [optional for OF1.3+]
 
-    * Rework tag order.  I'm not sure whether we need to do anything
-      for this. Part of MPLS patchset by Simon Horman.
+    * Rework tag order.
+      Part of MPLS patchset by Simon Horman.
       [required for v1.3+]
 
     * On-demand flow counters.  I think this might be a real
       optimization in some cases for the software switch.
       [optional for OF1.3+]
 
-    * Duration Statistics
-      - New for Per Port, Per Queue, Per Group
-      [required for v1.3+]
+ONF OpenFlow Exensions for 1.3.X Pack1
+--------------------------------------
+
+OpenFlow 1.3 has a bunch of ONF extentions.
+Many of them are necessary for OpenFlow 1.4 as well.
+
+    * Flow entry notifications
+      This seems to be modelled after OVS's NXST_FLOW_MONITOR.
+      [EXT-187]
+      [required for OF1.4+]
+
+    * Role Status
+      [EXT-191]
+      [required for OF1.4+]
+
+    * Flow entry eviction
+      OVS has flow eviction functionality.
+      table_mod OFPTC_EVICTION, flow_mod 'importance', and
+      table_desc ofp_table_mod_prop_eviction need to be implemented.
+      [EXT-192-e]
+      [optional for OF1.4+]
+
+    * Vacancy events
+      [EXT-192-v]
+      [optional for OF1.4+]
+
+    * Bundle
+      Transactional modification.  OpenFlow 1.4 requires to support
+      flow_mods and port_mods in a bundle.
+      (Not related to OVS's 'ofbundle' stuff.)
+      [EXT-230]
+      [required for OF1.4+]
+
+    * Table synchronisation
+      [EXT-232]
+      [optional for OF1.4+]
+
+    * Group notifications
+      [EXT-235]
+      [optional for OF1.4+]
+
+    * Bad flow entry priority error
+      Probably not so useful to the software switch.
+      [EXT-236]
+      [optional for OF1.4+]
+
+    * Set async config error
+      [EXT-237]
+      [optional for OF1.4+]
+
+    * PBB UCA header field
+      [EXT-256]
+      [optional for OF1.4+]
+
+    * Duplicate instruction error
+      We already have ONFBIC_DUP_INSTRUCTION.
+      [EXT-260]
+      [required for OF1.4+]
+
+    * Multipart timeout error
+      [EXT-264]
+      [required for OF1.4+]
+
+OpenFlow 1.4
+------------
+
+    * More extensible wire protocol
+      Many on-wire structures got TLVs.
+      [EXT-262]
+      [required for OF1.4+]
+
+    * More descriptive reasons for packet-in
+      Distinguish OFPR_APPLY_ACTION, OFPR_ACTION_SET, OFPR_GROUP,
+      OFPR_PACKET_OUT.  NO_MATCH was renamed to OFPR_TABLE_MISS.
+      [EXT-136]
+      [required for OF1.4+]
+
+    * Optical port properties
+      [EXT-154]
+      [optional for OF1.4+]
+
+    * Flow-removed reason for meter delete
+      Report flow removal due to meter deletion with OFPRR_METER_DELETE.
+      [EXT-261]
+      [optional for OF1.4+]
+
+    * Meter notifications
+      [EXT-235]
+      [optional for OF1.4+]
+
+General
+-----
+
+    * ovs-ofctl(8) often lists as Nicira extensions features that
+      later OpenFlow versions support in standard ways.
 
 How to contribute
 -----------------

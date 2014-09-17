@@ -28,6 +28,7 @@
 #define NO_RETURN __attribute__((__noreturn__))
 #define OVS_UNUSED __attribute__((__unused__))
 #define PRINTF_FORMAT(FMT, ARG1) __attribute__((__format__(printf, FMT, ARG1)))
+#define SCANF_FORMAT(FMT, ARG1) __attribute__((__format__(scanf, FMT, ARG1)))
 #define STRFTIME_FORMAT(FMT) __attribute__((__format__(__strftime__, FMT, 0)))
 #define MALLOC_LIKE __attribute__((__malloc__))
 #define ALWAYS_INLINE __attribute__((always_inline))
@@ -39,6 +40,7 @@
 #define NO_RETURN
 #define OVS_UNUSED
 #define PRINTF_FORMAT(FMT, ARG1)
+#define SCANF_FORMAT(FMT, ARG1)
 #define STRFTIME_FORMAT(FMT)
 #define MALLOC_LIKE
 #define ALWAYS_INLINE
@@ -94,8 +96,8 @@
  *    - OVS_REQUIRES(MUTEX) indicate that the function may only be called with
  *      MUTEX held and that the function does not release MUTEX.
  *
- *    - OVS_LOCKS_EXCLUDED(MUTEX) indicates that the function may only be
- *      called when MUTEX is not held.
+ *    - OVS_EXCLUDED(MUTEX) indicates that the function may only be called when
+ *      MUTEX is not held.
  *
  *
  * The following variants, with the same syntax, apply to reader-writer locks:
@@ -106,7 +108,7 @@
  *    OVS_RELEASES         OVS_RELEASES         OVS_RELEASES
  *    OVS_TRY_LOCK         OVS_TRY_RDLOCK       OVS_TRY_WRLOCK
  *    OVS_REQUIRES         OVS_REQ_RDLOCK       OVS_REQ_WRLOCK
- *    OVS_LOCKS_EXCLUDED   OVS_LOCKS_EXCLUDED   OVS_LOCKS_EXCLUDED
+ *    OVS_EXCLUDED         OVS_EXCLUDED         OVS_EXCLUDED
  */
 #define OVS_LOCKABLE __attribute__((lockable))
 #define OVS_REQ_RDLOCK(...) __attribute__((shared_locks_required(__VA_ARGS__)))
@@ -175,6 +177,19 @@
 #define OVS_PACKED(DECL) DECL __attribute__((__packed__))
 #else
 #define OVS_PACKED(DECL) __pragma(pack(push, 1)) DECL __pragma(pack(pop))
+#endif
+
+#ifdef _MSC_VER
+#define CCALL __cdecl
+#pragma section(".CRT$XCU",read)
+#define OVS_CONSTRUCTOR(f) \
+    static void __cdecl f(void); \
+    __declspec(allocate(".CRT$XCU")) void (__cdecl*f##_)(void) = f; \
+    static void __cdecl f(void)
+#else
+#define OVS_CONSTRUCTOR(f) \
+    static void f(void) __attribute__((constructor)); \
+    static void f(void)
 #endif
 
 #endif /* compiler.h */

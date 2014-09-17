@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,8 +130,7 @@ eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN])
 bool
 eth_addr_from_string(const char *s, uint8_t ea[ETH_ADDR_LEN])
 {
-    if (sscanf(s, ETH_ADDR_SCAN_FMT, ETH_ADDR_SCAN_ARGS(ea))
-        == ETH_ADDR_SCAN_COUNT) {
+    if (ovs_scan(s, ETH_ADDR_SCAN_FMT, ETH_ADDR_SCAN_ARGS(ea))) {
         return true;
     } else {
         memset(ea, 0, ETH_ADDR_LEN);
@@ -216,32 +215,6 @@ eth_pop_vlan(struct ofpbuf *packet)
         packet->l2 = (char*)packet->l2 + VLAN_HEADER_LEN;
         memcpy(packet->data, &tmp, sizeof tmp);
     }
-}
-
-/* Return depth of mpls stack.
- *
- * 'packet->l2_5' should initially point to 'packet''s outer-most MPLS header
- * or may be NULL if there are no MPLS headers. */
-uint16_t
-eth_mpls_depth(const struct ofpbuf *packet)
-{
-    struct mpls_hdr *mh = packet->l2_5;
-    uint16_t depth;
-
-    if (!mh) {
-        return 0;
-    }
-
-    depth = 0;
-    while (packet->size >= ((char *)mh - (char *)packet->data) + sizeof *mh) {
-        depth++;
-        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
-            break;
-        }
-        mh++;
-    }
-
-    return depth;
 }
 
 /* Set ethertype of the packet. */
@@ -340,7 +313,7 @@ set_mpls_lse(struct ofpbuf *packet, ovs_be32 mpls_lse)
     /* Packet type should be MPLS to set label stack entry. */
     if (is_mpls(packet)) {
         /* Update mpls label stack entry. */
-        mh->mpls_lse = mpls_lse;
+        put_16aligned_be32(&mh->mpls_lse, mpls_lse);
     }
 }
 
@@ -363,7 +336,7 @@ push_mpls(struct ofpbuf *packet, ovs_be16 ethtype, ovs_be32 lse)
     }
 
     /* Push new MPLS shim header onto packet. */
-    mh.mpls_lse = lse;
+    put_16aligned_be32(&mh.mpls_lse, lse);
     push_mpls_lse(packet, &mh);
 }
 
@@ -381,7 +354,7 @@ pop_mpls(struct ofpbuf *packet, ovs_be16 ethtype)
         mh = packet->l2_5;
         len = (char*)packet->l2_5 - (char*)packet->l2;
         set_ethertype(packet, ethtype);
-        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+        if (get_16aligned_be32(&mh->mpls_lse) & htonl(MPLS_BOS_MASK)) {
             packet->l2_5 = NULL;
         } else {
             packet->l2_5 = (char*)packet->l2_5 + MPLS_HLEN;
@@ -452,14 +425,14 @@ eth_addr_bitand(const uint8_t src[ETH_ADDR_LEN],
 int
 ip_count_cidr_bits(ovs_be32 netmask)
 {
-    return 32 - ctz(ntohl(netmask));
+    return 32 - ctz32(ntohl(netmask));
 }
 
 void
 ip_format_masked(ovs_be32 ip, ovs_be32 mask, struct ds *s)
 {
     ds_put_format(s, IP_FMT, IP_ARGS(ip));
-    if (mask != htonl(UINT32_MAX)) {
+    if (mask != OVS_BE32_MAX) {
         if (ip_is_cidr(mask)) {
             ds_put_format(s, "/%d", ip_count_cidr_bits(mask));
         } else {
@@ -770,13 +743,13 @@ packet_update_csum128(struct ofpbuf *packet, uint8_t proto,
 
 static void
 packet_set_ipv6_addr(struct ofpbuf *packet, uint8_t proto,
-                     ovs_16aligned_be32 *addr, const ovs_be32 new_addr[4],
+                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4],
                      bool recalculate_csum)
 {
     if (recalculate_csum) {
         packet_update_csum128(packet, proto, addr, new_addr);
     }
-    memcpy(addr, new_addr, sizeof(*addr));
+    memcpy(addr, new_addr, sizeof(ovs_be32[4]));
 }
 
 static void
@@ -909,22 +882,22 @@ packet_set_sctp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
     ovs_be32 old_csum, old_correct_csum, new_csum;
     uint16_t tp_len = packet->size - ((uint8_t*)sh - (uint8_t*)packet->data);
 
-    old_csum = sh->sctp_csum;
-    sh->sctp_csum = 0;
+    old_csum = get_16aligned_be32(&sh->sctp_csum);
+    put_16aligned_be32(&sh->sctp_csum, 0);
     old_correct_csum = crc32c(packet->l4, tp_len);
 
     sh->sctp_src = src;
     sh->sctp_dst = dst;
 
     new_csum = crc32c(packet->l4, tp_len);
-    sh->sctp_csum = old_csum ^ old_correct_csum ^ new_csum;
+    put_16aligned_be32(&sh->sctp_csum, old_csum ^ old_correct_csum ^ new_csum);
 }
 
 /* If 'packet' is a TCP packet, returns the TCP flags.  Otherwise, returns 0.
  *
  * 'flow' must be the flow corresponding to 'packet' and 'packet''s header
  * pointers must be properly initialized (e.g. with flow_extract()). */
-uint8_t
+uint16_t
 packet_get_tcp_flags(const struct ofpbuf *packet, const struct flow *flow)
 {
     if (dl_type_is_ip_any(flow->dl_type) &&
@@ -936,11 +909,44 @@ packet_get_tcp_flags(const struct ofpbuf *packet, const struct flow *flow)
     }
 }
 
+const char *
+packet_tcp_flag_to_string(uint32_t flag)
+{
+    switch (flag) {
+    case TCP_FIN:
+        return "fin";
+    case TCP_SYN:
+        return "syn";
+    case TCP_RST:
+        return "rst";
+    case TCP_PSH:
+        return "psh";
+    case TCP_ACK:
+        return "ack";
+    case TCP_URG:
+        return "urg";
+    case TCP_ECE:
+        return "ece";
+    case TCP_CWR:
+        return "cwr";
+    case TCP_NS:
+        return "ns";
+    case 0x200:
+        return "[200]";
+    case 0x400:
+        return "[400]";
+    case 0x800:
+        return "[800]";
+    default:
+        return NULL;
+    }
+}
+
 /* Appends a string representation of the TCP flags value 'tcp_flags'
  * (e.g. obtained via packet_get_tcp_flags() or TCP_FLAGS) to 's', in the
  * format used by tcpdump. */
 void
-packet_format_tcp_flags(struct ds *s, uint8_t tcp_flags)
+packet_format_tcp_flags(struct ds *s, uint16_t tcp_flags)
 {
     if (!tcp_flags) {
         ds_put_cstr(s, "none");
@@ -965,10 +971,22 @@ packet_format_tcp_flags(struct ds *s, uint8_t tcp_flags)
     if (tcp_flags & TCP_ACK) {
         ds_put_char(s, '.');
     }
-    if (tcp_flags & 0x40) {
-        ds_put_cstr(s, "[40]");
+    if (tcp_flags & TCP_ECE) {
+        ds_put_cstr(s, "E");
     }
-    if (tcp_flags & 0x80) {
-        ds_put_cstr(s, "[80]");
+    if (tcp_flags & TCP_CWR) {
+        ds_put_cstr(s, "C");
+    }
+    if (tcp_flags & TCP_NS) {
+        ds_put_cstr(s, "N");
+    }
+    if (tcp_flags & 0x200) {
+        ds_put_cstr(s, "[200]");
+    }
+    if (tcp_flags & 0x400) {
+        ds_put_cstr(s, "[400]");
+    }
+    if (tcp_flags & 0x800) {
+        ds_put_cstr(s, "[800]");
     }
 }

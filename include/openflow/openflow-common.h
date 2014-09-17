@@ -104,8 +104,8 @@ enum ofp_version {
 #define OFP_MAX_TABLE_NAME_LEN 32
 #define OFP_MAX_PORT_NAME_LEN  16
 
-#define OFP_TCP_PORT  6633
-#define OFP_SSL_PORT  6633
+#define OFP_OLD_PORT  6633
+#define OFP_PORT  6653
 
 #define OFP_ETH_ALEN 6          /* Bytes in an Ethernet address. */
 
@@ -204,19 +204,10 @@ enum ofp_port_features {
     OFPPF_10GB_FD    = 1 << 6,  /* 10 Gb full-duplex rate support. */
 };
 
-struct ofp_packet_queue {
-    ovs_be32 queue_id;          /* id for the specific queue. */
-    ovs_be16 len;               /* Length in bytes of this queue desc. */
-    uint8_t pad[2];             /* 64-bit alignment. */
-    /* struct ofp_queue_prop_header properties[0]; List of properties.  */
-};
-OFP_ASSERT(sizeof(struct ofp_packet_queue) == 8);
-
 enum ofp_queue_properties {
-    OFPQT_NONE = 0,       /* No property defined for queue (default). */
-    OFPQT_MIN_RATE,       /* Minimum datarate guaranteed. */
-                          /* Other types should be added here
-                           * (i.e. max rate, precedence, etc). */
+    OFPQT_MIN_RATE = 1,          /* Minimum datarate guaranteed. */
+    OFPQT_MAX_RATE = 2,          /* Maximum guaranteed rate. */
+    OFPQT_EXPERIMENTER = 0xffff, /* Experimenter defined property. */
 };
 
 /* Common description for a queue. */
@@ -227,13 +218,14 @@ struct ofp_queue_prop_header {
 };
 OFP_ASSERT(sizeof(struct ofp_queue_prop_header) == 8);
 
-/* Min-Rate queue property description. */
-struct ofp_queue_prop_min_rate {
-    struct ofp_queue_prop_header prop_header; /* prop: OFPQT_MIN, len: 16. */
+/* Min-Rate and Max-Rate queue property description (OFPQT_MIN and
+ * OFPQT_MAX). */
+struct ofp_queue_prop_rate {
+    struct ofp_queue_prop_header prop_header;
     ovs_be16 rate;        /* In 1/10 of a percent; >1000 -> disabled. */
     uint8_t pad[6];       /* 64-bit alignment */
 };
-OFP_ASSERT(sizeof(struct ofp_queue_prop_min_rate) == 16);
+OFP_ASSERT(sizeof(struct ofp_queue_prop_rate) == 16);
 
 /* Switch features. */
 struct ofp_switch_features {
@@ -306,7 +298,7 @@ OFP_ASSERT(sizeof(struct ofp_action_vendor_header) == 8);
  * header and any padding used to make the action 64-bit aligned.
  * NB: The length of an action *must* always be a multiple of eight. */
 struct ofp_action_header {
-    ovs_be16 type;                  /* One of OFPAT10_*. */
+    ovs_be16 type;                  /* One of OFPAT*. */
     ovs_be16 len;                   /* Length of action, including this
                                        header.  This is the length of action,
                                        including any padding to make it
@@ -443,6 +435,14 @@ enum ofp_group {
     OFPG_ANY        = 0xffffffff   /* Wildcard, for flow stats requests. */
 };
 
+/* Group configuration flags */
+enum ofp_group_capabilities {
+    OFPGFC_SELECT_WEIGHT   = 1 << 0, /* Support weight for select groups */
+    OFPGFC_SELECT_LIVENESS = 1 << 1, /* Support liveness for select groups */
+    OFPGFC_CHAINING        = 1 << 2, /* Support chaining groups */
+    OFPGFC_CHAINING_CHECKS = 1 << 3, /* Check chaining for loops and delete */
+};
+
 enum ofp_hello_elem_type {
     OFPHET_VERSIONBITMAP          = 1, /* Bitmap of version supported. */
 };
@@ -464,5 +464,29 @@ struct ofp_vendor_header {
     /* Vendor-defined arbitrary additional data. */
 };
 OFP_ASSERT(sizeof(struct ofp_vendor_header) == 12);
+
+/* Table numbering. Tables can use any number up to OFPT_MAX. */
+enum ofp_table {
+    /* Last usable table number. */
+    OFPTT_MAX = 0xfe,
+
+    /* Fake tables. */
+    OFPTT_ALL = 0xff         /* Wildcard table used for table config,
+                                flow stats and flow deletes. */
+};
+
+enum ofp_table_config {
+    /* OpenFlow 1.1 and 1.2 defined this field as shown.
+     * OpenFlow 1.3 and later mark this field as deprecated, but have not
+     * reused it for any new purpose. */
+    OFPTC11_TABLE_MISS_CONTROLLER = 0 << 0, /* Send to controller. */
+    OFPTC11_TABLE_MISS_CONTINUE   = 1 << 0, /* Go to next table, like OF1.0. */
+    OFPTC11_TABLE_MISS_DROP       = 2 << 0, /* Drop the packet. */
+    OFPTC11_TABLE_MISS_MASK       = 3 << 0,
+
+    /* OpenFlow 1.4. */
+    OFPTC14_EVICTION              = 1 << 2, /* Allow table to evict flows. */
+    OFPTC14_VACANCY_EVENTS        = 1 << 3, /* Enable vacancy events. */
+};
 
 #endif /* openflow/openflow-common.h */

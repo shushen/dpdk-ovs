@@ -95,12 +95,6 @@ static inline struct rtable *skb_rtable(const struct sk_buff *skb)
 #define CHECKSUM_COMPLETE CHECKSUM_HW
 #endif
 
-#ifdef HAVE_MAC_RAW
-#define mac_header mac.raw
-#define network_header nh.raw
-#define transport_header h.raw
-#endif
-
 #ifndef HAVE_SKBUFF_HEADER_HELPERS
 static inline unsigned char *skb_transport_header(const struct sk_buff *skb)
 {
@@ -194,10 +188,40 @@ static inline bool skb_warn_if_lro(const struct sk_buff *skb)
 #endif
 
 #ifndef HAVE_SKB_FRAG_PAGE
+#include <linux/mm.h>
+
 static inline struct page *skb_frag_page(const skb_frag_t *frag)
 {
 	return frag->page;
 }
+
+static inline void __skb_frag_set_page(skb_frag_t *frag, struct page *page)
+{
+	frag->page = page;
+}
+static inline void skb_frag_size_set(skb_frag_t *frag, unsigned int size)
+{
+	frag->size = size;
+}
+static inline void __skb_frag_ref(skb_frag_t *frag)
+{
+	get_page(skb_frag_page(frag));
+}
+static inline void __skb_frag_unref(skb_frag_t *frag)
+{
+	put_page(skb_frag_page(frag));
+}
+
+static inline void skb_frag_ref(struct sk_buff *skb, int f)
+{
+	__skb_frag_ref(&skb_shinfo(skb)->frags[f]);
+}
+
+static inline void skb_frag_unref(struct sk_buff *skb, int f)
+{
+	__skb_frag_unref(&skb_shinfo(skb)->frags[f]);
+}
+
 #endif
 
 #ifndef HAVE_SKB_RESET_MAC_LEN
@@ -219,14 +243,53 @@ static inline int skb_unclone(struct sk_buff *skb, gfp_t pri)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
+#ifndef HAVE_SKB_ORPHAN_FRAGS
+static inline int skb_orphan_frags(struct sk_buff *skb, gfp_t gfp_mask)
+{
+	return 0;
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
+#define __skb_get_rxhash rpl__skb_get_rxhash
+#define skb_get_rxhash rpl_skb_get_rxhash
+
 extern u32 __skb_get_rxhash(struct sk_buff *skb);
 static inline __u32 skb_get_rxhash(struct sk_buff *skb)
 {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,34)
-	if (!skb->rxhash)
+#ifdef HAVE_RXHASH
+	if (skb->rxhash)
+		return skb->rxhash;
 #endif
 	return __skb_get_rxhash(skb);
+}
+
+static inline void skb_tx_error(struct sk_buff *skb)
+{
+	return;
+}
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0) */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0)
+unsigned int skb_zerocopy_headlen(const struct sk_buff *from);
+int skb_zerocopy(struct sk_buff *to, struct sk_buff *from, int len,
+		  int hlen);
+#endif
+
+
+#ifndef HAVE_SKB_HAS_FRAG_LIST
+#define skb_has_frag_list skb_has_frags
+#endif
+
+#ifndef HAVE___SKB_FILL_PAGE_DESC
+static inline void __skb_fill_page_desc(struct sk_buff *skb, int i,
+					struct page *page, int off, int size)
+{
+	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+
+	__skb_frag_set_page(frag, page);
+	frag->page_offset	= off;
+	skb_frag_size_set(frag, size);
 }
 #endif
 

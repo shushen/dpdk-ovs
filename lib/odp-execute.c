@@ -25,6 +25,7 @@
 #include "ofpbuf.h"
 #include "odp-util.h"
 #include "packets.h"
+#include "unaligned.h"
 #include "util.h"
 
 static void
@@ -43,6 +44,18 @@ odp_set_tunnel_action(const struct nlattr *a, struct flow_tnl *tun_key)
 
     fitness = odp_tun_key_from_attr(a, tun_key);
     ovs_assert(fitness != ODP_FIT_ERROR);
+}
+
+static void
+set_arp(struct ofpbuf *packet, const struct ovs_key_arp *arp_key)
+{
+    struct arp_eth_header *arp = packet->l3;
+
+    arp->ar_op = arp_key->arp_op;
+    memcpy(arp->ar_sha, arp_key->arp_sha, ETH_ADDR_LEN);
+    put_16aligned_be32(&arp->ar_spa, arp_key->arp_sip);
+    memcpy(arp->ar_tha, arp_key->arp_tha, ETH_ADDR_LEN);
+    put_16aligned_be32(&arp->ar_tpa, arp_key->arp_tip);
 }
 
 static void
@@ -106,6 +119,10 @@ odp_execute_set_action(struct ofpbuf *packet, const struct nlattr *a,
          set_mpls_lse(packet, nl_attr_get_be32(a));
          break;
 
+    case OVS_KEY_ATTR_ARP:
+        set_arp(packet, nl_attr_get_unspec(a, sizeof(struct ovs_key_arp)));
+        break;
+
     case OVS_KEY_ATTR_UNSPEC:
     case OVS_KEY_ATTR_ENCAP:
     case OVS_KEY_ATTR_ETHERTYPE:
@@ -113,22 +130,24 @@ odp_execute_set_action(struct ofpbuf *packet, const struct nlattr *a,
     case OVS_KEY_ATTR_VLAN:
     case OVS_KEY_ATTR_ICMP:
     case OVS_KEY_ATTR_ICMPV6:
-    case OVS_KEY_ATTR_ARP:
     case OVS_KEY_ATTR_ND:
+    case OVS_KEY_ATTR_TCP_FLAGS:
     case __OVS_KEY_ATTR_MAX:
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
 static void
+odp_execute_actions__(void *dp, struct ofpbuf *packet, struct flow *key,
+                      const struct nlattr *actions, size_t actions_len,
+                      odp_output_cb output, odp_userspace_cb userspace,
+                      bool more_actions);
+
+static void
 odp_execute_sample(void *dp, struct ofpbuf *packet, struct flow *key,
-                   const struct nlattr *action,
-                   void (*output)(void *dp, struct ofpbuf *packet,
-                                  uint32_t out_port),
-                   void (*userspace)(void *dp, struct ofpbuf *packet,
-                                     const struct flow *key,
-                                     const struct nlattr *a))
+                   const struct nlattr *action, odp_output_cb output,
+                   odp_userspace_cb userspace, bool more_actions)
 {
     const struct nlattr *subactions = NULL;
     const struct nlattr *a;
@@ -151,22 +170,20 @@ odp_execute_sample(void *dp, struct ofpbuf *packet, struct flow *key,
         case OVS_SAMPLE_ATTR_UNSPEC:
         case __OVS_SAMPLE_ATTR_MAX:
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
     }
 
-    odp_execute_actions(dp, packet, key, nl_attr_get(subactions),
-                        nl_attr_get_size(subactions), output, userspace);
+    odp_execute_actions__(dp, packet, key, nl_attr_get(subactions),
+                          nl_attr_get_size(subactions), output, userspace,
+                          more_actions);
 }
 
-void
-odp_execute_actions(void *dp, struct ofpbuf *packet, struct flow *key,
-                    const struct nlattr *actions, size_t actions_len,
-                    void (*output)(void *dp, struct ofpbuf *packet,
-                                   uint32_t out_port),
-                    void (*userspace)(void *dp, struct ofpbuf *packet,
-                                      const struct flow *key,
-                                      const struct nlattr *a))
+static void
+odp_execute_actions__(void *dp, struct ofpbuf *packet, struct flow *key,
+                      const struct nlattr *actions, size_t actions_len,
+                      odp_output_cb output, odp_userspace_cb userspace,
+                      bool more_actions)
 {
     const struct nlattr *a;
     unsigned int left;
@@ -177,15 +194,16 @@ odp_execute_actions(void *dp, struct ofpbuf *packet, struct flow *key,
         switch ((enum ovs_action_attr) type) {
         case OVS_ACTION_ATTR_OUTPUT:
             if (output) {
-                output(dp, packet, nl_attr_get_u32(a));
+                output(dp, packet, key, u32_to_odp(nl_attr_get_u32(a)));
             }
             break;
 
         case OVS_ACTION_ATTR_USERSPACE: {
             if (userspace) {
-                const struct nlattr *userdata;
-                userdata = nl_attr_find_nested(a, OVS_USERSPACE_ATTR_USERDATA);
-                userspace(dp, packet, key, userdata);
+                /* Allow 'userspace' to steal the packet data if we do not
+                 * need it any more. */
+                bool steal = !more_actions && left <= NLA_ALIGN(a->nla_len);
+                userspace(dp, packet, key, a, steal);
             }
             break;
         }
@@ -215,12 +233,22 @@ odp_execute_actions(void *dp, struct ofpbuf *packet, struct flow *key,
             break;
 
         case OVS_ACTION_ATTR_SAMPLE:
-            odp_execute_sample(dp, packet, key, a, output, userspace);
+            odp_execute_sample(dp, packet, key, a, output, userspace,
+                               more_actions || left > NLA_ALIGN(a->nla_len));
             break;
 
         case OVS_ACTION_ATTR_UNSPEC:
         case __OVS_ACTION_ATTR_MAX:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
     }
+}
+
+void
+odp_execute_actions(void *dp, struct ofpbuf *packet, struct flow *key,
+                    const struct nlattr *actions, size_t actions_len,
+                    odp_output_cb output, odp_userspace_cb userspace)
+{
+    odp_execute_actions__(dp, packet, key, actions, actions_len, output,
+                          userspace, false);
 }

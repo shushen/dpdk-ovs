@@ -21,6 +21,7 @@
 #include <netinet/ip.h>
 
 #include "byte-order.h"
+#include "connectivity.h"
 #include "csum.h"
 #include "dpif.h"
 #include "dynamic-string.h"
@@ -37,6 +38,7 @@
 #include "packets.h"
 #include "poll-loop.h"
 #include "random.h"
+#include "seq.h"
 #include "smap.h"
 #include "timeval.h"
 #include "unaligned.h"
@@ -170,6 +172,9 @@ struct bfd {
     uint8_t eth_dst[ETH_ADDR_LEN];/* Ethernet destination address. */
     bool eth_dst_set;             /* 'eth_dst' set through database. */
 
+    ovs_be32 ip_src;              /* IPv4 source address. */
+    ovs_be32 ip_dst;              /* IPv4 destination address. */
+
     uint16_t udp_src;             /* UDP source port. */
 
     /* All timers in milliseconds. */
@@ -187,6 +192,7 @@ struct bfd {
     long long int next_tx;        /* Next TX time. */
     long long int detect_time;    /* RFC 5880 6.8.4 Detection time. */
 
+    bool last_forwarding;         /* Last calculation of forwarding flag. */
     int forwarding_override;      /* Manual override of 'forwarding' status. */
 
     atomic_bool check_tnl_key;    /* Verify tunnel key of inbound packets? */
@@ -206,13 +212,17 @@ struct bfd {
                                   /* detect interval. */
     uint64_t decay_rx_packets;    /* Packets received by 'netdev'. */
     long long int decay_detect_time; /* Decay detection time. */
+
+    uint64_t flap_count;          /* Counts bfd forwarding flaps. */
 };
 
 static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
 static struct hmap all_bfds__ = HMAP_INITIALIZER(&all_bfds__);
 static struct hmap *const all_bfds OVS_GUARDED_BY(mutex) = &all_bfds__;
 
-static bool bfd_forwarding__(const struct bfd *) OVS_REQUIRES(mutex);
+static bool bfd_lookup_ip(const char *host_name, struct in_addr *)
+    OVS_REQUIRES(mutex);
+static bool bfd_forwarding__(struct bfd *) OVS_REQUIRES(mutex);
 static bool bfd_in_poll(const struct bfd *) OVS_REQUIRES(mutex);
 static void bfd_poll(struct bfd *bfd) OVS_REQUIRES(mutex);
 static const char *bfd_diag_str(enum diag) OVS_REQUIRES(mutex);
@@ -231,7 +241,7 @@ static void bfd_put_details(struct ds *, const struct bfd *)
 static uint64_t bfd_rx_packets(const struct bfd *) OVS_REQUIRES(mutex);
 static void bfd_try_decay(struct bfd *) OVS_REQUIRES(mutex);
 static void bfd_decay_update(struct bfd *) OVS_REQUIRES(mutex);
-static void bfd_check_rx(struct bfd *) OVS_REQUIRES(mutex);
+
 static void bfd_forwarding_if_rx_update(struct bfd *) OVS_REQUIRES(mutex);
 static void bfd_unixctl_show(struct unixctl_conn *, int argc,
                              const char *argv[], void *aux OVS_UNUSED);
@@ -246,7 +256,7 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(20, 20);
 /* Returns true if the interface on which 'bfd' is running may be used to
  * forward traffic according to the BFD session state. */
 bool
-bfd_forwarding(const struct bfd *bfd) OVS_EXCLUDED(mutex)
+bfd_forwarding(struct bfd *bfd) OVS_EXCLUDED(mutex)
 {
     bool ret;
 
@@ -256,6 +266,20 @@ bfd_forwarding(const struct bfd *bfd) OVS_EXCLUDED(mutex)
     return ret;
 }
 
+/* When forwarding_if_rx is enabled, if there are packets received,
+ * updates forwarding_if_rx_detect_time. */
+void
+bfd_account_rx(struct bfd *bfd, const struct dpif_flow_stats *stats)
+{
+    if (stats->n_packets && bfd->forwarding_if_rx) {
+        ovs_mutex_lock(&mutex);
+        bfd_forwarding__(bfd);
+        bfd_forwarding_if_rx_update(bfd);
+        bfd_forwarding__(bfd);
+        ovs_mutex_unlock(&mutex);
+    }
+}
+
 /* Returns a 'smap' of key value pairs representing the status of 'bfd'
  * intended for the OVS database. */
 void
@@ -263,9 +287,12 @@ bfd_get_status(const struct bfd *bfd, struct smap *smap)
     OVS_EXCLUDED(mutex)
 {
     ovs_mutex_lock(&mutex);
-    smap_add(smap, "forwarding", bfd_forwarding__(bfd)? "true" : "false");
+    smap_add(smap, "forwarding",
+             bfd_forwarding__(CONST_CAST(struct bfd *, bfd))
+             ? "true" : "false");
     smap_add(smap, "state", bfd_state_str(bfd->state));
     smap_add(smap, "diagnostic", bfd_diag_str(bfd->diag));
+    smap_add_format(smap, "flap_count", "%"PRIu64, bfd->flap_count);
 
     if (bfd->state != STATE_DOWN) {
         smap_add(smap, "remote_state", bfd_state_str(bfd->rmt_state));
@@ -291,7 +318,8 @@ bfd_configure(struct bfd *bfd, const char *name, const struct smap *cfg,
     bool need_poll = false;
     bool cfg_min_rx_changed = false;
     bool cpath_down, forwarding_if_rx;
-    const char *hwaddr;
+    const char *hwaddr, *ip_src, *ip_dst;
+    struct in_addr in_addr;
     uint8_t ea[ETH_ADDR_LEN];
 
     if (ovsthread_once_start(&once)) {
@@ -323,6 +351,7 @@ bfd_configure(struct bfd *bfd, const char *name, const struct smap *cfg,
         bfd->netdev = netdev_ref(netdev);
         bfd->rx_packets = bfd_rx_packets(bfd);
         bfd->in_decay = false;
+        bfd->flap_count = 0;
 
         /* RFC 5881 section 4
          * The source port MUST be in the range 49152 through 65535.  The same
@@ -380,9 +409,7 @@ bfd_configure(struct bfd *bfd, const char *name, const struct smap *cfg,
     cpath_down = smap_get_bool(cfg, "cpath_down", false);
     if (bfd->cpath_down != cpath_down) {
         bfd->cpath_down = cpath_down;
-        if (bfd->diag == DIAG_NONE || bfd->diag == DIAG_CPATH_DOWN) {
-            bfd_set_state(bfd, bfd->state, DIAG_NONE);
-        }
+        bfd_set_state(bfd, bfd->state, DIAG_NONE);
         need_poll = true;
     }
 
@@ -393,6 +420,20 @@ bfd_configure(struct bfd *bfd, const char *name, const struct smap *cfg,
     } else if (bfd->eth_dst_set) {
         memcpy(bfd->eth_dst, eth_addr_bfd, ETH_ADDR_LEN);
         bfd->eth_dst_set = false;
+    }
+
+    ip_src = smap_get(cfg, "bfd_src_ip");
+    if (ip_src && bfd_lookup_ip(ip_src, &in_addr)) {
+        memcpy(&bfd->ip_src, &in_addr, sizeof in_addr);
+    } else {
+        bfd->ip_src = htonl(0xA9FE0100); /* 169.254.1.0. */
+    }
+
+    ip_dst = smap_get(cfg, "bfd_dst_ip");
+    if (ip_dst && bfd_lookup_ip(ip_dst, &in_addr)) {
+        memcpy(&bfd->ip_dst, &in_addr, sizeof in_addr);
+    } else {
+        bfd->ip_dst = htonl(0xA9FE0101); /* 169.254.1.1. */
     }
 
     forwarding_if_rx = smap_get_bool(cfg, "forwarding_if_rx", false);
@@ -446,16 +487,30 @@ bfd_unref(struct bfd *bfd) OVS_EXCLUDED(mutex)
 void
 bfd_wait(const struct bfd *bfd) OVS_EXCLUDED(mutex)
 {
-    ovs_mutex_lock(&mutex);
-    if (bfd->flags & FLAG_FINAL) {
-        poll_immediate_wake();
+    poll_timer_wait_until(bfd_wake_time(bfd));
+}
+
+/* Returns the next wake up time. */
+long long int
+bfd_wake_time(const struct bfd *bfd) OVS_EXCLUDED(mutex)
+{
+    long long int retval;
+
+    if (!bfd) {
+        return LLONG_MAX;
     }
 
-    poll_timer_wait_until(bfd->next_tx);
-    if (bfd->state > STATE_DOWN) {
-        poll_timer_wait_until(bfd->detect_time);
+    ovs_mutex_lock(&mutex);
+    if (bfd->flags & FLAG_FINAL) {
+        retval = 0;
+    } else {
+        retval = bfd->next_tx;
+        if (bfd->state > STATE_DOWN) {
+            retval = MIN(bfd->detect_time, retval);
+        }
     }
     ovs_mutex_unlock(&mutex);
+    return retval;
 }
 
 void
@@ -471,6 +526,7 @@ bfd_run(struct bfd *bfd) OVS_EXCLUDED(mutex)
     if (bfd->state > STATE_DOWN && now >= bfd->detect_time) {
         bfd_set_state(bfd, STATE_DOWN, DIAG_EXPIRED);
     }
+    bfd_forwarding__(bfd);
 
     /* Decay may only happen when state is STATE_UP, bfd->decay_min_rx is
      * configured, and decay_detect_time is reached. */
@@ -478,9 +534,6 @@ bfd_run(struct bfd *bfd) OVS_EXCLUDED(mutex)
         && now >= bfd->decay_detect_time) {
         bfd_try_decay(bfd);
     }
-
-    /* Always checks the reception of any packet. */
-    bfd_check_rx(bfd);
 
     if (bfd->min_tx != bfd->cfg_min_tx
         || (bfd->min_rx != bfd->cfg_min_rx && bfd->min_rx != bfd->decay_min_rx)
@@ -537,9 +590,8 @@ bfd_put_packet(struct bfd *bfd, struct ofpbuf *p,
     ip->ip_ttl = MAXTTL;
     ip->ip_tos = IPTOS_LOWDELAY | IPTOS_THROUGHPUT;
     ip->ip_proto = IPPROTO_UDP;
-    /* Use link local addresses: */
-    put_16aligned_be32(&ip->ip_src, htonl(0xA9FE0100)); /* 169.254.1.0. */
-    put_16aligned_be32(&ip->ip_dst, htonl(0xA9FE0101)); /* 169.254.1.1. */
+    put_16aligned_be32(&ip->ip_src, bfd->ip_src);
+    put_16aligned_be32(&ip->ip_dst, bfd->ip_dst);
     ip->ip_csum = csum(ip, sizeof *ip);
 
     udp = ofpbuf_put_zeros(p, sizeof *udp);
@@ -618,6 +670,8 @@ bfd_process_packet(struct bfd *bfd, const struct flow *flow,
     /* Increments the decay rx counter. */
     bfd->decay_rx_ctl++;
 
+    bfd_forwarding__(bfd);
+
     if (flow->nw_ttl != 255) {
         /* XXX Should drop in the kernel to prevent DOS. */
         goto out;
@@ -625,8 +679,10 @@ bfd_process_packet(struct bfd *bfd, const struct flow *flow,
 
     msg = ofpbuf_at(p, (uint8_t *)p->l7 - (uint8_t *)p->data, BFD_PACKET_LEN);
     if (!msg) {
-        VLOG_INFO_RL(&rl, "%s: Received unparseable BFD control message.",
-                     bfd->name);
+        VLOG_INFO_RL(&rl, "%s: Received too-short BFD control message (only "
+                     "%"PRIdPTR" bytes long, at least %d required).",
+                     bfd->name, (uint8_t *) ofpbuf_tail(p) - (uint8_t *) p->l7,
+                     BFD_PACKET_LEN);
         goto out;
     }
 
@@ -696,6 +752,10 @@ bfd_process_packet(struct bfd *bfd, const struct flow *flow,
         goto out;
     }
 
+    if (bfd->rmt_state != rmt_state) {
+        seq_change(connectivity_seq_get());
+    }
+
     bfd->rmt_disc = ntohl(msg->my_disc);
     bfd->rmt_state = rmt_state;
     bfd->rmt_flags = flags;
@@ -721,7 +781,9 @@ bfd_process_packet(struct bfd *bfd, const struct flow *flow,
     rmt_min_rx = MAX(ntohl(msg->min_rx) / 1000, 1);
     if (bfd->rmt_min_rx != rmt_min_rx) {
         bfd->rmt_min_rx = rmt_min_rx;
-        bfd_set_next_tx(bfd);
+        if (bfd->next_tx) {
+            bfd_set_next_tx(bfd);
+        }
         log_msg(VLL_INFO, msg, "New remote min_rx", bfd);
     }
 
@@ -759,12 +821,13 @@ bfd_process_packet(struct bfd *bfd, const struct flow *flow,
             break;
         case STATE_ADMIN_DOWN:
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
     }
     /* XXX: RFC 5880 Section 6.8.6 Demand mode related calculations here. */
 
 out:
+    bfd_forwarding__(bfd);
     ovs_mutex_unlock(&mutex);
 }
 
@@ -789,24 +852,46 @@ bfd_set_netdev(struct bfd *bfd, const struct netdev *netdev)
 }
 
 
+/* Updates the forwarding flag.  If override is not configured and
+ * the forwarding flag value changes, increments the flap count.
+ *
+ * Note this function may be called multiple times in a function
+ * (e.g. bfd_account_rx) before and after the bfd state or status
+ * change.  This is to capture any forwarding flag flap. */
 static bool
-bfd_forwarding__(const struct bfd *bfd) OVS_REQUIRES(mutex)
+bfd_forwarding__(struct bfd *bfd) OVS_REQUIRES(mutex)
 {
     long long int time;
+    bool last_forwarding = bfd->last_forwarding;
 
     if (bfd->forwarding_override != -1) {
         return bfd->forwarding_override == 1;
     }
 
     time = bfd->forwarding_if_rx_detect_time;
-    return (bfd->state == STATE_UP
-            || (bfd->forwarding_if_rx && time > time_msec()))
-           && bfd->rmt_diag != DIAG_PATH_DOWN
-           && bfd->rmt_diag != DIAG_CPATH_DOWN
-           && bfd->rmt_diag != DIAG_RCPATH_DOWN;
+    bfd->last_forwarding = (bfd->state == STATE_UP
+                            || (bfd->forwarding_if_rx && time > time_msec()))
+                            && bfd->rmt_diag != DIAG_PATH_DOWN
+                            && bfd->rmt_diag != DIAG_CPATH_DOWN
+                            && bfd->rmt_diag != DIAG_RCPATH_DOWN;
+    if (bfd->last_forwarding != last_forwarding) {
+        bfd->flap_count++;
+        seq_change(connectivity_seq_get());
+    }
+    return bfd->last_forwarding;
 }
 
 /* Helpers. */
+static bool
+bfd_lookup_ip(const char *host_name, struct in_addr *addr)
+{
+    if (!inet_aton(host_name, addr)) {
+        VLOG_ERR_RL(&rl, "\"%s\" is not a valid IP address", host_name);
+        return false;
+    }
+    return true;
+}
+
 static bool
 bfd_in_poll(const struct bfd *bfd) OVS_REQUIRES(mutex)
 {
@@ -964,7 +1049,7 @@ static void
 bfd_set_state(struct bfd *bfd, enum state state, enum diag diag)
     OVS_REQUIRES(mutex)
 {
-    if (diag == DIAG_NONE && bfd->cpath_down) {
+    if (bfd->cpath_down) {
         diag = DIAG_CPATH_DOWN;
     }
 
@@ -1003,6 +1088,8 @@ bfd_set_state(struct bfd *bfd, enum state state, enum diag diag)
         if (bfd->state == STATE_UP && bfd->decay_min_rx) {
             bfd_decay_update(bfd);
         }
+
+        seq_change(connectivity_seq_get());
     }
 }
 
@@ -1049,26 +1136,6 @@ bfd_decay_update(struct bfd * bfd) OVS_REQUIRES(mutex)
     bfd->decay_detect_time = MAX(bfd->decay_min_rx, 2000) + time_msec();
 }
 
-/* Checks if there are packets received during the time since last call.
- * If forwarding_if_rx is enabled and packets are received, updates the
- * forwarding_if_rx_detect_time. */
-static void
-bfd_check_rx(struct bfd *bfd) OVS_REQUIRES(mutex)
-{
-    uint64_t rx_packets = bfd_rx_packets(bfd);
-    int64_t diff;
-
-    diff = rx_packets - bfd->rx_packets;
-    bfd->rx_packets = rx_packets;
-    if (diff < 0) {
-        VLOG_INFO_RL(&rl, "rx_packets count is smaller than last time.");
-    }
-    if (bfd->forwarding_if_rx && diff > 0) {
-        bfd_forwarding_if_rx_update(bfd);
-    }
-}
-
-/* Updates the forwarding_if_rx_detect_time. */
 static void
 bfd_forwarding_if_rx_update(struct bfd *bfd) OVS_REQUIRES(mutex)
 {
@@ -1120,7 +1187,8 @@ static void
 bfd_put_details(struct ds *ds, const struct bfd *bfd) OVS_REQUIRES(mutex)
 {
     ds_put_format(ds, "\tForwarding: %s\n",
-                  bfd_forwarding__(bfd) ? "true" : "false");
+                  bfd_forwarding__(CONST_CAST(struct bfd *, bfd))
+                  ? "true" : "false");
     ds_put_format(ds, "\tDetect Multiplier: %d\n", bfd->mult);
     ds_put_format(ds, "\tConcatenated Path Down: %s\n",
                   bfd->cpath_down ? "true" : "false");

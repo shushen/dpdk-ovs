@@ -99,7 +99,7 @@ bundle_execute(const struct ofpact_bundle *bundle,
         return execute_ab(bundle, slave_enabled, aux);
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -165,8 +165,8 @@ bundle_from_openflow(const struct nx_action_bundle *nab,
     }
 
     if (slaves_size < bundle->n_slaves * sizeof(ovs_be16)) {
-        VLOG_WARN_RL(&rl, "Nicira action %"PRIu16" only has %zu bytes "
-                     "allocated for slaves.  %zu bytes are required for "
+        VLOG_WARN_RL(&rl, "Nicira action %"PRIu16" only has %"PRIuSIZE" bytes "
+                     "allocated for slaves.  %"PRIuSIZE" bytes are required for "
                      "%"PRIu16" slaves.", subtype, slaves_size,
                      bundle->n_slaves * sizeof(ovs_be16), bundle->n_slaves);
         error = OFPERR_OFPBAC_BAD_LEN;
@@ -204,7 +204,7 @@ bundle_check(const struct ofpact_bundle *bundle, ofp_port_t max_ports,
         ofp_port_t ofp_port = bundle->slaves[i];
         enum ofperr error;
 
-        error = ofputil_check_output_port(ofp_port, max_ports);
+        error = ofpact_check_output_port(ofp_port, max_ports);
         if (error) {
             VLOG_WARN_RL(&rl, "invalid slave %"PRIu16, ofp_port);
             return error;

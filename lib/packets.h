@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -143,8 +143,6 @@ void compose_rarp(struct ofpbuf *, const uint8_t eth_src[ETH_ADDR_LEN]);
 void eth_push_vlan(struct ofpbuf *, ovs_be16 tci);
 void eth_pop_vlan(struct ofpbuf *);
 
-uint16_t eth_mpls_depth(const struct ofpbuf *packet);
-
 void set_ethertype(struct ofpbuf *packet, ovs_be16 eth_type);
 
 const char *eth_from_hex(const char *hex, struct ofpbuf **packetp);
@@ -183,15 +181,14 @@ ovs_be32 set_mpls_lse_values(uint8_t ttl, uint8_t tc, uint8_t bos,
  * uint8_t mac[ETH_ADDR_LEN];
  * int a, b;
  *
- * if (sscanf(string, "%d"ETH_ADDR_SCAN_FMT"%d",
- *     &a, ETH_ADDR_SCAN_ARGS(mac), &b) == 1 + ETH_ADDR_SCAN_COUNT + 1) {
+ * if (ovs_scan(string, "%d"ETH_ADDR_SCAN_FMT"%d",
+ *              &a, ETH_ADDR_SCAN_ARGS(mac), &b)) {
  *     ...
  * }
  */
 #define ETH_ADDR_SCAN_FMT "%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8
 #define ETH_ADDR_SCAN_ARGS(ea) \
         &(ea)[0], &(ea)[1], &(ea)[2], &(ea)[3], &(ea)[4], &(ea)[5]
-#define ETH_ADDR_SCAN_COUNT 6
 
 #define ETH_TYPE_IP            0x0800
 #define ETH_TYPE_ARP           0x0806
@@ -326,7 +323,7 @@ BUILD_ASSERT_DECL(VLAN_ETH_HEADER_LEN == sizeof(struct vlan_eth_header));
 #define MPLS_HLEN           4
 
 struct mpls_hdr {
-    ovs_be32 mpls_lse;
+    ovs_16aligned_be32 mpls_lse;
 };
 BUILD_ASSERT_DECL(MPLS_HLEN == sizeof(struct mpls_hdr));
 
@@ -383,8 +380,7 @@ mpls_lse_to_bos(ovs_be32 mpls_lse)
  * ovs_be32 ip;
  * int a, b;
  *
- * if (sscanf(string, "%d"IP_SCAN_FMT"%d",
- *     &a, IP_SCAN_ARGS(&ip), &b) == 1 + IP_SCAN_COUNT + 1) {
+ * if (ovs_scan(string, "%d"IP_SCAN_FMT"%d", &a, IP_SCAN_ARGS(&ip), &b)) {
  *     ...
  * }
  */
@@ -394,7 +390,6 @@ mpls_lse_to_bos(ovs_be32 mpls_lse)
         &((uint8_t *) ip)[1],                               \
         &((uint8_t *) ip)[2],                               \
         &((uint8_t *) ip)[3]
-#define IP_SCAN_COUNT 4
 
 /* Returns true if 'netmask' is a CIDR netmask, that is, if it consists of N
  * high-order 1-bits and 32-N low-order 0-bits. */
@@ -475,8 +470,8 @@ BUILD_ASSERT_DECL(ICMP_HEADER_LEN == sizeof(struct icmp_header));
 struct sctp_header {
     ovs_be16 sctp_src;
     ovs_be16 sctp_dst;
-    ovs_be32 sctp_vtag;
-    ovs_be32 sctp_csum;
+    ovs_16aligned_be32 sctp_vtag;
+    ovs_16aligned_be32 sctp_csum;
 };
 BUILD_ASSERT_DECL(SCTP_HEADER_LEN == sizeof(struct sctp_header));
 
@@ -489,15 +484,18 @@ struct udp_header {
 };
 BUILD_ASSERT_DECL(UDP_HEADER_LEN == sizeof(struct udp_header));
 
-#define TCP_FIN 0x01
-#define TCP_SYN 0x02
-#define TCP_RST 0x04
-#define TCP_PSH 0x08
-#define TCP_ACK 0x10
-#define TCP_URG 0x20
+#define TCP_FIN 0x001
+#define TCP_SYN 0x002
+#define TCP_RST 0x004
+#define TCP_PSH 0x008
+#define TCP_ACK 0x010
+#define TCP_URG 0x020
+#define TCP_ECE 0x040
+#define TCP_CWR 0x080
+#define TCP_NS  0x100
 
 #define TCP_CTL(flags, offset) (htons((flags) | ((offset) << 12)))
-#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x003f)
+#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x0fff)
 #define TCP_OFFSET(tcp_ctl) (ntohs(tcp_ctl) >> 12)
 
 #define TCP_HEADER_LEN 20
@@ -577,7 +575,7 @@ struct ovs_16aligned_ip6_frag {
  * char ipv6_s[IPV6_SCAN_LEN + 1];
  * struct in6_addr ipv6;
  *
- * if (sscanf(string, "%d"IPV6_SCAN_FMT"%d", &a, ipv6_s, &b) == 3
+ * if (ovs_scan(string, "%d"IPV6_SCAN_FMT"%d", &a, ipv6_s, &b)
  *     && inet_pton(AF_INET6, ipv6_s, &ipv6) == 1) {
  *     ...
  * }
@@ -618,6 +616,18 @@ static inline bool is_ip_any(const struct flow *flow)
     return dl_type_is_ip_any(flow->dl_type);
 }
 
+static inline bool is_icmpv4(const struct flow *flow)
+{
+    return (flow->dl_type == htons(ETH_TYPE_IP)
+            && flow->nw_proto == IPPROTO_ICMP);
+}
+
+static inline bool is_icmpv6(const struct flow *flow)
+{
+    return (flow->dl_type == htons(ETH_TYPE_IPV6)
+            && flow->nw_proto == IPPROTO_ICMPV6);
+}
+
 void format_ipv6_addr(char *addr_str, const struct in6_addr *addr);
 void print_ipv6_addr(struct ds *string, const struct in6_addr *addr);
 void print_ipv6_masked(struct ds *string, const struct in6_addr *addr,
@@ -643,7 +653,8 @@ void packet_set_tcp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
 void packet_set_udp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
 void packet_set_sctp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
 
-uint8_t packet_get_tcp_flags(const struct ofpbuf *, const struct flow *);
-void packet_format_tcp_flags(struct ds *, uint8_t);
+uint16_t packet_get_tcp_flags(const struct ofpbuf *, const struct flow *);
+void packet_format_tcp_flags(struct ds *, uint16_t);
+const char *packet_tcp_flag_to_string(uint32_t flag);
 
 #endif /* packets.h */

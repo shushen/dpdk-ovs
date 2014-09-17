@@ -35,6 +35,7 @@
 #include "sat-math.h"
 #include "token-bucket.h"
 #include "util.h"
+#include "list.h"
 
 #ifdef  __cplusplus
 extern "C" {
@@ -44,14 +45,14 @@ extern "C" {
  *
  * ovs-appctl(8) defines each of the log levels. */
 #define VLOG_LEVELS                             \
-    VLOG_LEVEL(OFF, LOG_ALERT)                  \
-    VLOG_LEVEL(EMER, LOG_ALERT)                 \
-    VLOG_LEVEL(ERR, LOG_ERR)                    \
-    VLOG_LEVEL(WARN, LOG_WARNING)               \
-    VLOG_LEVEL(INFO, LOG_NOTICE)                \
-    VLOG_LEVEL(DBG, LOG_DEBUG)
+    VLOG_LEVEL(OFF,  LOG_ALERT,   1)            \
+    VLOG_LEVEL(EMER, LOG_ALERT,   1)            \
+    VLOG_LEVEL(ERR,  LOG_ERR,     3)            \
+    VLOG_LEVEL(WARN, LOG_WARNING, 4)            \
+    VLOG_LEVEL(INFO, LOG_NOTICE,  5)            \
+    VLOG_LEVEL(DBG,  LOG_DEBUG,   7)
 enum vlog_level {
-#define VLOG_LEVEL(NAME, SYSLOG_LEVEL) VLL_##NAME,
+#define VLOG_LEVEL(NAME, SYSLOG_LEVEL, RFC5424_LEVEL) VLL_##NAME,
     VLOG_LEVELS
 #undef VLOG_LEVEL
     VLL_N_LEVELS
@@ -62,7 +63,7 @@ enum vlog_level vlog_get_level_val(const char *name);
 
 /* Facilities that we can log to. */
 #define VLOG_FACILITIES                                                 \
-    VLOG_FACILITY(SYSLOG, "ovs|%05N|%c%T|%p|%m")                            \
+    VLOG_FACILITY(SYSLOG, "ovs|%05N|%c%T|%p|%m")                        \
     VLOG_FACILITY(CONSOLE, "%D{%Y-%m-%dT%H:%M:%SZ}|%05N|%c%T|%p|%m")    \
     VLOG_FACILITY(FILE, "%D{%Y-%m-%dT%H:%M:%S.###Z}|%05N|%c%T|%p|%m")
 enum vlog_facility {
@@ -78,22 +79,22 @@ enum vlog_facility vlog_get_facility_val(const char *name);
 
 /* A log module. */
 struct vlog_module {
+    struct list list;
     const char *name;             /* User-visible name. */
     int levels[VLF_N_FACILITIES]; /* Minimum log level for each facility. */
     int min_level;                /* Minimum log level for any facility. */
     bool honor_rate_limits;       /* Set false to ignore rate limits. */
 };
 
+/* Global list of all logging modules */
+extern struct list vlog_modules;
+
 /* Creates and initializes a global instance of a module named MODULE. */
-#if USE_LINKER_SECTIONS
 #define VLOG_DEFINE_MODULE(MODULE)                                      \
         VLOG_DEFINE_MODULE__(MODULE)                                    \
-        extern struct vlog_module *const vlog_module_ptr_##MODULE;      \
-        struct vlog_module *const vlog_module_ptr_##MODULE              \
-            __attribute__((section("vlog_modules"))) = &VLM_##MODULE
-#else
-#define VLOG_DEFINE_MODULE(MODULE) extern struct vlog_module VLM_##MODULE
-#endif
+        OVS_CONSTRUCTOR(init_##MODULE) {                                \
+                list_insert(&vlog_modules, &VLM_##MODULE.list);         \
+        }                                                               \
 
 const char *vlog_get_module_name(const struct vlog_module *);
 struct vlog_module *vlog_module_from_name(const char *name);
@@ -138,6 +139,9 @@ void vlog_set_verbosity(const char *arg);
 void vlog_set_pattern(enum vlog_facility, const char *pattern);
 int vlog_set_log_file(const char *file_name);
 int vlog_reopen_log_file(void);
+
+/* Configure syslog target. */
+void vlog_set_syslog_target(const char *target);
 
 /* Initialization. */
 void vlog_init(void);
@@ -213,17 +217,26 @@ void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
 #define VLOG_DBG_ONCE(...) VLOG_ONCE(VLL_DBG, __VA_ARGS__)
 
 /* Command line processing. */
-#define VLOG_OPTION_ENUMS OPT_LOG_FILE
-#define VLOG_LONG_OPTIONS                                   \
-        {"verbose",     optional_argument, NULL, 'v'},         \
-        {"log-file",    optional_argument, NULL, OPT_LOG_FILE}
+#define VLOG_OPTION_ENUMS                       \
+        OPT_LOG_FILE,                           \
+        OPT_SYSLOG_TARGET
+
+#define VLOG_LONG_OPTIONS                                               \
+        {"verbose",       optional_argument, NULL, 'v'},                \
+        {"log-file",      optional_argument, NULL, OPT_LOG_FILE},       \
+        {"syslog-target", optional_argument, NULL, OPT_SYSLOG_TARGET}
+
 #define VLOG_OPTION_HANDLERS                    \
         case 'v':                               \
             vlog_set_verbosity(optarg);         \
             break;                              \
         case OPT_LOG_FILE:                      \
             vlog_set_log_file(optarg);          \
+            break;                              \
+        case OPT_SYSLOG_TARGET:                 \
+            vlog_set_syslog_target(optarg);     \
             break;
+
 void vlog_usage(void);
 
 /* Implementation details. */
@@ -254,6 +267,7 @@ void vlog_usage(void);
         extern struct vlog_module VLM_##MODULE;                         \
         struct vlog_module VLM_##MODULE =                               \
         {                                                               \
+            LIST_INITIALIZER(&VLM_##MODULE.list),                       \
             #MODULE,                                        /* name */  \
             { [ 0 ... VLF_N_FACILITIES - 1] = VLL_INFO }, /* levels */  \
             VLL_INFO,                                  /* min_level */  \

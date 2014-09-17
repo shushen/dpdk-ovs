@@ -26,8 +26,10 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include "byte-order.h"
+#include "connectivity.h"
 #include "ofpbuf.h"
 #include "packets.h"
+#include "seq.h"
 #include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
@@ -666,7 +668,7 @@ stp_state_name(enum stp_state state)
     case STP_BLOCKING:
         return "blocking";
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -692,6 +694,15 @@ stp_learn_in_state(enum stp_state state)
     return (state & (STP_DISABLED | STP_LEARNING | STP_FORWARDING)) != 0;
 }
 
+/* Returns true if 'state' is one in which rx&tx bpdu should be done on
+ * on a port, false otherwise. */
+bool
+stp_listen_in_state(enum stp_state state)
+{
+    return (state &
+            (STP_LISTENING | STP_LEARNING | STP_FORWARDING)) != 0;
+}
+
 /* Returns the name for the given 'role' (for use in debugging and log
  * messages). */
 const char *
@@ -707,7 +718,7 @@ stp_role_name(enum stp_role role)
     case STP_ROLE_DISABLED:
         return "disabled";
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -727,7 +738,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
     }
 
     if (bpdu_size < sizeof(struct stp_bpdu_header)) {
-        VLOG_WARN("%s: received runt %zu-byte BPDU", stp->name, bpdu_size);
+        VLOG_WARN("%s: received runt %"PRIuSIZE"-byte BPDU", stp->name, bpdu_size);
         p->error_count++;
         goto out;
     }
@@ -747,7 +758,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
     switch (header->bpdu_type) {
     case STP_TYPE_CONFIG:
         if (bpdu_size < sizeof(struct stp_config_bpdu)) {
-            VLOG_WARN("%s: received config BPDU with invalid size %zu",
+            VLOG_WARN("%s: received config BPDU with invalid size %"PRIuSIZE,
                       stp->name, bpdu_size);
             p->error_count++;
             goto out;
@@ -757,7 +768,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
 
     case STP_TYPE_TCN:
         if (bpdu_size != sizeof(struct stp_tcn_bpdu)) {
-            VLOG_WARN("%s: received TCN BPDU with invalid size %zu",
+            VLOG_WARN("%s: received TCN BPDU with invalid size %"PRIuSIZE,
                       stp->name, bpdu_size);
             p->error_count++;
             goto out;
@@ -1127,6 +1138,7 @@ stp_configuration_update(struct stp *stp) OVS_REQUIRES(mutex)
 {
     stp_root_selection(stp);
     stp_designated_port_selection(stp);
+    seq_change(connectivity_seq_get());
 }
 
 static bool
@@ -1257,6 +1269,7 @@ stp_set_port_state(struct stp_port *p, enum stp_state state)
         if (p < p->stp->first_changed_port) {
             p->stp->first_changed_port = p;
         }
+        seq_change(connectivity_seq_get());
     }
     p->state = state;
 }
@@ -1275,6 +1288,7 @@ stp_topology_change_detection(struct stp *stp) OVS_REQUIRES(mutex)
     }
     stp->fdb_needs_flush = true;
     stp->topology_change_detected = true;
+    seq_change(connectivity_seq_get());
     VLOG_INFO_RL(&rl, "%s: detected topology change.", stp->name);
 }
 

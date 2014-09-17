@@ -138,10 +138,10 @@ vconn_usage(bool active, bool passive, bool bootstrap OVS_UNUSED)
     if (active) {
         printf("Active OpenFlow connection methods:\n");
         printf("  tcp:IP[:PORT]           "
-               "PORT (default: %d) at remote IP\n", OFP_TCP_PORT);
+               "PORT (default: %d) at remote IP\n", OFP_OLD_PORT);
 #ifdef HAVE_OPENSSL
         printf("  ssl:IP[:PORT]           "
-               "SSL PORT (default: %d) at remote IP\n", OFP_SSL_PORT);
+               "SSL PORT (default: %d) at remote IP\n", OFP_OLD_PORT);
 #endif
         printf("  unix:FILE               Unix domain socket named FILE\n");
     }
@@ -150,11 +150,11 @@ vconn_usage(bool active, bool passive, bool bootstrap OVS_UNUSED)
         printf("Passive OpenFlow connection methods:\n");
         printf("  ptcp:[PORT][:IP]        "
                "listen to TCP PORT (default: %d) on IP\n",
-               OFP_TCP_PORT);
+               OFP_OLD_PORT);
 #ifdef HAVE_OPENSSL
         printf("  pssl:[PORT][:IP]        "
                "listen for SSL on PORT (default: %d) on IP\n",
-               OFP_SSL_PORT);
+               OFP_OLD_PORT);
 #endif
         printf("  punix:FILE              "
                "listen on Unix domain socket FILE\n");
@@ -348,39 +348,6 @@ void
 vconn_set_allowed_versions(struct vconn *vconn, uint32_t allowed_versions)
 {
     vconn->allowed_versions = allowed_versions;
-}
-
-/* Returns the IP address of the peer, or 0 if the peer is not connected over
- * an IP-based protocol or if its IP address is not yet known. */
-ovs_be32
-vconn_get_remote_ip(const struct vconn *vconn)
-{
-    return vconn->remote_ip;
-}
-
-/* Returns the transport port of the peer, or 0 if the connection does not
- * contain a port or if the port is not yet known. */
-ovs_be16
-vconn_get_remote_port(const struct vconn *vconn)
-{
-    return vconn->remote_port;
-}
-
-/* Returns the IP address used to connect to the peer, or 0 if the
- * connection is not an IP-based protocol or if its IP address is not
- * yet known. */
-ovs_be32
-vconn_get_local_ip(const struct vconn *vconn)
-{
-    return vconn->local_ip;
-}
-
-/* Returns the transport port used to connect to the peer, or 0 if the
- * connection does not contain a port or if the port is not yet known. */
-ovs_be16
-vconn_get_local_port(const struct vconn *vconn)
-{
-    return vconn->local_port;
 }
 
 /* Returns the OpenFlow version negotiated with the peer, or -1 if version
@@ -596,7 +563,7 @@ vconn_connect(struct vconn *vconn)
             return vconn->error;
 
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
     } while (vconn->state != last_state);
 
@@ -631,11 +598,25 @@ vconn_recv(struct vconn *vconn, struct ofpbuf **msgp)
                     type != OFPTYPE_ERROR &&
                     type != OFPTYPE_ECHO_REQUEST &&
                     type != OFPTYPE_ECHO_REPLY)) {
+                struct ofpbuf *reply;
+
                 VLOG_ERR_RL(&bad_ofmsg_rl, "%s: received OpenFlow version "
                             "0x%02"PRIx8" != expected %02x",
                             vconn->name, oh->version, vconn->version);
+
+                /* Send a "bad version" reply, if we can. */
+                reply = ofperr_encode_reply(OFPERR_OFPBRC_BAD_VERSION, oh);
+                retval = vconn_send(vconn, reply);
+                if (retval) {
+                    VLOG_INFO_RL(&bad_ofmsg_rl,
+                                 "%s: failed to queue error reply (%s)",
+                                 vconn->name, ovs_strerror(retval));
+                    ofpbuf_delete(reply);
+                }
+
+                /* Suppress the received message, as if it had not arrived. */
+                retval = EAGAIN;
                 ofpbuf_delete(msg);
-                retval = EPROTO;
             }
         }
     }
@@ -1121,30 +1102,6 @@ vconn_init(struct vconn *vconn, const struct vconn_class *class,
     vconn->allowed_versions = allowed_versions;
     vconn->name = xstrdup(name);
     ovs_assert(vconn->state != VCS_CONNECTING || class->connect);
-}
-
-void
-vconn_set_remote_ip(struct vconn *vconn, ovs_be32 ip)
-{
-    vconn->remote_ip = ip;
-}
-
-void
-vconn_set_remote_port(struct vconn *vconn, ovs_be16 port)
-{
-    vconn->remote_port = port;
-}
-
-void
-vconn_set_local_ip(struct vconn *vconn, ovs_be32 ip)
-{
-    vconn->local_ip = ip;
-}
-
-void
-vconn_set_local_port(struct vconn *vconn, ovs_be16 port)
-{
-    vconn->local_port = port;
 }
 
 void
