@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ main(int argc OVS_UNUSED, char *argv[])
         union flow_in_port in_port_;
         n++;
 
-        retval = pcap_read(pcap, &packet);
+        retval = pcap_read(pcap, &packet, NULL);
         if (retval == EOF) {
             ovs_fatal(0, "unexpected end of file reading pcap file");
         } else if (retval) {
@@ -70,7 +70,7 @@ main(int argc OVS_UNUSED, char *argv[])
 
         in_port_.ofp_port = u16_to_ofp(1);
         flow_extract(packet, 0, 0, NULL, &in_port_, &flow);
-        match_init_exact(&match, &flow);
+        match_wc_init(&match, &flow);
         ofputil_match_to_ofp10_match(&match, &extracted_match);
 
         if (memcmp(&expected_match, &extracted_match, sizeof expected_match)) {

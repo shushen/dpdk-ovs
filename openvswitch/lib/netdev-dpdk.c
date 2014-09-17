@@ -156,14 +156,6 @@ netdev_dpdk_update_flags(struct netdev *netdev OVS_UNUSED, enum netdev_flags off
     return 0;
 }
 
-static unsigned int
-netdev_dpdk_change_seq(const struct netdev *netdev OVS_UNUSED)
-{
-    DPDK_DEBUG()
-
-    return 0;
-}
-
 /* Allocate memory for a netdev_dpdk_phyport */
 static struct netdev *
 netdev_dpdk_phy_alloc(void)
@@ -297,7 +289,6 @@ const struct netdev_class netdev_dpdk_client_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -355,7 +346,6 @@ const struct netdev_class netdev_dpdk_kni_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -413,7 +403,6 @@ const struct netdev_class netdev_dpdk_phy_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -471,7 +460,6 @@ const struct netdev_class netdev_dpdk_veth_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -529,7 +517,6 @@ const struct netdev_class netdev_dpdk_vhost_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -587,7 +574,6 @@ const struct netdev_class netdev_dpdk_internal_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,
@@ -645,7 +631,6 @@ const struct netdev_class netdev_dpdk_memnic_class =
     NULL,
     NULL,
     netdev_dpdk_update_flags,
-    netdev_dpdk_change_seq,
     NULL,
     NULL,
     NULL,

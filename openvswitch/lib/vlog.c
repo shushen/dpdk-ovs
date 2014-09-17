@@ -35,14 +35,13 @@
 #include "ofpbuf.h"
 #include "ovs-thread.h"
 #include "sat-math.h"
+#include "socket-util.h"
 #include "svec.h"
 #include "timeval.h"
 #include "unixctl.h"
 #include "util.h"
 
 VLOG_DEFINE_THIS_MODULE(vlog);
-
-COVERAGE_DEFINE(vlog_recursive);
 
 /* ovs_assert() logs the assertion message, so using ovs_assert() in this
  * source file could cause recursion. */
@@ -51,37 +50,32 @@ COVERAGE_DEFINE(vlog_recursive);
 
 /* Name for each logging level. */
 static const char *const level_names[VLL_N_LEVELS] = {
-#define VLOG_LEVEL(NAME, SYSLOG_LEVEL) #NAME,
+#define VLOG_LEVEL(NAME, SYSLOG_LEVEL, RFC5424) #NAME,
     VLOG_LEVELS
 #undef VLOG_LEVEL
 };
 
 /* Syslog value for each logging level. */
 static const int syslog_levels[VLL_N_LEVELS] = {
-#define VLOG_LEVEL(NAME, SYSLOG_LEVEL) SYSLOG_LEVEL,
+#define VLOG_LEVEL(NAME, SYSLOG_LEVEL, RFC5424) SYSLOG_LEVEL,
     VLOG_LEVELS
 #undef VLOG_LEVEL
 };
 
-/* The log modules. */
-#if USE_LINKER_SECTIONS
-extern struct vlog_module *__start_vlog_modules[];
-extern struct vlog_module *__stop_vlog_modules[];
-#define vlog_modules __start_vlog_modules
-#define n_vlog_modules (__stop_vlog_modules - __start_vlog_modules)
-#else
-#define VLOG_MODULE VLOG_DEFINE_MODULE__
-#include "vlog-modules.def"
-#undef VLOG_MODULE
+/* RFC 5424 defines specific values for each syslog level.  Normally LOG_* use
+ * the same values.  Verify that in fact they're the same.  If we get assertion
+ * failures here then we need to define a separate rfc5424_levels[] array. */
+#define VLOG_LEVEL(NAME, SYSLOG_LEVEL, RFC5424) \
+    BUILD_ASSERT_DECL(SYSLOG_LEVEL == RFC5424);
+VLOG_LEVELS
+#undef VLOG_LEVELS
 
-extern struct vlog_module *vlog_modules[];
-struct vlog_module *vlog_modules[] = {
-#define VLOG_MODULE(NAME) &VLM_##NAME,
-#include "vlog-modules.def"
-#undef VLOG_MODULE
-};
-#define n_vlog_modules ARRAY_SIZE(vlog_modules)
-#endif
+/* Similarly, RFC 5424 defines the local0 facility with the value ordinarily
+ * used for LOG_LOCAL0. */
+BUILD_ASSERT_DECL(LOG_LOCAL0 == (16 << 3));
+
+/* The log modules. */
+struct list vlog_modules = LIST_INITIALIZER(&vlog_modules);
 
 /* Protects the 'pattern' in all "struct facility"s, so that a race between
  * changing and reading the pattern does not cause an access to freed
@@ -113,10 +107,13 @@ static int log_fd OVS_GUARDED_BY(log_file_mutex) = -1;
 static struct async_append *log_writer OVS_GUARDED_BY(log_file_mutex);
 static bool log_async OVS_GUARDED_BY(log_file_mutex);
 
+/* Syslog export configuration. */
+static int syslog_fd OVS_GUARDED_BY(pattern_rwlock) = -1;
+
 static void format_log_message(const struct vlog_module *, enum vlog_level,
-                               enum vlog_facility,
+                               const char *pattern,
                                const char *message, va_list, struct ds *)
-    PRINTF_FORMAT(4, 0) OVS_REQ_RDLOCK(&pattern_rwlock);
+    PRINTF_FORMAT(4, 0);
 
 /* Searches the 'n_names' in 'names'.  Returns the index of a match for
  * 'target', or 'n_names' if no name matches. */
@@ -185,13 +182,14 @@ vlog_get_module_name(const struct vlog_module *module)
 struct vlog_module *
 vlog_module_from_name(const char *name)
 {
-    struct vlog_module **mp;
+    struct vlog_module *mp;
 
-    for (mp = vlog_modules; mp < &vlog_modules[n_vlog_modules]; mp++) {
-        if (!strcasecmp(name, (*mp)->name)) {
-            return *mp;
+    LIST_FOR_EACH (mp, list, &vlog_modules) {
+        if (!strcasecmp(name, mp->name)) {
+            return mp;
         }
     }
+
     return NULL;
 }
 
@@ -228,11 +226,10 @@ set_facility_level(enum vlog_facility facility, struct vlog_module *module,
 
     ovs_mutex_lock(&log_file_mutex);
     if (!module) {
-        struct vlog_module **mp;
-
-        for (mp = vlog_modules; mp < &vlog_modules[n_vlog_modules]; mp++) {
-            (*mp)->levels[facility] = level;
-            update_min_level(*mp);
+        struct vlog_module *mp;
+        LIST_FOR_EACH (mp, list, &vlog_modules) {
+            mp->levels[facility] = level;
+            update_min_level(mp);
         }
     } else {
         module->levels[facility] = level;
@@ -294,7 +291,7 @@ int
 vlog_set_log_file(const char *file_name)
 {
     char *new_log_file_name;
-    struct vlog_module **mp;
+    struct vlog_module *mp;
     struct stat old_stat;
     struct stat new_stat;
     int new_log_fd;
@@ -350,8 +347,8 @@ vlog_set_log_file(const char *file_name)
         log_writer = async_append_create(new_log_fd);
     }
 
-    for (mp = vlog_modules; mp < &vlog_modules[n_vlog_modules]; mp++) {
-        update_min_level(*mp);
+    LIST_FOR_EACH (mp, list, &vlog_modules) {
+        update_min_level(mp);
     }
     ovs_mutex_unlock(&log_file_mutex);
 
@@ -482,6 +479,22 @@ vlog_set_verbosity(const char *arg)
     }
 }
 
+/* Set the vlog udp syslog target. */
+void
+vlog_set_syslog_target(const char *target)
+{
+    int new_fd;
+
+    inet_open_active(SOCK_DGRAM, target, 0, NULL, &new_fd, 0);
+
+    ovs_rwlock_wrlock(&pattern_rwlock);
+    if (syslog_fd >= 0) {
+        close(syslog_fd);
+    }
+    syslog_fd = new_fd;
+    ovs_rwlock_unlock(&pattern_rwlock);
+}
+
 static void
 vlog_unixctl_set(struct unixctl_conn *conn, int argc, const char *argv[],
                  void *aux OVS_UNUSED)
@@ -533,10 +546,10 @@ vlog_unixctl_reopen(struct unixctl_conn *conn, int argc OVS_UNUSED,
 static void
 set_all_rate_limits(bool enable)
 {
-    struct vlog_module **mp;
+    struct vlog_module *mp;
 
-    for (mp = vlog_modules; mp < &vlog_modules[n_vlog_modules]; mp++) {
-        (*mp)->honor_rate_limits = enable;
+    LIST_FOR_EACH (mp, list, &vlog_modules) {
+        mp->honor_rate_limits = enable;
     }
 }
 
@@ -579,46 +592,52 @@ vlog_disable_rate_limit(struct unixctl_conn *conn, int argc,
     set_rate_limits(conn, argc, argv, false);
 }
 
-static void
-vlog_init__(void)
-{
-    static char *program_name_copy;
-    long long int now;
-
-    /* openlog() is allowed to keep the pointer passed in, without making a
-     * copy.  The daemonize code sometimes frees and replaces 'program_name',
-     * so make a private copy just for openlog().  (We keep a pointer to the
-     * private copy to suppress memory leak warnings in case openlog() does
-     * make its own copy.) */
-    program_name_copy = program_name ? xstrdup(program_name) : NULL;
-    openlog(program_name_copy, LOG_NDELAY, LOG_DAEMON);
-
-    now = time_wall_msec();
-    if (now < 0) {
-        char *s = xastrftime_msec("%a, %d %b %Y %H:%M:%S", now, true);
-        VLOG_ERR("current time is negative: %s (%lld)", s, now);
-        free(s);
-    }
-
-    unixctl_command_register(
-        "vlog/set", "{spec | PATTERN:facility:pattern}",
-        1, INT_MAX, vlog_unixctl_set, NULL);
-    unixctl_command_register("vlog/list", "", 0, 0, vlog_unixctl_list, NULL);
-    unixctl_command_register("vlog/enable-rate-limit", "[module]...",
-                             0, INT_MAX, vlog_enable_rate_limit, NULL);
-    unixctl_command_register("vlog/disable-rate-limit", "[module]...",
-                             0, INT_MAX, vlog_disable_rate_limit, NULL);
-    unixctl_command_register("vlog/reopen", "", 0, 0,
-                             vlog_unixctl_reopen, NULL);
-}
-
 /* Initializes the logging subsystem and registers its unixctl server
  * commands. */
 void
 vlog_init(void)
 {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, vlog_init__);
+    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+
+    if (ovsthread_once_start(&once)) {
+        static char *program_name_copy;
+        long long int now;
+
+        /* Do initialization work that needs to be done before any logging
+         * occurs.  We want to keep this really minimal because any attempt to
+         * log anything before calling ovsthread_once_done() will deadlock. */
+
+        /* openlog() is allowed to keep the pointer passed in, without making a
+         * copy.  The daemonize code sometimes frees and replaces
+         * 'program_name', so make a private copy just for openlog().  (We keep
+         * a pointer to the private copy to suppress memory leak warnings in
+         * case openlog() does make its own copy.) */
+        program_name_copy = program_name ? xstrdup(program_name) : NULL;
+        openlog(program_name_copy, LOG_NDELAY, LOG_DAEMON);
+        ovsthread_once_done(&once);
+
+        /* Now do anything that we want to happen only once but doesn't have to
+         * finish before we start logging. */
+
+        now = time_wall_msec();
+        if (now < 0) {
+            char *s = xastrftime_msec("%a, %d %b %Y %H:%M:%S", now, true);
+            VLOG_ERR("current time is negative: %s (%lld)", s, now);
+            free(s);
+        }
+
+        unixctl_command_register(
+            "vlog/set", "{spec | PATTERN:facility:pattern}",
+            1, INT_MAX, vlog_unixctl_set, NULL);
+        unixctl_command_register("vlog/list", "", 0, 0, vlog_unixctl_list,
+                                 NULL);
+        unixctl_command_register("vlog/enable-rate-limit", "[module]...",
+                                 0, INT_MAX, vlog_enable_rate_limit, NULL);
+        unixctl_command_register("vlog/disable-rate-limit", "[module]...",
+                                 0, INT_MAX, vlog_disable_rate_limit, NULL);
+        unixctl_command_register("vlog/reopen", "", 0, 0,
+                                 vlog_unixctl_reopen, NULL);
+    }
 }
 
 /* Enables VLF_FILE log output to be written asynchronously to disk.
@@ -642,7 +661,7 @@ char *
 vlog_get_levels(void)
 {
     struct ds s = DS_EMPTY_INITIALIZER;
-    struct vlog_module **mp;
+    struct vlog_module *mp;
     struct svec lines = SVEC_EMPTY_INITIALIZER;
     char *line;
     size_t i;
@@ -650,16 +669,16 @@ vlog_get_levels(void)
     ds_put_format(&s, "                 console    syslog    file\n");
     ds_put_format(&s, "                 -------    ------    ------\n");
 
-    for (mp = vlog_modules; mp < &vlog_modules[n_vlog_modules]; mp++) {
+    LIST_FOR_EACH (mp, list, &vlog_modules) {
         struct ds line;
 
         ds_init(&line);
         ds_put_format(&line, "%-16s  %4s       %4s       %4s",
-                      vlog_get_module_name(*mp),
-                      vlog_get_level_name(vlog_get_level(*mp, VLF_CONSOLE)),
-                      vlog_get_level_name(vlog_get_level(*mp, VLF_SYSLOG)),
-                      vlog_get_level_name(vlog_get_level(*mp, VLF_FILE)));
-        if (!(*mp)->honor_rate_limits) {
+                      vlog_get_module_name(mp),
+                      vlog_get_level_name(vlog_get_level(mp, VLF_CONSOLE)),
+                      vlog_get_level_name(vlog_get_level(mp, VLF_SYSLOG)),
+                      vlog_get_level_name(vlog_get_level(mp, VLF_FILE)));
+        if (!mp->honor_rate_limits) {
             ds_put_cstr(&line, "    (rate limiting disabled)");
         }
         ds_put_char(&line, '\n');
@@ -702,15 +721,15 @@ fetch_braces(const char *p, const char *def, char *out, size_t out_size)
 
 static void
 format_log_message(const struct vlog_module *module, enum vlog_level level,
-                   enum vlog_facility facility,
-                   const char *message, va_list args_, struct ds *s)
+                   const char *pattern, const char *message,
+                   va_list args_, struct ds *s)
 {
     char tmp[128];
     va_list args;
     const char *p;
 
     ds_clear(s);
-    for (p = facilities[facility].pattern; *p != '\0'; ) {
+    for (p = pattern; *p != '\0'; ) {
         const char *subprogram_name;
         enum { LEFT, RIGHT } justify = RIGHT;
         int pad = '0';
@@ -741,6 +760,9 @@ format_log_message(const struct vlog_module *module, enum vlog_level level,
         case 'A':
             ds_put_cstr(s, program_name);
             break;
+        case 'B':
+            ds_put_format(s, "%d", LOG_LOCAL0 + syslog_levels[level]);
+            break;
         case 'c':
             p = fetch_braces(p, "", tmp, sizeof tmp);
             ds_put_cstr(s, vlog_get_module_name(module));
@@ -752,6 +774,11 @@ format_log_message(const struct vlog_module *module, enum vlog_level level,
         case 'D':
             p = fetch_braces(p, "%Y-%m-%d %H:%M:%S.###", tmp, sizeof tmp);
             ds_put_strftime_msec(s, tmp, time_wall_msec(), true);
+            break;
+        case 'E':
+            gethostname(tmp, sizeof tmp);
+            tmp[sizeof tmp - 1] = '\0';
+            ds_put_cstr(s, tmp);
             break;
         case 'm':
             /* Format user-supplied log message and trim trailing new-lines. */
@@ -806,6 +833,20 @@ format_log_message(const struct vlog_module *module, enum vlog_level level,
     }
 }
 
+/* Exports the given 'syslog_message' to the configured udp syslog sink. */
+static void
+send_to_syslog_fd(const char *s, size_t length)
+    OVS_REQ_RDLOCK(pattern_rwlock)
+{
+    static size_t max_length = SIZE_MAX;
+    size_t send_len = MIN(length, max_length);
+
+    while (write(syslog_fd, s, send_len) < 0 && errno == EMSGSIZE) {
+        send_len -= send_len / 20;
+        max_length = send_len;
+    }
+}
+
 /* Writes 'message' to the log at the given 'level' and as coming from the
  * given 'module'.
  *
@@ -833,7 +874,8 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
 
         ovs_rwlock_rdlock(&pattern_rwlock);
         if (log_to_console) {
-            format_log_message(module, level, VLF_CONSOLE, message, args, &s);
+            format_log_message(module, level, facilities[VLF_CONSOLE].pattern,
+                               message, args, &s);
             ds_put_char(&s, '\n');
             fputs(ds_cstr(&s), stderr);
         }
@@ -843,15 +885,25 @@ vlog_valist(const struct vlog_module *module, enum vlog_level level,
             char *save_ptr = NULL;
             char *line;
 
-            format_log_message(module, level, VLF_SYSLOG, message, args, &s);
+            format_log_message(module, level, facilities[VLF_SYSLOG].pattern,
+                               message, args, &s);
             for (line = strtok_r(s.string, "\n", &save_ptr); line;
                  line = strtok_r(NULL, "\n", &save_ptr)) {
                 syslog(syslog_level, "%s", line);
             }
+
+            if (syslog_fd >= 0) {
+                format_log_message(module, level,
+                                   "<%B>1 %D{%Y-%m-%dT%H:%M:%S.###Z} "
+                                   "%E %A %P %c - \xef\xbb\xbf%m",
+                                   message, args, &s);
+                send_to_syslog_fd(ds_cstr(&s), s.length);
+            }
         }
 
         if (log_to_file) {
-            format_log_message(module, level, VLF_FILE, message, args, &s);
+            format_log_message(module, level, facilities[VLF_FILE].pattern,
+                               message, args, &s);
             ds_put_char(&s, '\n');
 
             ovs_mutex_lock(&log_file_mutex);
@@ -1014,10 +1066,12 @@ vlog_rate_limit(const struct vlog_module *module, enum vlog_level level,
 void
 vlog_usage(void)
 {
-    printf("\nLogging options:\n"
-           "  -v, --verbose=[SPEC]    set logging levels\n"
-           "  -v, --verbose           set maximum verbosity level\n"
-           "  --log-file[=FILE]       enable logging to specified FILE\n"
-           "                          (default: %s/%s.log)\n",
+    printf("\n\
+Logging options:\n\
+  -vSPEC, --verbose=SPEC   set logging levels\n\
+  -v, --verbose            set maximum verbosity level\n\
+  --log-file[=FILE]        enable logging to specified FILE\n\
+                           (default: %s/%s.log)\n\
+  --syslog-target=HOST:PORT  also send syslog msgs to HOST:PORT via UDP\n",
            ovs_logdir(), program_name);
 }

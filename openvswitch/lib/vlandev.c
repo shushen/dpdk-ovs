@@ -221,8 +221,7 @@ vlandev_linux_refresh(void)
         char vlan_dev[16], real_dev[16];
         int vid;
 
-        if (sscanf(line, "%15[^ |] | %d | %15s",
-                   vlan_dev, &vid, real_dev) == 3) {
+        if (ovs_scan(line, "%15[^ |] | %d | %15s", vlan_dev, &vid, real_dev)) {
             vlandev_add__(vlan_dev, real_dev, vid);
         }
     }
@@ -303,7 +302,7 @@ vlandev_stub_del(const char *vlan_dev OVS_UNUSED)
     return EOPNOTSUPP;
 }
 
-static const struct vlandev_class vlandev_stub_class = {
+static const struct vlandev_class OVS_UNUSED vlandev_stub_class = {
     NULL,                       /* vd_refresh */
     vlandev_stub_add,
     vlandev_stub_del
@@ -375,7 +374,7 @@ static int
 vlandev_del__(const char *vlan_dev)
 {
     struct shash_node *vd_node = shash_find(&vlan_devs, vlan_dev);
-    if (!vd_node) {
+    if (vd_node) {
         struct vlan_dev *vd = vd_node->data;
         struct vlan_real_dev *vrd = vd->real_dev;
 

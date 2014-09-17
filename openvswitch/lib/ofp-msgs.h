@@ -177,10 +177,16 @@ enum ofpraw {
     /* NXT 1.0+ (13): struct nx_flow_mod, uint8_t[8][]. */
     OFPRAW_NXT_FLOW_MOD,
 
+    /* OFPT 1.1+ (15): struct ofp11_group_mod, uint8_t[8][]. */
+    OFPRAW_OFPT11_GROUP_MOD,
+
     /* OFPT 1.0 (15): struct ofp10_port_mod. */
     OFPRAW_OFPT10_PORT_MOD,
     /* OFPT 1.1+ (16): struct ofp11_port_mod. */
     OFPRAW_OFPT11_PORT_MOD,
+
+    /* OFPT 1.1+ (17): struct ofp11_table_mod. */
+    OFPRAW_OFPT11_TABLE_MOD,
 
     /* OFPT 1.0 (18): void. */
     OFPRAW_OFPT10_BARRIER_REQUEST,
@@ -192,10 +198,14 @@ enum ofpraw {
     /* OFPT 1.1+ (21): void. */
     OFPRAW_OFPT11_BARRIER_REPLY,
 
+    /* OFPT 1.0 (22): struct ofp10_queue_get_config_request. */
+    OFPRAW_OFPT10_QUEUE_GET_CONFIG_REQUEST,
     /* OFPT 1.1+ (22): struct ofp11_queue_get_config_request. */
     OFPRAW_OFPT11_QUEUE_GET_CONFIG_REQUEST,
 
-    /* OFPT 1.1+ (23): struct ofp11_queue_get_config_reply, struct ofp_packet_queue[]. */
+    /* OFPT 1.0 (23): struct ofp10_queue_get_config_reply, uint8_t[8][]. */
+    OFPRAW_OFPT10_QUEUE_GET_CONFIG_REPLY,
+    /* OFPT 1.1+ (23): struct ofp11_queue_get_config_reply, uint8_t[8][]. */
     OFPRAW_OFPT11_QUEUE_GET_CONFIG_REPLY,
 
     /* OFPT 1.2+ (24): struct ofp12_role_request. */
@@ -219,6 +229,9 @@ enum ofpraw {
 
     /* OFPT 1.3+ (29): struct ofp13_meter_mod, uint8_t[8][]. */
     OFPRAW_OFPT13_METER_MOD,
+
+    /* OFPT 1.4+ (30): struct ofp14_role_status, uint8_t[8][]. */
+    OFPRAW_OFPT14_ROLE_STATUS,
 
 /* Standard statistics. */
 
@@ -295,15 +308,15 @@ enum ofpraw {
     /* OFPST 1.1+ (6): struct ofp11_group_stats_request. */
     OFPRAW_OFPST11_GROUP_REQUEST,
 
-    /* OFPST 1.1-1.2 (6): struct ofp11_group_stats[]. */
+    /* OFPST 1.1-1.2 (6): uint8_t[8][]. */
     OFPRAW_OFPST11_GROUP_REPLY,
-    /* OFPST 1.3 (6): struct ofp13_group_stats[]. */
+    /* OFPST 1.3 (6): uint8_t[8][]. */
     OFPRAW_OFPST13_GROUP_REPLY,
 
     /* OFPST 1.1+ (7): void. */
     OFPRAW_OFPST11_GROUP_DESC_REQUEST,
 
-    /* OFPST 1.1+ (7): struct ofp11_group_desc_stats[]. */
+    /* OFPST 1.1+ (7): uint8_t[8][]. */
     OFPRAW_OFPST11_GROUP_DESC_REPLY,
 
     /* OFPST 1.2+ (8): void. */
@@ -330,10 +343,10 @@ enum ofpraw {
     /* OFPST 1.3+ (11): struct ofp13_meter_features. */
     OFPRAW_OFPST13_METER_FEATURES_REPLY,
 
-    /* OFPST 1.3+ (12): struct ofp13_table_features[]. */
+    /* OFPST 1.3+ (12): void. */
     OFPRAW_OFPST13_TABLE_FEATURES_REQUEST,
 
-    /* OFPST 1.3+ (12): struct ofp13_table_features[]. */
+    /* OFPST 1.3+ (12): struct ofp13_table_features, uint8_t[8][]. */
     OFPRAW_OFPST13_TABLE_FEATURES_REPLY,
 
     /* OFPST 1.0+ (13): void. */
@@ -460,8 +473,10 @@ enum ofptype {
     OFPTYPE_FLOW_MOD,            /* OFPRAW_OFPT10_FLOW_MOD.
                                   * OFPRAW_OFPT11_FLOW_MOD.
                                   * OFPRAW_NXT_FLOW_MOD. */
+    OFPTYPE_GROUP_MOD,           /* OFPRAW_OFPT11_GROUP_MOD. */
     OFPTYPE_PORT_MOD,            /* OFPRAW_OFPT10_PORT_MOD.
                                   * OFPRAW_OFPT11_PORT_MOD. */
+    OFPTYPE_TABLE_MOD,           /* OFPRAW_OFPT11_TABLE_MOD. */
 
     /* Barrier messages. */
     OFPTYPE_BARRIER_REQUEST,     /* OFPRAW_OFPT10_BARRIER_REQUEST.
@@ -470,8 +485,10 @@ enum ofptype {
                                   * OFPRAW_OFPT11_BARRIER_REPLY. */
 
     /* Queue Configuration messages. */
-    OFPTYPE_QUEUE_GET_CONFIG_REQUEST, /* OFPRAW_OFPT11_QUEUE_GET_CONFIG_REQUEST. */
-    OFPTYPE_QUEUE_GET_CONFIG_REPLY, /* OFPRAW_OFPT11_QUEUE_GET_CONFIG_REPLY. */
+    OFPTYPE_QUEUE_GET_CONFIG_REQUEST, /* OFPRAW_OFPT10_QUEUE_GET_CONFIG_REQUEST.
+                                       * OFPRAW_OFPT11_QUEUE_GET_CONFIG_REQUEST. */
+    OFPTYPE_QUEUE_GET_CONFIG_REPLY, /* OFPRAW_OFPT10_QUEUE_GET_CONFIG_REPLY.
+                                     * OFPRAW_OFPT11_QUEUE_GET_CONFIG_REPLY. */
 
     /* Controller role change request messages. */
     OFPTYPE_ROLE_REQUEST,         /* OFPRAW_OFPT12_ROLE_REQUEST.
@@ -487,6 +504,9 @@ enum ofptype {
 
     /* Meters and rate limiters configuration messages. */
     OFPTYPE_METER_MOD,            /* OFPRAW_OFPT13_METER_MOD. */
+
+    /* Controller role change event messages. */
+    OFPTYPE_ROLE_STATUS,          /* OFPRAW_OFPT14_ROLE_STATUS. */
 
     /* Statistics. */
     OFPTYPE_DESC_STATS_REQUEST,      /* OFPRAW_OFPST_DESC_REQUEST. */
@@ -576,6 +596,7 @@ enum ofptype ofptype_from_ofpraw(enum ofpraw);
 /* OpenFlow message properties. */
 void ofpmsg_update_length(struct ofpbuf *);
 const void *ofpmsg_body(const struct ofp_header *);
+bool ofpmsg_is_stat_request(const struct ofp_header *);
 
 /* Multipart messages (aka "statistics").
  *

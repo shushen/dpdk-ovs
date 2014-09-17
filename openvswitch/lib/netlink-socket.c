@@ -40,7 +40,6 @@ VLOG_DEFINE_THIS_MODULE(netlink_socket);
 COVERAGE_DEFINE(netlink_overflow);
 COVERAGE_DEFINE(netlink_received);
 COVERAGE_DEFINE(netlink_recv_jumbo);
-COVERAGE_DEFINE(netlink_send);
 COVERAGE_DEFINE(netlink_sent);
 
 /* Linux header file confusion causes this to be undefined. */
@@ -338,7 +337,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
     }
 
     if (msg.msg_flags & MSG_TRUNC) {
-        VLOG_ERR_RL(&rl, "truncated message (longer than %zu bytes)",
+        VLOG_ERR_RL(&rl, "truncated message (longer than %"PRIuSIZE" bytes)",
                     sizeof tail);
         return E2BIG;
     }
@@ -347,7 +346,7 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
     if (retval < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len > retval) {
-        VLOG_ERR_RL(&rl, "received invalid nlmsg (%zd bytes < %zu)",
+        VLOG_ERR_RL(&rl, "received invalid nlmsg (%"PRIuSIZE"d bytes < %"PRIuSIZE")",
                     retval, sizeof *nlmsghdr);
         return EPROTO;
     }

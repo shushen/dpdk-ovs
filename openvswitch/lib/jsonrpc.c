@@ -59,22 +59,21 @@ static void jsonrpc_cleanup(struct jsonrpc *);
 static void jsonrpc_error(struct jsonrpc *, int error);
 
 /* This is just the same as stream_open() except that it uses the default
- * JSONRPC ports if none is specified. */
+ * JSONRPC port if none is specified. */
 int
 jsonrpc_stream_open(const char *name, struct stream **streamp, uint8_t dscp)
 {
-    return stream_open_with_default_ports(name, JSONRPC_TCP_PORT,
-                                          JSONRPC_SSL_PORT, streamp,
-                                          dscp);
+    return stream_open_with_default_port(name, OVSDB_OLD_PORT,
+                                         streamp, dscp);
 }
 
 /* This is just the same as pstream_open() except that it uses the default
- * JSONRPC ports if none is specified. */
+ * JSONRPC port if none is specified. */
 int
 jsonrpc_pstream_open(const char *name, struct pstream **pstreamp, uint8_t dscp)
 {
-    return pstream_open_with_default_ports(name, JSONRPC_TCP_PORT,
-                                           JSONRPC_SSL_PORT, pstreamp, dscp);
+    return pstream_open_with_default_port(name, OVSDB_OLD_PORT,
+                                          pstreamp, dscp);
 }
 
 /* Returns a new JSON-RPC stream that uses 'stream' for input and output.  The
@@ -1089,6 +1088,14 @@ jsonrpc_session_get_reconnect_stats(const struct jsonrpc_session *s,
                                     struct reconnect_stats *stats)
 {
     reconnect_get_stats(s->reconnect, time_msec(), stats);
+}
+
+void
+jsonrpc_session_enable_reconnect(struct jsonrpc_session *s)
+{
+    reconnect_set_max_tries(s->reconnect, UINT_MAX);
+    reconnect_set_backoff(s->reconnect, RECONNECT_DEFAULT_MIN_BACKOFF,
+                          RECONNECT_DEFAULT_MAX_BACKOFF);
 }
 
 void

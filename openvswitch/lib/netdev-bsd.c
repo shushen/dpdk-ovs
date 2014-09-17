@@ -47,6 +47,7 @@
 #endif
 
 #include "rtbsd.h"
+#include "connectivity.h"
 #include "coverage.h"
 #include "dynamic-string.h"
 #include "fatal-signal.h"
@@ -55,8 +56,9 @@
 #include "ovs-thread.h"
 #include "packets.h"
 #include "poll-loop.h"
-#include "socket-util.h"
+#include "seq.h"
 #include "shash.h"
+#include "socket-util.h"
 #include "svec.h"
 #include "util.h"
 #include "vlog.h"
@@ -86,7 +88,6 @@ struct netdev_bsd {
     struct ovs_mutex mutex;
 
     unsigned int cache_valid;
-    unsigned int change_seq;
 
     int ifindex;
     uint8_t etheraddr[ETH_ADDR_LEN];
@@ -197,15 +198,6 @@ netdev_bsd_wait(void)
     rtbsd_notifier_wait();
 }
 
-static void
-netdev_bsd_changed(struct netdev_bsd *dev)
-{
-    dev->change_seq++;
-    if (!dev->change_seq) {
-        dev->change_seq++;
-    }
-}
-
 /* Invalidate cache in case of interface status change. */
 static void
 netdev_bsd_cache_cb(const struct rtbsd_change *change,
@@ -223,7 +215,7 @@ netdev_bsd_cache_cb(const struct rtbsd_change *change,
             if (is_netdev_bsd_class(netdev_class)) {
                 dev = netdev_bsd_cast(base_dev);
                 dev->cache_valid = 0;
-                netdev_bsd_changed(dev);
+                seq_change(connectivity_seq_get());
             }
             netdev_close(base_dev);
         }
@@ -241,7 +233,7 @@ netdev_bsd_cache_cb(const struct rtbsd_change *change,
             struct netdev *netdev = node->data;
             dev = netdev_bsd_cast(netdev);
             dev->cache_valid = 0;
-            netdev_bsd_changed(dev);
+            seq_change(connectivity_seq_get());
             netdev_close(netdev);
         }
         shash_destroy(&device_shash);
@@ -294,7 +286,6 @@ netdev_bsd_construct_system(struct netdev *netdev_)
     }
 
     ovs_mutex_init(&netdev->mutex);
-    netdev->change_seq = 1;
     netdev->tap_fd = -1;
     netdev->kernel_name = xstrdup(netdev_->name);
 
@@ -329,7 +320,6 @@ netdev_bsd_construct_tap(struct netdev *netdev_)
      * to retrieve the name of the tap device. */
     ovs_mutex_init(&netdev->mutex);
     netdev->tap_fd = open("/dev/tap", O_RDWR);
-    netdev->change_seq = 1;
     if (netdev->tap_fd < 0) {
         error = errno;
         VLOG_WARN("opening \"/dev/tap\" failed: %s", ovs_strerror(error));
@@ -506,9 +496,6 @@ netdev_bsd_rx_construct(struct netdev_rx *rx_)
         ovs_mutex_lock(&netdev->mutex);
         error = netdev_bsd_open_pcap(netdev_get_kernel_name(netdev_),
                                      &rx->pcap_handle, &rx->fd);
-        if (!error) {
-            netdev_bsd_changed(netdev);
-        }
         ovs_mutex_unlock(&netdev->mutex);
     }
 
@@ -702,8 +689,8 @@ netdev_bsd_send(struct netdev *netdev_, const void *data, size_t size)
                 }
             }
         } else if (retval != size) {
-            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%zd bytes of "
-                         "%zu) on %s", retval, size, name);
+            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%"PRIuSIZE"d bytes of "
+                         "%"PRIuSIZE") on %s", retval, size, name);
             error = EMSGSIZE;
         } else {
             break;
@@ -756,7 +743,7 @@ netdev_bsd_set_etheraddr(struct netdev *netdev_,
         if (!error) {
             netdev->cache_valid |= VALID_ETHERADDR;
             memcpy(netdev->etheraddr, mac, ETH_ADDR_LEN);
-            netdev_bsd_changed(netdev);
+            seq_change(connectivity_seq_get());
         }
     }
     ovs_mutex_unlock(&netdev->mutex);
@@ -1165,7 +1152,7 @@ netdev_bsd_set_in4(struct netdev *netdev_, struct in_addr addr,
                 netdev->netmask = mask;
             }
         }
-        netdev_bsd_changed(netdev);
+        seq_change(connectivity_seq_get());
     }
     ovs_mutex_unlock(&netdev->mutex);
 
@@ -1428,6 +1415,9 @@ nd_to_iff_flags(enum netdev_flags nd)
         iff |= IFF_PPROMISC;
 #endif
     }
+    if (nd & NETDEV_LOOPBACK) {
+        iff |= IFF_LOOPBACK;
+    }
     return iff;
 }
 
@@ -1441,6 +1431,9 @@ iff_to_nd_flags(int iff)
     if (iff & IFF_PROMISC) {
         nd |= NETDEV_PROMISC;
     }
+    if (iff & IFF_LOOPBACK) {
+        nd |= NETDEV_LOOPBACK;
+    }
     return nd;
 }
 
@@ -1448,7 +1441,6 @@ static int
 netdev_bsd_update_flags(struct netdev *netdev_, enum netdev_flags off,
                         enum netdev_flags on, enum netdev_flags *old_flagsp)
 {
-    struct netdev_bsd *netdev = netdev_bsd_cast(netdev_);
     int old_flags, new_flags;
     int error;
 
@@ -1458,16 +1450,10 @@ netdev_bsd_update_flags(struct netdev *netdev_, enum netdev_flags off,
         new_flags = (old_flags & ~nd_to_iff_flags(off)) | nd_to_iff_flags(on);
         if (new_flags != old_flags) {
             error = set_flags(netdev_get_kernel_name(netdev_), new_flags);
-            netdev_bsd_changed(netdev);
+            seq_change(connectivity_seq_get());
         }
     }
     return error;
-}
-
-static unsigned int
-netdev_bsd_change_seq(const struct netdev *netdev)
-{
-    return netdev_bsd_cast(netdev)->change_seq;
 }
 
 
@@ -1524,8 +1510,6 @@ const struct netdev_class netdev_bsd_class = {
     netdev_bsd_arp_lookup, /* arp_lookup */
 
     netdev_bsd_update_flags,
-
-    netdev_bsd_change_seq,
 
     netdev_bsd_rx_alloc,
     netdev_bsd_rx_construct,
@@ -1589,8 +1573,6 @@ const struct netdev_class netdev_tap_class = {
     netdev_bsd_arp_lookup, /* arp_lookup */
 
     netdev_bsd_update_flags,
-
-    netdev_bsd_change_seq,
 
     netdev_bsd_rx_alloc,
     netdev_bsd_rx_construct,

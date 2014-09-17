@@ -24,13 +24,14 @@
 #include "ofp-errors.h"
 #include "ofp-util.h"
 #include "packets.h"
+#include "util.h"
 
 struct ds;
 struct match;
 
 /* The comment on each of these indicates the member in "union mf_value" used
  * to represent its value. */
-enum mf_field_id {
+enum OVS_PACKED_ENUM mf_field_id {
     /* Metadata. */
     MFF_TUN_ID,                 /* be64 */
     MFF_TUN_SRC,                /* be32 */
@@ -118,6 +119,8 @@ enum mf_field_id {
     /* L4. */
     MFF_TCP_SRC,                /* be16 (used for IPv4 or IPv6) */
     MFF_TCP_DST,                /* be16 (used for IPv4 or IPv6) */
+    MFF_TCP_FLAGS,              /* be16, 12 bits (4 MSB zeroed,
+                                 * used for IPv4 or IPv6) */
 
     MFF_UDP_SRC,                /* be16 (used for IPv4 or IPv6) */
     MFF_UDP_DST,                /* be16 (used for IPv4 or IPv6) */
@@ -178,7 +181,7 @@ enum mf_field_id {
  * A field may only be matched if the correct lower-level protocols are also
  * matched.  For example, the TCP port may be matched only if the Ethernet type
  * matches ETH_TYPE_IP and the IP protocol matches IPPROTO_TCP. */
-enum mf_prereqs {
+enum OVS_PACKED_ENUM mf_prereqs {
     MFP_NONE,
 
     /* L2 requirements. */
@@ -207,13 +210,13 @@ enum mf_prereqs {
 /* Forms of partial-field masking allowed for a field.
  *
  * Every field may be masked as a whole. */
-enum mf_maskable {
+enum OVS_PACKED_ENUM mf_maskable {
     MFM_NONE,                   /* No sub-field masking. */
     MFM_FULLY,                  /* Every bit is individually maskable. */
 };
 
 /* How to format or parse a field's value. */
-enum mf_string {
+enum OVS_PACKED_ENUM mf_string {
     /* Integer formats.
      *
      * The particular MFS_* constant sets the output format.  On input, either
@@ -229,6 +232,7 @@ enum mf_string {
     MFS_OFP_PORT_OXM,           /* An OpenFlow port number or name (32-bit). */
     MFS_FRAG,                   /* no, yes, first, later, not_later */
     MFS_TNL_FLAGS,              /* FLOW_TNL_F_* flags */
+    MFS_TCP_FLAGS,              /* TCP_* flags */
 };
 
 struct mf_field {
@@ -293,18 +297,23 @@ struct mf_field {
     enum ofputil_protocol usable_protocols; /* If fully/cidr masked. */
     /* If partially/non-cidr masked. */
     enum ofputil_protocol usable_protocols_bitwise;
+
+    int flow_be32ofs;  /* Field's be32 offset in "struct flow", if prefix tree
+                        * lookup is supported for the field, or -1. */
 };
 
 /* The representation of a field's value. */
 union mf_value {
-    uint8_t u8;
-    ovs_be16 be16;
-    ovs_be32 be32;
-    ovs_be64 be64;
-    uint8_t mac[ETH_ADDR_LEN];
     struct in6_addr ipv6;
+    uint8_t mac[ETH_ADDR_LEN];
+    ovs_be64 be64;
+    ovs_be32 be32;
+    ovs_be16 be16;
+    uint8_t u8;
 };
 BUILD_ASSERT_DECL(sizeof(union mf_value) == 16);
+
+#define MF_EXACT_MASK_INITIALIZER { IN6ADDR_EXACT_INIT }
 
 /* Part of a field. */
 struct mf_subfield {
@@ -327,10 +336,17 @@ union mf_subvalue {
 BUILD_ASSERT_DECL(sizeof(union mf_value) == sizeof (union mf_subvalue));
 
 /* Finding mf_fields. */
-const struct mf_field *mf_from_id(enum mf_field_id);
 const struct mf_field *mf_from_name(const char *name);
 const struct mf_field *mf_from_nxm_header(uint32_t nxm_header);
 const struct mf_field *mf_from_nxm_name(const char *nxm_name);
+
+static inline const struct mf_field *
+mf_from_id(enum mf_field_id id)
+{
+    extern const struct mf_field mf_fields[MFF_N_IDS];
+    ovs_assert((unsigned int) id < MFF_N_IDS);
+    return &mf_fields[id];
+}
 
 /* Inspecting wildcarded bits. */
 bool mf_is_all_wild(const struct mf_field *, const struct flow_wildcards *);
@@ -341,7 +357,7 @@ void mf_get_mask(const struct mf_field *, const struct flow_wildcards *,
 
 /* Prerequisites. */
 bool mf_are_prereqs_ok(const struct mf_field *, const struct flow *);
-void mf_force_prereqs(const struct mf_field *, struct match *);
+void mf_mask_field_and_prereqs(const struct mf_field *, struct flow *mask);
 
 /* Field values. */
 bool mf_is_value_valid(const struct mf_field *, const union mf_value *value);
@@ -353,6 +369,7 @@ void mf_set_value(const struct mf_field *, const union mf_value *value,
 void mf_set_flow_value(const struct mf_field *, const union mf_value *value,
                        struct flow *);
 bool mf_is_zero(const struct mf_field *, const struct flow *);
+void mf_mask_field(const struct mf_field *, struct flow *);
 
 void mf_get(const struct mf_field *, const struct match *,
             union mf_value *value, union mf_value *mask);
@@ -364,8 +381,6 @@ enum ofputil_protocol mf_set(const struct mf_field *,
                              struct match *);
 
 void mf_set_wild(const struct mf_field *, struct match *);
-
-void mf_random_value(const struct mf_field *, union mf_value *value);
 
 /* Subfields. */
 void mf_write_subfield_flow(const struct mf_subfield *,

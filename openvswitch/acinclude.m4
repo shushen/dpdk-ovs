@@ -134,10 +134,10 @@ AC_DEFUN([OVS_CHECK_LINUX], [
     AC_MSG_RESULT([$kversion])
 
     if test "$version" -ge 3; then
-       if test "$version" = 3 && test "$patchlevel" -le 10; then
+       if test "$version" = 3 && test "$patchlevel" -le 11; then
           : # Linux 3.x
        else
-         AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 3.10.x is not supported])
+         AC_ERROR([Linux kernel in $KBUILD is version $kversion, but version newer than 3.11.x is not supported])
        fi
     else
        if test "$version" -le 1 || test "$patchlevel" -le 5 || test "$sublevel" -le 31; then
@@ -228,10 +228,12 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/linux/netdevice.h], [dev_get_by_index_rcu])
   OVS_GREP_IFELSE([$KSRC/include/linux/netdevice.h], [__skb_gso_segment])
   OVS_GREP_IFELSE([$KSRC/include/linux/netdevice.h], [can_checksum_protocol])
+  OVS_GREP_IFELSE([$KSRC/include/linux/netdevice.h], [netdev_features_t])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/rcupdate.h], [rcu_read_lock_held], [],
                   [OVS_GREP_IFELSE([$KSRC/include/linux/rtnetlink.h],
                                    [rcu_read_lock_held])])
+  OVS_GREP_IFELSE([$KSRC/include/linux/rtnetlink.h], [lockdep_rtnl_is_held])
   
   # Check for the proto_data_valid member in struct sk_buff.  The [^@]
   # is necessary because some versions of this header remove the
@@ -240,8 +242,7 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   # quoting rules.
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [[[^@]]proto_data_valid],
                   [OVS_DEFINE([HAVE_PROTO_DATA_VALID])])
-  OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [raw],
-                  [OVS_DEFINE([HAVE_MAC_RAW])])
+  OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [rxhash])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_dst(],
                   [OVS_DEFINE([HAVE_SKB_DST_ACCESSOR_FUNCS])])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], 
@@ -257,8 +258,11 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
                   [OVS_DEFINE([HAVE_SKB_WARN_LRO])])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [consume_skb])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_frag_page])
+  OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_has_frag_list])
+  OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [__skb_fill_page_desc])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_reset_mac_len])
   OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_unclone])
+  OVS_GREP_IFELSE([$KSRC/include/linux/skbuff.h], [skb_orphan_frags])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/types.h], [bool],
                   [OVS_DEFINE([HAVE_BOOL_TYPE])])
@@ -271,11 +275,14 @@ AC_DEFUN([OVS_CHECK_LINUX_COMPAT], [
   OVS_GREP_IFELSE([$KSRC/include/net/checksum.h], [csum_unfold])
 
   OVS_GREP_IFELSE([$KSRC/include/net/genetlink.h], [parallel_ops])
+  OVS_GREP_IFELSE([$KSRC/include/net/gre.h], [gre_cisco_register])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_get_be16])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_put_be16])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_put_be32])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_put_be64])
   OVS_GREP_IFELSE([$KSRC/include/net/netlink.h], [nla_find_nested])
+
+  OVS_GREP_IFELSE([$KSRC/include/net/sctp/checksum.h], [sctp_compute_cksum])
 
   OVS_GREP_IFELSE([$KSRC/include/linux/if_vlan.h], [ADD_ALL_VLANS_CMD],
                   [OVS_DEFINE([HAVE_VLAN_BUG_WORKAROUND])])
@@ -524,7 +531,7 @@ AC_DEFUN([OVS_ENABLE_SPARSE],
    AC_SUBST([SPARSE])
    AC_CONFIG_COMMANDS_PRE(
      [if test $ovs_cv_gnu_make_if = yes; then
-        CC='$(if $(C),REAL_CC="'"$CC"'" CHECK="$(SPARSE) -I $(top_srcdir)/include/sparse $(SPARSEFLAGS) $(SPARSE_EXTRA_INCLUDES) " cgcc $(CGCCFLAGS),'"$CC"')'
+        CC='$(if $(C),env REAL_CC="'"$CC"'" CHECK="$(SPARSE) -I $(top_srcdir)/include/sparse $(SPARSEFLAGS) $(SPARSE_EXTRA_INCLUDES) " cgcc $(CGCCFLAGS),'"$CC"')'
       fi])])
 
 dnl OVS_PTHREAD_SET_NAME

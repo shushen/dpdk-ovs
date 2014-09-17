@@ -90,10 +90,9 @@ A: Distributed vswitch applications (e.g., VMware vNetwork distributed
    environments: OpenFlow, which exposes flow-based forwarding state,
    and the OVSDB management protocol, which exposes switch port state.
    In addition to the switch implementation itself, Open vSwitch
-   includes tools (ovs-controller, ovs-ofctl, ovs-vsctl) that developers
-   can script and extend to provide distributed vswitch capabilities
-   that are closely integrated with their virtualization management
-   platform.
+   includes tools (ovs-ofctl, ovs-vsctl) that developers can script and
+   extend to provide distributed vswitch capabilities that are closely
+   integrated with their virtualization management platform.
 
 Q: Why doesn't Open vSwitch support distribution?
 
@@ -150,6 +149,7 @@ A: The following table lists the Linux kernel versions against which the
        1.10.x     2.6.18 to 3.8
        1.11.x     2.6.18 to 3.8
        2.0.x      2.6.32 to 3.10
+       2.1.x      2.6.32 to 3.11
 
    Open vSwitch userspace should also work with the Linux kernel module
    built into Linux 3.3 and later.
@@ -169,27 +169,22 @@ Q: Should userspace or kernel be upgraded first to minimize downtime?
    kernel version included in the same release or with the version
    from upstream Linux.  However, when upgrading between two releases
    of Open vSwitch it is best to migrate userspace first to reduce
-   the possbility of incompatibilities.
+   the possibility of incompatibilities.
 
 Q: What features are not available in the Open vSwitch kernel datapath
    that ships as part of the upstream Linux kernel?
 
-A: The kernel module in upstream Linux 3.3 and later does not include
-   tunnel virtual ports, that is, interfaces with type "gre",
-   "ipsec_gre", "gre64", "ipsec_gre64", "vxlan", or "lisp".  It is
-   possible to create tunnels in Linux and attach them to Open vSwitch
-   as system devices.  However, they cannot be dynamically created
-   through the OVSDB protocol or set the tunnel ids as a flow action.
-
-   Work is in progress in adding tunnel virtual ports to the upstream
-   Linux version of the Open vSwitch kernel module.  For now, if you
-   need these features, use the kernel module from the Open vSwitch
+A: The kernel module in upstream Linux does not include support for
+   LISP. Work is in progress to add support for LISP to the upstream
+   Linux version of the Open vSwitch kernel module. For now, if you
+   need this feature, use the kernel module from the Open vSwitch
    distribution instead of the upstream Linux kernel module.
 
-   The upstream kernel module does not include patch ports, but this
-   only matters for Open vSwitch 1.9 and earlier, because Open vSwitch
-   1.10 and later implement patch ports without using this kernel
-   feature.
+   Certain features require kernel support to function or to have
+   reasonable performance. If the ovs-vswitchd log file indicates that
+   a feature is not supported, consider upgrading to a newer upstream
+   Linux release or using the kernel module paired with the userspace
+   distribution.
 
 Q: What features are not available when using the userspace datapath?
 
@@ -197,6 +192,25 @@ A: Tunnel virtual ports are not supported, as described in the
    previous answer.  It is also not possible to use queue-related
    actions.  On Linux kernels before 2.6.39, maximum-sized VLAN packets
    may not be transmitted.
+
+Q: What happened to the bridge compatibility feature?
+
+A: Bridge compatibility was a feature of Open vSwitch 1.9 and earlier.
+   When it was enabled, Open vSwitch imitated the interface of the
+   Linux kernel "bridge" module.  This allowed users to drop Open
+   vSwitch into environments designed to use the Linux kernel bridge
+   module without adapting the environment to use Open vSwitch.
+
+   Open vSwitch 1.10 and later do not support bridge compatibility.
+   The feature was dropped because version 1.10 adopted a new internal
+   architecture that made bridge compatibility difficult to maintain.
+   Now that many environments use OVS directly, it would be rarely
+   useful in any case.
+
+   To use bridge compatibility, install OVS 1.9 or earlier, including
+   the accompanying kernel modules (both the main and bridge
+   compatibility modules), following the instructions that come with
+   the release.  Be sure to start the ovs-brcompatd daemon.
 
 
 Terminology
@@ -250,6 +264,40 @@ A: The following commands configure br0 with eth0 and tap0 as trunk
    To later disable mirroring, run:
 
        ovs-vsctl clear bridge br0 mirrors
+
+Q: Does Open vSwitch support configuring a port in promiscuous mode?
+
+A: Yes.  How you configure it depends on what you mean by "promiscuous
+   mode":
+
+      - Conventionally, "promiscuous mode" is a feature of a network
+        interface card.  Ordinarily, a NIC passes to the CPU only the
+        packets actually destined to its host machine.  It discards
+        the rest to avoid wasting memory and CPU cycles.  When
+        promiscuous mode is enabled, however, it passes every packet
+        to the CPU.  On an old-style shared-media or hub-based
+        network, this allows the host to spy on all packets on the
+        network.  But in the switched networks that are almost
+        everywhere these days, promiscuous mode doesn't have much
+        effect, because few packets not destined to a host are
+        delivered to the host's NIC.
+
+        This form of promiscuous mode is configured in the guest OS of
+        the VMs on your bridge, e.g. with "ifconfig".
+
+      - The VMware vSwitch uses a different definition of "promiscuous
+        mode".  When you configure promiscuous mode on a VMware vNIC,
+        the vSwitch sends a copy of every packet received by the
+        vSwitch to that vNIC.  That has a much bigger effect than just
+        enabling promiscuous mode in a guest OS.  Rather than getting
+        a few stray packets for which the switch does not yet know the
+        correct destination, the vNIC gets every packet.  The effect
+        is similar to replacing the vSwitch by a virtual hub.
+
+        This "promiscuous mode" is what switches normally call "port
+        mirroring" or "SPAN".  For information on how to configure
+        SPAN, see "How do I configure a port as a SPAN port, that is,
+        enable mirroring of all traffic to that port?"
 
 Q: How do I configure a VLAN as an RSPAN VLAN, that is, enable
    mirroring of all traffic to that VLAN?
@@ -366,7 +414,11 @@ A: First, why do you want to do this?  Two connected bridges are not
    ports will not work with the userspace datapath, only with the
    kernel module.
 
-Q: Why are there so many different ways to dump flows?
+
+Implementation Details
+----------------------
+
+Q: I hear OVS has a couple of kinds of flows.  Can you tell me about them?
 
 A: Open vSwitch uses different kinds of flows for different purposes:
 
@@ -382,18 +434,27 @@ A: Open vSwitch uses different kinds of flows for different purposes:
         about hidden flows.)
 
       - The Open vSwitch software switch implementation uses a second
-        kind of flow internally.  These flows, called "exact-match"
-        or "datapath" or "kernel" flows, do not support wildcards or
-        priorities and comprise only a single table, which makes them
-        suitable for caching.   OpenFlow flows and exact-match flows
+        kind of flow internally.  These flows, called "datapath" or
+        "kernel" flows, do not support priorities and comprise only a
+        single table, which makes them suitable for caching.  (Like
+        OpenFlow flows, datapath flows do support wildcarding, in Open
+        vSwitch 1.11 and later.)  OpenFlow flows and datapath flows
         also support different actions and number ports differently.
 
-        Exact-match flows are an implementation detail that is
-        subject to change in future versions of Open vSwitch.  Even
-        with the current version of Open vSwitch, hardware switch
-        implementations do not necessarily use exact-match flows.
+        Datapath flows are an implementation detail that is subject to
+        change in future versions of Open vSwitch.  Even with the
+        current version of Open vSwitch, hardware switch
+        implementations do not necessarily use this architecture.
 
-  Each of the commands for dumping flows has a different purpose:
+   Users and controllers directly control only the OpenFlow flow
+   table.  Open vSwitch manages the datapath flow table itself, so
+   users should not normally be concerned with it.
+
+Q: Why are there so many different ways to dump flows?
+
+A: Open vSwitch has two kinds of flows (see the previous question), so
+   it has commands with different purposes for dumping each kind of
+   flow:
 
       - "ovs-ofctl dump-flows <br>" dumps OpenFlow flows, excluding
         hidden flows.  This is the most commonly useful form of flow
@@ -404,7 +465,7 @@ A: Open vSwitch uses different kinds of flows for different purposes:
         including hidden flows.  This is occasionally useful for
         troubleshooting suspected issues with in-band control.
 
-      - "ovs-dpctl dump-flows [dp]" dumps the exact-match flow table
+      - "ovs-dpctl dump-flows [dp]" dumps the datapath flow table
         entries for a Linux kernel-based datapath.  In Open vSwitch
         1.10 and later, ovs-vswitchd merges multiple switches into a
         single datapath, so it will show all the flows on all your
@@ -412,8 +473,29 @@ A: Open vSwitch uses different kinds of flows for different purposes:
         useful for debugging.
 
       - "ovs-appctl dpif/dump-flows <br>", new in Open vSwitch 1.10,
-        dumps exact-match flows for only the specified bridge,
-        regardless of the type.
+        dumps datapath flows for only the specified bridge, regardless
+        of the type.
+
+
+Performance
+-----------
+
+Q: I just upgraded and I see a performance drop.  Why?
+
+A: The OVS kernel datapath may have been updated to a newer version than
+   the OVS userspace components.  Sometimes new versions of OVS kernel
+   module add functionality that is backwards compatible with older
+   userspace components but may cause a drop in performance with them.
+   Especially, if a kernel module from OVS 2.1 or newer is paired with
+   OVS userspace 1.10 or older, there will be a performance drop for
+   TCP traffic.
+
+   Updating the OVS userspace components to the latest released
+   version should fix the performance degradation.
+
+   To get the best possible performance and functionality, it is
+   recommended to pair the same versions of the kernel module and OVS
+   userspace.
 
 
 Configuration Problems
@@ -637,6 +719,19 @@ A: Did you install OpenFlow flows that use your queues?  This is the
 
    Refer to the previous question for an example.
 
+Q: I'd like to take advantage of some QoS feature that Open vSwitch
+   doesn't yet support.  How do I do that?
+
+A: Open vSwitch does not implement QoS itself.  Instead, it can
+   configure some, but not all, of the QoS features built into the
+   Linux kernel.  If you need some QoS feature that OVS cannot
+   configure itself, then the first step is to figure out whether
+   Linux QoS supports that feature.  If it does, then you can submit a
+   patch to support Open vSwitch configuration for that feature, or
+   you can use "tc" directly to configure the feature in Linux.  (If
+   Linux QoS doesn't support the feature you want, then first you have
+   to add that support to Linux.)
+
 Q: I configured QoS, correctly, but my measurements show that it isn't
    working as well as I expect.
 
@@ -849,6 +944,50 @@ A: Yes.  Use an "internal port" configured as an access port.  For
        ovs-vsctl add-port br0 vlan9 tag=9 -- set interface vlan9 type=internal
        ifconfig vlan9 192.168.0.7
 
+   See also the following question.
+
+Q: I configured one IP address on VLAN 0 and another on VLAN 9, like
+   this:
+
+       ovs-vsctl add-br br0
+       ovs-vsctl add-port br0 eth0
+       ifconfig br0 192.168.0.5
+       ovs-vsctl add-port br0 vlan9 tag=9 -- set interface vlan9 type=internal
+       ifconfig vlan9 192.168.0.9
+
+   but other hosts that are only on VLAN 0 can reach the IP address
+   configured on VLAN 9.  What's going on?
+
+A: RFC 1122 section 3.3.4.2 "Multihoming Requirements" describes two
+   approaches to IP address handling in Internet hosts:
+
+       - In the "Strong ES Model", where an ES is a host ("End
+         System"), an IP address is primarily associated with a
+         particular interface.  The host discards packets that arrive
+         on interface A if they are destined for an IP address that is
+         configured on interface B.  The host never sends packets from
+         interface A using a source address configured on interface B.
+
+       - In the "Weak ES Model", an IP address is primarily associated
+         with a host.  The host accepts packets that arrive on any
+         interface if they are destined for any of the host's IP
+         addresses, even if the address is configured on some
+         interface other than the one on which it arrived.  The host
+         does not restrict itself to sending packets from an IP
+         address associated with the originating interface.
+
+   Linux uses the weak ES model.  That means that when packets
+   destined to the VLAN 9 IP address arrive on eth0 and are bridged to
+   br0, the kernel IP stack accepts them there for the VLAN 9 IP
+   address, even though they were not received on vlan9, the network
+   device for vlan9.
+
+   To simulate the strong ES model on Linux, one may add iptables rule
+   to filter packets based on source and destination address and
+   adjust ARP configuration with sysctls.
+
+   BSD uses the strong ES model.
+
 Q: My OpenFlow controller doesn't see the VLANs that I expect.
 
 A: The configuration for VLANs in the Open vSwitch database (e.g. via
@@ -944,7 +1083,7 @@ A: Open vSwitch 1.9 and earlier support only OpenFlow 1.0 (plus
 
        ovs-vsctl set bridge br0 protocols=OpenFlow10,OpenFlow12,OpenFlow13
 
-   Open vSwitch version 1.12 and later will have experimental support
+   Open vSwitch version 2.0 and later will have experimental support
    for OpenFlow 1.1, 1.2, and 1.3.  On these versions of Open vSwitch,
    the following command enables OpenFlow 1.0, 1.1, 1.2, and 1.3 on
    bridge br0:
@@ -1202,9 +1341,11 @@ A: To debug network behavior problems, trace the path of a packet,
 
 Q: How do I make a flow drop packets?
 
-A: An empty set of actions causes a packet to be dropped.  You can
-   specify an empty set of actions with "actions=" on the ovs-ofctl
-   command line.  For example:
+A: To drop a packet is to receive it without forwarding it.  OpenFlow
+   explicitly specifies forwarding actions.  Thus, a flow with an
+   empty set of actions does not forward packets anywhere, causing
+   them to be dropped.  You can specify an empty set of actions with
+   "actions=" on the ovs-ofctl command line.  For example:
 
        ovs-ofctl add-flow br0 priority=65535,actions=
 
@@ -1216,6 +1357,92 @@ A: An empty set of actions causes a packet to be dropped.  You can
 
        ovs-ofctl add-flow br0 priority=65535,actions=drop
 
+   "drop" is not an action, either in OpenFlow or Open vSwitch.
+   Rather, it is only a way to say that there are no actions.
+
+Q: I added a flow to send packets out the ingress port, like this:
+
+       ovs-ofctl add-flow br0 in_port=2,actions=2
+
+   but OVS drops the packets instead.
+
+A: Yes, OpenFlow requires a switch to ignore attempts to send a packet
+   out its ingress port.  The rationale is that dropping these packets
+   makes it harder to loop the network.  Sometimes this behavior can
+   even be convenient, e.g. it is often the desired behavior in a flow
+   that forwards a packet to several ports ("floods" the packet).
+
+   Sometimes one really needs to send a packet out its ingress port.
+   In this case, output to OFPP_IN_PORT, which in ovs-ofctl syntax is
+   expressed as just "in_port", e.g.:
+
+       ovs-ofctl add-flow br0 in_port=2,actions=in_port
+
+   This also works in some circumstances where the flow doesn't match
+   on the input port.  For example, if you know that your switch has
+   five ports numbered 2 through 6, then the following will send every
+   received packet out every port, even its ingress port:
+
+       ovs-ofctl add-flow br0 actions=2,3,4,5,6,in_port
+
+   or, equivalently:
+
+       ovs-ofctl add-flow br0 actions=all,in_port
+
+   Sometimes, in complicated flow tables with multiple levels of
+   "resubmit" actions, a flow needs to output to a particular port
+   that may or may not be the ingress port.  It's difficult to take
+   advantage of OFPP_IN_PORT in this situation.  To help, Open vSwitch
+   provides, as an OpenFlow extension, the ability to modify the
+   in_port field.  Whatever value is currently in the in_port field is
+   the port to which outputs will be dropped, as well as the
+   destination for OFPP_IN_PORT.  This means that the following will
+   reliably output to port 2 or to ports 2 through 6, respectively:
+
+       ovs-ofctl add-flow br0 in_port=2,actions=load:0->NXM_OF_IN_PORT[],2
+       ovs-ofctl add-flow br0 actions=load:0->NXM_OF_IN_PORT[],2,3,4,5,6
+
+   If the input port is important, then one may save and restore it on
+   the stack:
+
+        ovs-ofctl add-flow br0 actions=push:NXM_OF_IN_PORT[],\
+                                       load:0->NXM_OF_IN_PORT[],\
+                                       2,3,4,5,6,\
+                                       pop:NXM_OF_IN_PORT[]
+
+Q: My bridge br0 has host 192.168.0.1 on port 1 and host 192.168.0.2
+   on port 2.  I set up flows to forward only traffic destined to the
+   other host and drop other traffic, like this:
+
+      priority=5,in_port=1,ip,nw_dst=192.168.0.2,actions=2
+      priority=5,in_port=2,ip,nw_dst=192.168.0.1,actions=1
+      priority=0,actions=drop
+
+   But it doesn't work--I don't get any connectivity when I do this.
+   Why?
+
+A: These flows drop the ARP packets that IP hosts use to establish IP
+   connectivity over Ethernet.  To solve the problem, add flows to
+   allow ARP to pass between the hosts:
+
+      priority=5,in_port=1,arp,actions=2
+      priority=5,in_port=2,arp,actions=1
+
+   This issue can manifest other ways, too.  The following flows that
+   match on Ethernet addresses instead of IP addresses will also drop
+   ARP packets, because ARP requests are broadcast instead of being
+   directed to a specific host:
+
+      priority=5,in_port=1,dl_dst=54:00:00:00:00:02,actions=2
+      priority=5,in_port=2,dl_dst=54:00:00:00:00:01,actions=1
+      priority=0,actions=drop
+
+   The solution already described above will also work in this case.
+   It may be better to add flows to allow all multicast and broadcast
+   traffic:
+
+      priority=5,in_port=1,dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,actions=2
+      priority=5,in_port=2,dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,actions=1
 
 Contact 
 -------

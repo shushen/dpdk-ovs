@@ -62,5 +62,5 @@ datapath_dpdk_ovs_dpdk_CFLAGS += -D_FILE_OFFSET_BITS=64
 # causing the linker to think the code is not used.
 datapath_dpdk_ovs_dpdk_LDFLAGS = -Wl,--whole-archive $(dpdk_libs) -Wl,--no-whole-archive -ldl -lrt -lm
 
-datapath_dpdk_ovs_dpdk_LDADD = lib/libopenvswitch.a $(SSL_LIBS)
+datapath_dpdk_ovs_dpdk_LDADD = lib/libopenvswitch.la $(SSL_LIBS)
 datapath_dpdk_ovs_dpdk_LDADD += -lfuse

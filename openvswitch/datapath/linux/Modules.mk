@@ -6,23 +6,27 @@ openvswitch_sources += \
 	linux/compat/gre.c \
 	linux/compat/gso.c \
 	linux/compat/genetlink-openvswitch.c \
+	linux/compat/hash.c \
+	linux/compat/hash-x86.c \
 	linux/compat/ip_tunnels_core.c \
 	linux/compat/netdevice.c \
 	linux/compat/net_namespace.c \
 	linux/compat/reciprocal_div.c \
 	linux/compat/skbuff-openvswitch.c \
 	linux/compat/vxlan.c	\
-	linux/compat/workqueue.c \
 	linux/compat/utils.c
 openvswitch_headers += \
 	linux/compat/gso.h \
+	linux/compat/include/asm/hash.h \
 	linux/compat/include/asm/percpu.h \
+	linux/compat/include/linux/bug.h \
 	linux/compat/include/linux/compiler.h \
 	linux/compat/include/linux/compiler-gcc.h \
 	linux/compat/include/linux/cpumask.h \
 	linux/compat/include/linux/err.h \
 	linux/compat/include/linux/etherdevice.h \
 	linux/compat/include/linux/flex_array.h \
+	linux/compat/include/linux/hash.h \
 	linux/compat/include/linux/icmp.h \
 	linux/compat/include/linux/icmpv6.h \
 	linux/compat/include/linux/if.h \
@@ -65,5 +69,6 @@ openvswitch_headers += \
 	linux/compat/include/net/ipv6.h \
 	linux/compat/include/net/net_namespace.h \
 	linux/compat/include/net/netlink.h \
+	linux/compat/include/net/sock.h \
 	linux/compat/include/net/vxlan.h \
 	linux/compat/include/net/sctp/checksum.h

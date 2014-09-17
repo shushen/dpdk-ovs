@@ -94,7 +94,6 @@ m4_include([tests/uuid.at])
 m4_include([tests/json.at])
 m4_include([tests/jsonrpc.at])
 m4_include([tests/jsonrpc-py.at])
-m4_include([tests/timeval.at])
 m4_include([tests/tunnel.at])
 m4_include([tests/lockfile.at])
 m4_include([tests/reconnect.at])
@@ -109,6 +108,7 @@ m4_include([tests/ovs-xapi-sync.at])
 m4_include([tests/interface-reconfigure.at])
 m4_include([tests/stp.at])
 m4_include([tests/vlog.at])
+m4_include([tests/vtep-ctl.at])
 
 # DPDK tests
 if HAVE_DPDK
@@ -116,9 +116,7 @@ m4_include([tests/dpif-dpdk-vport-table.at])
 m4_include([tests/dpif-dpdk-flow-table.at])
 m4_include([tests/dpif-dpdk.at])
 m4_include([tests/multicore-dpif-dpdk.at])
-m4_include([tests/netdev-dpdk.at])
 m4_include([tests/ovdk-datapath-flow-actions.at])
 m4_include([tests/ovdk-vport.at])
 m4_include([tests/ovdk-jobs.at])
 endif
-

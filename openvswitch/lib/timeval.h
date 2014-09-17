@@ -40,30 +40,10 @@ BUILD_ASSERT_DECL(TYPE_IS_SIGNED(time_t));
 #define TIME_MAX TYPE_MAXIMUM(time_t)
 #define TIME_MIN TYPE_MINIMUM(time_t)
 
-/* Interval between updates to the reported time, in ms.  This should not be
- * adjusted much below 10 ms or so with the current implementation, or too
- * much time will be wasted in signal handlers and calls to clock_gettime(). */
-#define TIME_UPDATE_INTERVAL 25
-
-/* True on systems that support a monotonic clock.  Compared to just getting
- * the value of a variable, clock_gettime() is somewhat expensive, even on
- * systems that try hard to optimize it (such as x86-64 Linux), so it's
- * worthwhile to minimize calls via caching. */
-#ifndef CACHE_TIME
-#if defined ESX
-#define CACHE_TIME 0
-#else
-#define CACHE_TIME 1
-#endif
-#endif /* ifndef CACHE_TIME */
-
 struct tm_msec {
   struct tm tm;
   int msec;
 };
-
-void time_postfork(void);
-void time_refresh(void);
 
 time_t time_now(void);
 time_t time_wall(void);
@@ -88,6 +68,8 @@ void xclock_gettime(clock_t, struct timespec *);
 int get_cpu_usage(void);
 
 long long int time_boot_msec(void);
+
+void timewarp_wait(void);
 
 #ifdef  __cplusplus
 }

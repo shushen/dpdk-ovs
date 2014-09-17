@@ -38,7 +38,6 @@ void match_init(struct match *,
                 const struct flow *, const struct flow_wildcards *);
 void match_wc_init(struct match *match, const struct flow *flow);
 void match_init_catchall(struct match *);
-void match_init_exact(struct match *, const struct flow *);
 
 void match_zero_wildcarded_fields(struct match *);
 
@@ -89,6 +88,8 @@ void match_set_tp_src(struct match *, ovs_be16);
 void match_set_tp_src_masked(struct match *, ovs_be16 port, ovs_be16 mask);
 void match_set_tp_dst(struct match *, ovs_be16);
 void match_set_tp_dst_masked(struct match *, ovs_be16 port, ovs_be16 mask);
+void match_set_tcp_flags(struct match *, ovs_be16);
+void match_set_tcp_flags_masked(struct match *, ovs_be16 flags, ovs_be16 mask);
 void match_set_nw_proto(struct match *, uint8_t);
 void match_set_nw_src(struct match *, ovs_be32);
 void match_set_nw_src_masked(struct match *, ovs_be32 ip, ovs_be32 mask);
@@ -132,13 +133,15 @@ void match_print(const struct match *);
 
 /* A sparse representation of a "struct match".
  *
- * This has the same invariant as "struct match", that is, a 1-bit in the
- * 'flow' must correspond to a 1-bit in 'mask'.
+ * There are two invariants:
  *
- * The invariants for the underlying miniflow and minimask are also maintained,
- * which means that 'flow' and 'mask' can have different 'map's.  In
- * particular, if the match checks that a given 32-bit field has value 0, then
- * 'map' will have a 1-bit in 'mask' but a 0-bit in 'flow' for that field. */
+ *   - The same invariant as "struct match", that is, a 1-bit in the 'flow'
+ *     must correspond to a 1-bit in 'mask'.
+ *
+ *   - 'flow' and 'mask' have the same 'map'.  This implies that 'flow' and
+ *     'mask' have the same part of "struct flow" at the same offset into
+ *     'values', which makes minimatch_matches_flow() faster.
+ */
 struct minimatch {
     struct miniflow flow;
     struct minimask mask;
@@ -153,6 +156,11 @@ void minimatch_expand(const struct minimatch *, struct match *);
 
 bool minimatch_equal(const struct minimatch *a, const struct minimatch *b);
 uint32_t minimatch_hash(const struct minimatch *, uint32_t basis);
+
+bool minimatch_matches_flow(const struct minimatch *, const struct flow *);
+
+uint32_t minimatch_hash_range(const struct minimatch *,
+                              uint8_t start, uint8_t end, uint32_t *basis);
 
 void minimatch_format(const struct minimatch *, struct ds *,
                       unsigned int priority);

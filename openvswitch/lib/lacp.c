@@ -18,12 +18,14 @@
 
 #include <stdlib.h>
 
+#include "connectivity.h"
 #include "dynamic-string.h"
 #include "hash.h"
 #include "hmap.h"
 #include "ofpbuf.h"
 #include "packets.h"
 #include "poll-loop.h"
+#include "seq.h"
 #include "shash.h"
 #include "timer.h"
 #include "timeval.h"
@@ -102,6 +104,7 @@ struct lacp {
     bool fast;               /* True if using fast probe interval. */
     bool negotiated;         /* True if LACP negotiations were successful. */
     bool update;             /* True if lacp_update() needs to be called. */
+    bool fallback_ab; /* True if fallback to active-backup on LACP failure. */
 
     atomic_int ref_cnt;
 };
@@ -283,6 +286,12 @@ lacp_configure(struct lacp *lacp, const struct lacp_settings *s)
 
     lacp->active = s->active;
     lacp->fast = s->fast;
+
+    if (lacp->fallback_ab != s->fallback_ab_cfg) {
+        lacp->fallback_ab = s->fallback_ab_cfg;
+        lacp->update = true;
+    }
+
     ovs_mutex_unlock(&mutex);
 }
 
@@ -450,7 +459,9 @@ slave_may_enable__(struct slave *slave) OVS_REQUIRES(mutex)
 {
     /* The slave may be enabled if it's attached to an aggregator and its
      * partner is synchronized.*/
-    return slave->attached && (slave->partner.state & LACP_STATE_SYNC);
+    return slave->attached && (slave->partner.state & LACP_STATE_SYNC
+            || (slave->lacp && slave->lacp->fallback_ab
+                && slave->status == LACP_DEFAULTED));
 }
 
 /* This function should be called before enabling 'slave_' to send or receive
@@ -500,10 +511,15 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
     ovs_mutex_lock(&mutex);
     HMAP_FOR_EACH (slave, node, &lacp->slaves) {
         if (timer_expired(&slave->rx)) {
+            enum slave_status old_status = slave->status;
+
             if (slave->status == LACP_CURRENT) {
                 slave_set_expired(slave);
             } else if (slave->status == LACP_EXPIRED) {
                 slave_set_defaulted(slave);
+            }
+            if (slave->status != old_status) {
+                seq_change(connectivity_seq_get());
             }
         }
     }
@@ -535,6 +551,7 @@ lacp_run(struct lacp *lacp, lacp_send_pdu *send_pdu) OVS_EXCLUDED(mutex)
                         : LACP_SLOW_TIME_TX);
 
             timer_set_duration(&slave->tx, duration);
+            seq_change(connectivity_seq_get());
         }
     }
     ovs_mutex_unlock(&mutex);
@@ -587,6 +604,9 @@ lacp_update_attached(struct lacp *lacp) OVS_REQUIRES(mutex)
         }
 
         if (slave->status == LACP_DEFAULTED) {
+            if (lacp->fallback_ab) {
+                slave->attached = true;
+            }
             continue;
         }
 
@@ -603,7 +623,8 @@ lacp_update_attached(struct lacp *lacp) OVS_REQUIRES(mutex)
 
     if (lead) {
         HMAP_FOR_EACH (slave, node, &lacp->slaves) {
-            if (lead->partner.key != slave->partner.key
+            if ((lacp->fallback_ab && slave->status == LACP_DEFAULTED)
+                || lead->partner.key != slave->partner.key
                 || !eth_addr_equals(lead->partner.sys_id,
                                     slave->partner.sys_id)) {
                 slave->attached = false;
@@ -884,7 +905,7 @@ lacp_print_details(struct ds *ds, struct lacp *lacp) OVS_REQUIRES(mutex)
             status = "defaulted";
             break;
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
 
         ds_put_format(ds, "\nslave: %s: %s %s\n", slave->name, status,

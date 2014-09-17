@@ -37,9 +37,11 @@
 #include "dpif.h"
 #include "dynamic-string.h"
 #include "flow.h"
+#include "match.h"
 #include "netdev.h"
 #include "netlink.h"
 #include "odp-util.h"
+#include "ofp-parse.h"
 #include "ofpbuf.h"
 #include "packets.h"
 #include "shash.h"
@@ -50,8 +52,6 @@
 #include "util.h"
 #include "vlog.h"
 
-VLOG_DEFINE_THIS_MODULE(dpctl);
-
 /* -s, --statistics: Print port/flow statistics? */
 static bool print_statistics;
 
@@ -61,10 +61,7 @@ static bool zero_statistics;
 /* --may-create: Allow mod-flows command to create a new flow? */
 static bool may_create;
 
-/* -m, --more: Output verbosity.
- *
- * So far only undocumented commands honor this option, so we don't document
- * the option itself. */
+/* -m, --more: Increase output verbosity. */
 static int verbosity;
 
 static const struct command *get_all_commands(void);
@@ -181,14 +178,16 @@ usage(void)
            "  dump-dps                 display names of all datapaths\n"
            "  show                     show basic info on all datapaths\n"
            "  show DP...               show basic info on each DP\n"
-           "  dump-flows DP            display flows in DP\n"
-           "  add-flow DP FLOW ACTIONS add FLOW with ACTIONS to DP\n"
-           "  mod-flow DP FLOW ACTIONS change FLOW actions to ACTIONS in DP\n"
-           "  del-flow DP FLOW         delete FLOW from DP\n"
-           "  del-flows DP             delete all flows from DP\n"
+           "  dump-flows [DP]          display flows in DP\n"
+           "  add-flow [DP] FLOW ACTIONS add FLOW with ACTIONS to DP\n"
+           "  mod-flow [DP] FLOW ACTIONS change FLOW actions to ACTIONS in DP\n"
+           "  del-flow [DP] FLOW         delete FLOW from DP\n"
+           "  del-flows [DP]             delete all flows from DP\n"
            "Each IFACE on add-dp, add-if, and set-if may be followed by\n"
            "comma-separated options.  See ovs-dpctl(8) for syntax, or the\n"
-           "Interface table in ovs-vswitchd.conf.db(5) for an options list.\n",
+           "Interface table in ovs-vswitchd.conf.db(5) for an options list.\n"
+           "For COMMAND dump-flows, add-flow, mod-flow, del-flow and\n"
+           "del-flows, DP is optional if there is only one datapath.\n",
            program_name, program_name);
     vlog_usage();
     printf("\nOptions for show and mod-flow:\n"
@@ -362,7 +361,6 @@ dpctl_add_if(int argc OVS_UNUSED, char *argv[])
 
         error = netdev_set_config(netdev, &args);
         if (error) {
-            ovs_error(error, "%s: failed to configure network device", name);
             goto next;
         }
 
@@ -471,7 +469,6 @@ dpctl_set_if(int argc, char *argv[])
         error = netdev_set_config(netdev, &args);
         smap_destroy(&args);
         if (error) {
-            ovs_error(error, "%s: failed to configure network device", name);
             goto next;
         }
 
@@ -575,7 +572,15 @@ show_dpif(struct dpif *dpif)
         printf("\tlookups: hit:%"PRIu64" missed:%"PRIu64" lost:%"PRIu64"\n"
                "\tflows: %"PRIu64"\n",
                stats.n_hit, stats.n_missed, stats.n_lost, stats.n_flows);
+        if (stats.n_masks != UINT32_MAX) {
+            uint64_t n_pkts = stats.n_hit + stats.n_missed;
+            double avg = n_pkts ? (double) stats.n_mask_hit / n_pkts : 0.0;
+
+            printf("\tmasks: hit:%"PRIu64" total:%"PRIu32" hit/pkt:%.2f\n",
+                   stats.n_mask_hit, stats.n_masks, avg);
+        }
     }
+
     DPIF_PORT_FOR_EACH (&dpif_port, &dump, dpif) {
         printf("\tport %u: %s", dpif_port.port_no, dpif_port.name);
 
@@ -754,27 +759,74 @@ dpctl_dump_flows(int argc, char *argv[])
 {
     const struct dpif_flow_stats *stats;
     const struct nlattr *actions;
-    struct dpif_flow_dump dump;
+    struct dpif_flow_dump flow_dump;
     const struct nlattr *key;
     const struct nlattr *mask;
+    struct dpif_port dpif_port;
+    struct dpif_port_dump port_dump;
+    struct hmap portno_names;
+    struct simap names_portno;
     size_t actions_len;
     struct dpif *dpif;
     size_t key_len;
     size_t mask_len;
     struct ds ds;
-    char *name;
+    char *name, *error, *filter = NULL;
+    struct flow flow_filter;
+    struct flow_wildcards wc_filter;
 
+    if (argc > 1 && !strncmp(argv[argc - 1], "filter=", 7)) {
+        filter = xstrdup(argv[--argc] + 7);
+    }
     name = (argc == 2) ? xstrdup(argv[1]) : get_one_dp();
+
     run(parsed_dpif_open(name, false, &dpif), "opening datapath");
     free(name);
 
+    hmap_init(&portno_names);
+    simap_init(&names_portno);
+    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        odp_portno_names_set(&portno_names, dpif_port.port_no, dpif_port.name);
+        simap_put(&names_portno, dpif_port.name,
+                  odp_to_u32(dpif_port.port_no));
+    }
+
+    if (filter) {
+        error = parse_ofp_exact_flow(&flow_filter, &wc_filter.masks, filter,
+                                     &names_portno);
+        if (error) {
+            ovs_fatal(0, "Failed to parse filter (%s)", error);
+        }
+    }
+
     ds_init(&ds);
-    dpif_flow_dump_start(&dump, dpif);
-    while (dpif_flow_dump_next(&dump, &key, &key_len,
+    dpif_flow_dump_start(&flow_dump, dpif);
+    while (dpif_flow_dump_next(&flow_dump, &key, &key_len,
                                &mask, &mask_len,
                                &actions, &actions_len, &stats)) {
+        if (filter) {
+            struct flow flow;
+            struct flow_wildcards wc;
+            struct match match, match_filter;
+            struct minimatch minimatch;
+
+            odp_flow_key_to_flow(key, key_len, &flow);
+            odp_flow_key_to_mask(mask, mask_len, &wc.masks, &flow);
+            match_init(&match, &flow, &wc);
+
+            match_init(&match_filter, &flow_filter, &wc);
+            match_init(&match_filter, &match_filter.flow, &wc_filter);
+            minimatch_init(&minimatch, &match_filter);
+
+            if (!minimatch_matches_flow(&minimatch, &match.flow)) {
+                minimatch_destroy(&minimatch);
+                continue;
+            }
+            minimatch_destroy(&minimatch);
+        }
         ds_clear(&ds);
-        odp_flow_format(key, key_len, mask, mask_len, &ds, verbosity);
+        odp_flow_format(key, key_len, mask, mask_len, &portno_names, &ds,
+                        verbosity);
         ds_put_cstr(&ds, ", ");
 
         dpif_flow_stats_format(stats, &ds);
@@ -782,7 +834,12 @@ dpctl_dump_flows(int argc, char *argv[])
         format_odp_actions(&ds, actions, actions_len);
         printf("%s\n", ds_cstr(&ds));
     }
-    dpif_flow_dump_done(&dump);
+    dpif_flow_dump_done(&flow_dump);
+
+    free(filter);
+    odp_portno_names_destroy(&portno_names);
+    hmap_destroy(&portno_names);
+    simap_destroy(&names_portno);
     ds_destroy(&ds);
     dpif_close(dpif);
 }
@@ -793,24 +850,36 @@ dpctl_put_flow(int argc, char *argv[], enum dpif_flow_put_flags flags)
     const char *key_s = argv[argc - 2];
     const char *actions_s = argv[argc - 1];
     struct dpif_flow_stats stats;
+    struct dpif_port dpif_port;
+    struct dpif_port_dump port_dump;
     struct ofpbuf actions;
     struct ofpbuf key;
     struct ofpbuf mask;
     struct dpif *dpif;
     struct ds s;
     char *dp_name;
-
-    ds_init(&s);
-    ofpbuf_init(&key, 0);
-    ofpbuf_init(&mask, 0);
-    run(odp_flow_from_string(key_s, NULL, &key, &mask), "parsing flow key");
-
-    ofpbuf_init(&actions, 0);
-    run(odp_actions_from_string(actions_s, NULL, &actions), "parsing actions");
+    struct simap port_names;
 
     dp_name = argc == 4 ? xstrdup(argv[1]) : get_one_dp();
     run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
     free(dp_name);
+
+
+    simap_init(&port_names);
+    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        simap_put(&port_names, dpif_port.name, odp_to_u32(dpif_port.port_no));
+    }
+
+    ds_init(&s);
+    ofpbuf_init(&key, 0);
+    ofpbuf_init(&mask, 0);
+    run(odp_flow_from_string(key_s, &port_names, &key, &mask),
+        "parsing flow key");
+
+    simap_destroy(&port_names);
+
+    ofpbuf_init(&actions, 0);
+    run(odp_actions_from_string(actions_s, NULL, &actions), "parsing actions");
 
     run(dpif_flow_put(dpif, flags,
                       key.data, key.size,
@@ -860,23 +929,32 @@ dpctl_del_flow(int argc, char *argv[])
 {
     const char *key_s = argv[argc - 1];
     struct dpif_flow_stats stats;
+    struct dpif_port dpif_port;
+    struct dpif_port_dump port_dump;
     struct ofpbuf key;
     struct ofpbuf mask; /* To be ignored. */
     struct dpif *dpif;
     char *dp_name;
-
-    ofpbuf_init(&key, 0);
-    ofpbuf_init(&mask, 0);
-    run(odp_flow_from_string(key_s, NULL, &key, &mask), "parsing flow key");
+    struct simap port_names;
 
     dp_name = argc == 3 ? xstrdup(argv[1]) : get_one_dp();
     run(parsed_dpif_open(dp_name, false, &dpif), "opening datapath");
     free(dp_name);
 
+    simap_init(&port_names);
+    DPIF_PORT_FOR_EACH (&dpif_port, &port_dump, dpif) {
+        simap_put(&port_names, dpif_port.name, odp_to_u32(dpif_port.port_no));
+    }
+
+    ofpbuf_init(&key, 0);
+    ofpbuf_init(&mask, 0);
+    run(odp_flow_from_string(key_s, &port_names, &key, &mask), "parsing flow key");
+
     run(dpif_flow_del(dpif,
                       key.data, key.size,
                       print_statistics ? &stats : NULL), "deleting flow");
 
+    simap_destroy(&port_names);
     ofpbuf_uninit(&key);
     ofpbuf_uninit(&mask);
 
@@ -1047,9 +1125,8 @@ dpctl_normalize_actions(int argc, char *argv[])
     for (i = 3; i < argc; i++) {
         char name[16];
         int number;
-        int n = -1;
 
-        if (sscanf(argv[i], "%15[^=]=%d%n", name, &number, &n) > 0 && n > 0) {
+        if (ovs_scan(argv[i], "%15[^=]=%d", name, &number)) {
             uintptr_t n = number;
             simap_put(&port_names, name, n);
         } else {
@@ -1063,7 +1140,7 @@ dpctl_normalize_actions(int argc, char *argv[])
         "odp_flow_key_from_string");
 
     ds_clear(&s);
-    odp_flow_format(keybuf.data, keybuf.size, NULL, 0, &s, verbosity);
+    odp_flow_format(keybuf.data, keybuf.size, NULL, 0, NULL, &s, verbosity);
     printf("input flow: %s\n", ds_cstr(&s));
 
     run(odp_flow_key_to_flow(keybuf.data, keybuf.size, &flow),
@@ -1074,6 +1151,7 @@ dpctl_normalize_actions(int argc, char *argv[])
     ofpbuf_init(&odp_actions, 0);
     run(odp_actions_from_string(argv[2], &port_names, &odp_actions),
         "odp_actions_from_string");
+    simap_destroy(&port_names);
 
     if (verbosity) {
         ds_clear(&s);
@@ -1123,7 +1201,7 @@ dpctl_normalize_actions(int argc, char *argv[])
             printf("no vlan: ");
         }
 
-        if (af->flow.mpls_depth) {
+        if (eth_type_mpls(af->flow.dl_type)) {
             printf("mpls(label=%"PRIu32",tc=%d,ttl=%d): ",
                    mpls_lse_to_label(af->flow.mpls_lse),
                    mpls_lse_to_tc(af->flow.mpls_lse),
@@ -1147,7 +1225,7 @@ static const struct command all_commands[] = {
     { "set-if", 2, INT_MAX, dpctl_set_if },
     { "dump-dps", 0, 0, dpctl_dump_dps },
     { "show", 0, INT_MAX, dpctl_show },
-    { "dump-flows", 0, 1, dpctl_dump_flows },
+    { "dump-flows", 0, 2, dpctl_dump_flows },
     { "add-flow", 2, 3, dpctl_add_flow },
     { "mod-flow", 2, 3, dpctl_mod_flow },
     { "del-flow", 1, 2, dpctl_del_flow },

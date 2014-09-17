@@ -11,14 +11,6 @@ EXTRA_DIST += \
 	debian/openvswitch-common.docs \
 	debian/openvswitch-common.install \
 	debian/openvswitch-common.manpages \
-	debian/openvswitch-controller.README.Debian \
-	debian/openvswitch-controller.default \
-	debian/openvswitch-controller.dirs \
-	debian/openvswitch-controller.init \
-	debian/openvswitch-controller.install \
-	debian/openvswitch-controller.manpages \
-	debian/openvswitch-controller.postinst \
-	debian/openvswitch-controller.postrm \
 	debian/openvswitch-datapath-module-_KVERS_.postinst.modules.in \
 	debian/openvswitch-datapath-dkms.postinst \
 	debian/openvswitch-datapath-dkms.prerm \
@@ -45,8 +37,11 @@ EXTRA_DIST += \
 	debian/openvswitch-test.dirs \
 	debian/openvswitch-test.install \
 	debian/openvswitch-test.manpages \
-	debian/ovsdbmonitor.install \
-	debian/ovsdbmonitor.manpages \
+	debian/openvswitch-vtep.default \
+	debian/openvswitch-vtep.dirs \
+	debian/openvswitch-vtep.init \
+	debian/openvswitch-vtep.install \
+	debian/openvswitch-vtep.manpages \
 	debian/ovs-monitor-ipsec \
 	debian/python-openvswitch.dirs \
 	debian/python-openvswitch.install \

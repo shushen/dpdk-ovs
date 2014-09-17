@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -128,6 +128,15 @@ struct ofp10_port_mod {
 };
 OFP_ASSERT(sizeof(struct ofp10_port_mod) == 24);
 
+struct ofp10_packet_queue {
+    ovs_be32 queue_id;          /* id for the specific queue. */
+    ovs_be16 len;               /* Length in bytes of this queue desc. */
+    uint8_t pad[2];             /* 64-bit alignment. */
+    /* Followed by any number of queue properties expressed using
+     * ofp_queue_prop_header, to fill out a total of 'len' bytes. */
+};
+OFP_ASSERT(sizeof(struct ofp10_packet_queue) == 8);
+
 /* Query for port queue configuration. */
 struct ofp10_queue_get_config_request {
     ovs_be16 port;          /* Port to be queried. Should refer
@@ -200,19 +209,6 @@ struct ofp10_action_enqueue {
     ovs_be32 queue_id;        /* Where to enqueue the packets. */
 };
 OFP_ASSERT(sizeof(struct ofp10_action_enqueue) == 16);
-
-union ofp_action {
-    ovs_be16 type;
-    struct ofp_action_header header;
-    struct ofp_action_vendor_header vendor;
-    struct ofp10_action_output output10;
-    struct ofp_action_vlan_vid vlan_vid;
-    struct ofp_action_vlan_pcp vlan_pcp;
-    struct ofp_action_nw_addr nw_addr;
-    struct ofp_action_nw_tos nw_tos;
-    struct ofp_action_tp_port tp_port;
-};
-OFP_ASSERT(sizeof(union ofp_action) == 8);
 
 /* Send packet (controller -> datapath). */
 struct ofp10_packet_out {

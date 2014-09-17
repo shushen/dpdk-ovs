@@ -91,7 +91,6 @@ struct ovsdb_idl_txn {
     char *error;
     bool dry_run;
     struct ds comment;
-    unsigned int commit_seqno;
 
     /* Increments. */
     const char *inc_table;
@@ -333,9 +332,6 @@ ovsdb_idl_run(struct ovsdb_idl *idl)
                    && !strcmp(msg->method, "stolen")) {
             /* Someone else stole our lock. */
             ovsdb_idl_parse_lock_notify(idl, msg->params, false);
-        } else if (msg->type == JSONRPC_REPLY && msg->id->type == JSON_STRING
-                   && !strcmp(msg->id->u.string, "echo")) {
-            /* Reply to our echo request.  Ignore it. */
         } else if ((msg->type == JSONRPC_ERROR
                     || msg->type == JSONRPC_REPLY)
                    && ovsdb_idl_txn_process_reply(idl, msg)) {
@@ -398,6 +394,14 @@ ovsdb_idl_has_ever_connected(const struct ovsdb_idl *idl)
     return ovsdb_idl_get_seqno(idl) != 0;
 }
 
+/* Reconfigures 'idl' so that it would reconnect to the database, if
+ * connection was dropped. */
+void
+ovsdb_idl_enable_reconnect(struct ovsdb_idl *idl)
+{
+    jsonrpc_session_enable_reconnect(idl->session);
+}
+
 /* Forces 'idl' to drop its connection to the database and reconnect.  In the
  * meantime, the contents of 'idl' will not change. */
 void
@@ -445,7 +449,7 @@ ovsdb_idl_get_mode(struct ovsdb_idl *idl,
         }
     }
 
-    NOT_REACHED();
+    OVS_NOT_REACHED();
 }
 
 static void
@@ -509,7 +513,7 @@ ovsdb_idl_add_table(struct ovsdb_idl *idl,
         }
     }
 
-    NOT_REACHED();
+    OVS_NOT_REACHED();
 }
 
 /* Turns off OVSDB_IDL_ALERT for 'column' in 'idl'.
@@ -1242,7 +1246,6 @@ ovsdb_idl_txn_create(struct ovsdb_idl *idl)
     txn->error = NULL;
     txn->dry_run = false;
     ds_init(&txn->comment);
-    txn->commit_seqno = txn->idl->change_seqno;
 
     txn->inc_table = NULL;
     txn->inc_column = NULL;
@@ -2110,7 +2113,7 @@ ovsdb_idl_txn_process_inc_reply(struct ovsdb_idl_txn *txn,
 
     if (txn->inc_index + 2 > results->n) {
         VLOG_WARN_RL(&syntax_rl, "reply does not contain enough operations "
-                     "for increment (has %zu, needs %u)",
+                     "for increment (has %"PRIuSIZE", needs %u)",
                      results->n, txn->inc_index + 2);
         return false;
     }
@@ -2135,7 +2138,7 @@ ovsdb_idl_txn_process_inc_reply(struct ovsdb_idl_txn *txn,
         return false;
     }
     if (rows->u.array.n != 1) {
-        VLOG_WARN_RL(&syntax_rl, "\"select\" reply \"rows\" has %zu elements "
+        VLOG_WARN_RL(&syntax_rl, "\"select\" reply \"rows\" has %"PRIuSIZE" elements "
                      "instead of 1",
                      rows->u.array.n);
         return false;
@@ -2165,7 +2168,7 @@ ovsdb_idl_txn_process_insert_reply(struct ovsdb_idl_txn_insert *insert,
 
     if (insert->op_index >= results->n) {
         VLOG_WARN_RL(&syntax_rl, "reply does not contain enough operations "
-                     "for insert (has %zu, needs %u)",
+                     "for insert (has %"PRIuSIZE", needs %u)",
                      results->n, insert->op_index);
         return false;
     }

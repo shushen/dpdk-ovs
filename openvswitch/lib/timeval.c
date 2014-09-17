@@ -33,6 +33,7 @@
 #include "hmap.h"
 #include "ovs-thread.h"
 #include "signals.h"
+#include "seq.h"
 #include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
@@ -41,15 +42,13 @@ VLOG_DEFINE_THIS_MODULE(timeval);
 
 struct clock {
     clockid_t id;               /* CLOCK_MONOTONIC or CLOCK_REALTIME. */
-    struct ovs_rwlock rwlock;   /* Mutual exclusion for 'cache'. */
 
-    /* Features for use by unit tests.  Protected by 'rwlock'. */
-    struct timespec warp;       /* Offset added for unit tests. */
-    bool stopped;               /* Disables real-time updates if true.  */
-
-    /* Relevant only if CACHE_TIME is true. */
-    volatile sig_atomic_t tick; /* Has the timer ticked?  Set by signal. */
-    struct timespec cache;      /* Last time read from kernel. */
+    /* Features for use by unit tests.  Protected by 'mutex'. */
+    struct ovs_mutex mutex;
+    atomic_bool slow_path;             /* True if warped or stopped. */
+    struct timespec warp OVS_GUARDED;  /* Offset added for unit tests. */
+    bool stopped OVS_GUARDED;          /* Disable real-time updates if true. */
+    struct timespec cache OVS_GUARDED; /* Last time read from kernel. */
 };
 
 /* Our clocks. */
@@ -59,6 +58,14 @@ static struct clock wall_clock;      /* CLOCK_REALTIME. */
 /* The monotonic time at which the time module was initialized. */
 static long long int boot_time;
 
+/* True only when timeval_dummy_register() is called. */
+static bool timewarp_enabled;
+/* Reference to the seq struct.  Threads other than main thread can
+ * wait on timewarp_seq and be waken up when time is warped. */
+static struct seq *timewarp_seq;
+/* Last value of 'timewarp_seq'. */
+DEFINE_STATIC_PER_THREAD_DATA(uint64_t, last_seq, 0);
+
 /* Monotonic time in milliseconds at which to die with SIGALRM (if not
  * LLONG_MAX). */
 static long long int deadline = LLONG_MAX;
@@ -67,11 +74,6 @@ static long long int deadline = LLONG_MAX;
  * up. */
 DEFINE_STATIC_PER_THREAD_DATA(long long int, last_wakeup, 0);
 
-static void set_up_timer(void);
-static void set_up_signal(int flags);
-static void sigalrm_handler(int);
-static void block_sigalrm(sigset_t *);
-static void unblock_sigalrm(const sigset_t *);
 static void log_poll_interval(long long int last_wakeup);
 static struct rusage *get_recent_rusage(void);
 static void refresh_rusage(void);
@@ -83,8 +85,10 @@ init_clock(struct clock *c, clockid_t id)
 {
     memset(c, 0, sizeof *c);
     c->id = id;
-    ovs_rwlock_init(&c->rwlock);
+    ovs_mutex_init(&c->mutex);
+    atomic_init(&c->slow_path, false);
     xclock_gettime(c->id, &c->cache);
+    timewarp_seq = seq_create();
 }
 
 static void
@@ -99,9 +103,6 @@ do_init_time(void)
                                   : CLOCK_REALTIME));
     init_clock(&wall_clock, CLOCK_REALTIME);
     boot_time = timespec_to_msec(&monotonic_clock.cache);
-
-    set_up_signal(SA_RESTART);
-    set_up_timer();
 }
 
 /* Initializes the timetracking module, if not already initialized. */
@@ -113,86 +114,30 @@ time_init(void)
 }
 
 static void
-set_up_signal(int flags)
-{
-    struct sigaction sa;
-
-    memset(&sa, 0, sizeof sa);
-    sa.sa_handler = sigalrm_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = flags;
-    xsigaction(SIGALRM, &sa, NULL);
-}
-
-static void
-set_up_timer(void)
-{
-    static timer_t timer_id;    /* "static" to avoid apparent memory leak. */
-    struct itimerspec itimer;
-
-    if (!CACHE_TIME) {
-        return;
-    }
-
-    if (timer_create(monotonic_clock.id, NULL, &timer_id)) {
-        VLOG_FATAL("timer_create failed (%s)", ovs_strerror(errno));
-    }
-
-    itimer.it_interval.tv_sec = 0;
-    itimer.it_interval.tv_nsec = TIME_UPDATE_INTERVAL * 1000 * 1000;
-    itimer.it_value = itimer.it_interval;
-
-    if (timer_settime(timer_id, 0, &itimer, NULL)) {
-        VLOG_FATAL("timer_settime failed (%s)", ovs_strerror(errno));
-    }
-}
-
-/* Set up the interval timer, to ensure that time advances even without calling
- * time_refresh().
- *
- * A child created with fork() does not inherit the parent's interval timer, so
- * this function needs to be called from the child after fork(). */
-void
-time_postfork(void)
-{
-    assert_single_threaded();
-    time_init();
-    set_up_timer();
-}
-
-/* Forces a refresh of the current time from the kernel.  It is not usually
- * necessary to call this function, since the time will be refreshed
- * automatically at least every TIME_UPDATE_INTERVAL milliseconds.  If
- * CACHE_TIME is false, we will always refresh the current time so this
- * function has no effect. */
-void
-time_refresh(void)
-{
-    monotonic_clock.tick = wall_clock.tick = true;
-}
-
-static void
 time_timespec__(struct clock *c, struct timespec *ts)
 {
-    time_init();
-    for (;;) {
-        /* Use the cached time by preference, but fall through if there's been
-         * a clock tick.  */
-        ovs_rwlock_rdlock(&c->rwlock);
-        if (c->stopped || !c->tick) {
-            timespec_add(ts, &c->cache, &c->warp);
-            ovs_rwlock_unlock(&c->rwlock);
-            return;
-        }
-        ovs_rwlock_unlock(&c->rwlock);
+    bool slow_path;
 
-        /* Refresh the cache. */
-        ovs_rwlock_wrlock(&c->rwlock);
-        if (c->tick) {
-            c->tick = false;
-            xclock_gettime(c->id, &c->cache);
+    time_init();
+
+    atomic_read_explicit(&c->slow_path, &slow_path, memory_order_relaxed);
+    if (!slow_path) {
+        xclock_gettime(c->id, ts);
+    } else {
+        struct timespec warp;
+        struct timespec cache;
+        bool stopped;
+
+        ovs_mutex_lock(&c->mutex);
+        stopped = c->stopped;
+        warp = c->warp;
+        cache = c->cache;
+        ovs_mutex_unlock(&c->mutex);
+
+        if (!stopped) {
+            xclock_gettime(c->id, &cache);
         }
-        ovs_rwlock_unlock(&c->rwlock);
+        timespec_add(ts, &cache, &warp);
     }
 }
 
@@ -268,7 +213,6 @@ time_alarm(unsigned int secs)
 
     assert_single_threaded();
     time_init();
-    time_refresh();
 
     now = time_msec();
     msecs = secs * 1000LL;
@@ -286,8 +230,6 @@ time_alarm(unsigned int secs)
  *        timeout is reached.  (Because of this property, this function will
  *        never return -EINTR.)
  *
- *      - As a side effect, refreshes the current time (like time_refresh()).
- *
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
 time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
@@ -295,18 +237,15 @@ time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
 {
     long long int *last_wakeup = last_wakeup_get();
     long long int start;
-    sigset_t oldsigs;
-    bool blocked;
     int retval;
 
     time_init();
-    time_refresh();
+    coverage_clear();
+    coverage_run();
     if (*last_wakeup) {
         log_poll_interval(*last_wakeup);
     }
-    coverage_clear();
     start = time_msec();
-    blocked = false;
 
     timeout_when = MIN(timeout_when, deadline);
 
@@ -327,7 +266,6 @@ time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
             retval = -errno;
         }
 
-        time_refresh();
         if (deadline <= time_msec()) {
             fatal_signal_handler(SIGALRM);
             if (retval < 0) {
@@ -339,40 +277,11 @@ time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
         if (retval != -EINTR) {
             break;
         }
-
-        if (!blocked && CACHE_TIME) {
-            block_sigalrm(&oldsigs);
-            blocked = true;
-        }
-    }
-    if (blocked) {
-        unblock_sigalrm(&oldsigs);
     }
     *last_wakeup = time_msec();
     refresh_rusage();
     *elapsed = *last_wakeup - start;
     return retval;
-}
-
-static void
-sigalrm_handler(int sig_nr OVS_UNUSED)
-{
-    monotonic_clock.tick = wall_clock.tick = true;
-}
-
-static void
-block_sigalrm(sigset_t *oldsigs)
-{
-    sigset_t sigalrm;
-    sigemptyset(&sigalrm);
-    sigaddset(&sigalrm, SIGALRM);
-    xpthread_sigmask(SIG_BLOCK, &sigalrm, oldsigs);
-}
-
-static void
-unblock_sigalrm(const sigset_t *oldsigs)
-{
-    xpthread_sigmask(SIG_SETMASK, oldsigs, NULL);
 }
 
 long long int
@@ -414,6 +323,19 @@ xclock_gettime(clock_t id, struct timespec *ts)
     }
 }
 
+/* Makes threads wait on timewarp_seq and be waken up when time is warped.
+ * This function will be no-op unless timeval_dummy_register() is called. */
+void
+timewarp_wait(void)
+{
+    if (timewarp_enabled) {
+        uint64_t *last_seq = last_seq_get();
+
+        *last_seq = seq_read(timewarp_seq);
+        seq_wait(timewarp_seq, *last_seq);
+    }
+}
+
 static long long int
 timeval_diff_msec(const struct timeval *a, const struct timeval *b)
 {
@@ -437,14 +359,24 @@ timespec_add(struct timespec *sum,
     *sum = tmp;
 }
 
+static bool
+is_warped(const struct clock *c)
+{
+    bool warped;
+
+    ovs_mutex_lock(&c->mutex);
+    warped = monotonic_clock.warp.tv_sec || monotonic_clock.warp.tv_nsec;
+    ovs_mutex_unlock(&c->mutex);
+
+    return warped;
+}
+
 static void
 log_poll_interval(long long int last_wakeup)
 {
     long long int interval = time_msec() - last_wakeup;
 
-    if (interval >= 1000
-        && !monotonic_clock.warp.tv_sec
-        && !monotonic_clock.warp.tv_nsec) {
+    if (interval >= 1000 && !is_warped(&monotonic_clock)) {
         const struct rusage *last_rusage = get_recent_rusage();
         struct rusage rusage;
 
@@ -568,9 +500,11 @@ timeval_stop_cb(struct unixctl_conn *conn,
                  int argc OVS_UNUSED, const char *argv[] OVS_UNUSED,
                  void *aux OVS_UNUSED)
 {
-    ovs_rwlock_wrlock(&monotonic_clock.rwlock);
+    ovs_mutex_lock(&monotonic_clock.mutex);
+    atomic_store(&monotonic_clock.slow_path, true);
     monotonic_clock.stopped = true;
-    ovs_rwlock_unlock(&monotonic_clock.rwlock);
+    xclock_gettime(monotonic_clock.id, &monotonic_clock.cache);
+    ovs_mutex_unlock(&monotonic_clock.mutex);
 
     unixctl_command_reply(conn, NULL);
 }
@@ -596,16 +530,19 @@ timeval_warp_cb(struct unixctl_conn *conn,
     ts.tv_sec = msecs / 1000;
     ts.tv_nsec = (msecs % 1000) * 1000 * 1000;
 
-    ovs_rwlock_wrlock(&monotonic_clock.rwlock);
+    ovs_mutex_lock(&monotonic_clock.mutex);
+    atomic_store(&monotonic_clock.slow_path, true);
     timespec_add(&monotonic_clock.warp, &monotonic_clock.warp, &ts);
-    ovs_rwlock_unlock(&monotonic_clock.rwlock);
-
+    ovs_mutex_unlock(&monotonic_clock.mutex);
+    seq_change(timewarp_seq);
+    poll(NULL, 0, 10); /* give threads (eg. monitor) some chances to run */
     unixctl_command_reply(conn, "warped");
 }
 
 void
 timeval_dummy_register(void)
 {
+    timewarp_enabled = true;
     unixctl_command_register("time/stop", "", 0, 0, timeval_stop_cb, NULL);
     unixctl_command_register("time/warp", "MSECS", 1, 1,
                              timeval_warp_cb, NULL);

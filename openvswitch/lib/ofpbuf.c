@@ -276,7 +276,7 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
         break;
 
     case OFPBUF_STACK:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case OFPBUF_STUB:
         b->source = OFPBUF_MALLOC;
@@ -285,7 +285,7 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
         break;
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 
     b->allocated = new_allocated;
@@ -359,6 +359,24 @@ ofpbuf_padto(struct ofpbuf *b, size_t length)
     }
 }
 
+/* Shifts all of the data within the allocated space in 'b' by 'delta' bytes.
+ * For example, a 'delta' of 1 would cause each byte of data to move one byte
+ * forward (from address 'p' to 'p+1'), and a 'delta' of -1 would cause each
+ * byte to move one byte backward (from 'p' to 'p-1'). */
+void
+ofpbuf_shift(struct ofpbuf *b, int delta)
+{
+    ovs_assert(delta > 0 ? delta <= ofpbuf_tailroom(b)
+               : delta < 0 ? -delta <= ofpbuf_headroom(b)
+               : true);
+
+    if (delta != 0) {
+        char *dst = (char *) b->data + delta;
+        memmove(dst, b->data, b->size);
+        b->data = dst;
+    }
+}
+
 /* Appends 'size' bytes of data to the tail end of 'b', reallocating and
  * copying its data if necessary.  Returns a pointer to the first byte of the
  * new data, which is left uninitialized. */
@@ -407,7 +425,7 @@ ofpbuf_put_hex(struct ofpbuf *b, const char *s, size_t *n)
         uint8_t byte;
         bool ok;
 
-        s += strspn(s, " ");
+        s += strspn(s, " \t\r\n");
         byte = hexits_value(s, 2, &ok);
         if (!ok) {
             if (n) {
@@ -429,6 +447,17 @@ ofpbuf_reserve(struct ofpbuf *b, size_t size)
     ovs_assert(!b->size);
     ofpbuf_prealloc_tailroom(b, size);
     b->data = (char*)b->data + size;
+}
+
+/* Reserves 'size' bytes of headroom so that they can be later allocated with
+ * ofpbuf_push_uninit() without reallocating the ofpbuf. */
+void
+ofpbuf_reserve_with_tailroom(struct ofpbuf *b, size_t headroom,
+                             size_t tailroom)
+{
+    ovs_assert(!b->size);
+    ofpbuf_prealloc_tailroom(b, headroom + tailroom);
+    b->data = (char*)b->data + headroom;
 }
 
 /* Prefixes 'size' bytes to the head end of 'b', reallocating and copying its
@@ -553,7 +582,7 @@ ofpbuf_to_string(const struct ofpbuf *b, size_t maxbytes)
     struct ds s;
 
     ds_init(&s);
-    ds_put_format(&s, "size=%zu, allocated=%zu, head=%zu, tail=%zu\n",
+    ds_put_format(&s, "size=%"PRIuSIZE", allocated=%"PRIuSIZE", head=%"PRIuSIZE", tail=%"PRIuSIZE"\n",
                   b->size, b->allocated,
                   ofpbuf_headroom(b), ofpbuf_tailroom(b));
     ds_put_hex_dump(&s, b->data, MIN(b->size, maxbytes), 0, false);

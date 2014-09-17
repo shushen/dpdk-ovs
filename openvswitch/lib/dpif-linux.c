@@ -72,8 +72,11 @@ struct dpif_linux_dp {
 
     /* Attributes. */
     const char *name;                  /* OVS_DP_ATTR_NAME. */
-    const uint32_t *upcall_pid;        /* OVS_DP_UPCALL_PID. */
+    const uint32_t *upcall_pid;        /* OVS_DP_ATTR_UPCALL_PID. */
+    uint32_t user_features;            /* OVS_DP_ATTR_USER_FEATURES */
     struct ovs_dp_stats stats;         /* OVS_DP_ATTR_STATS. */
+    struct ovs_dp_megaflow_stats megaflow_stats;
+                                       /* OVS_DP_ATTR_MEGAFLOW_STATS.*/
 };
 
 static void dpif_linux_dp_init(struct dpif_linux_dp *);
@@ -149,6 +152,7 @@ struct dpif_linux {
 
     /* Change notification. */
     struct nl_sock *port_notifier; /* vport multicast group subscriber. */
+    bool refresh_channels;
 };
 
 static struct vlog_rate_limit error_rl = VLOG_RATE_LIMIT_INIT(9999, 5);
@@ -170,6 +174,7 @@ static int dpif_linux_init(void);
 static int open_dpif(const struct dpif_linux_dp *, struct dpif **);
 static uint32_t dpif_linux_port_get_pid(const struct dpif *,
                                         odp_port_t port_no);
+static int dpif_linux_refresh_channels(struct dpif *);
 
 static void dpif_linux_vport_to_ofpbuf(const struct dpif_linux_vport *,
                                        struct ofpbuf *);
@@ -227,9 +232,11 @@ dpif_linux_open(const struct dpif_class *class OVS_UNUSED, const char *name,
         upcall_pid = 0;
         dp_request.upcall_pid = &upcall_pid;
     } else {
-        dp_request.cmd = OVS_DP_CMD_GET;
+        /* Use OVS_DP_CMD_SET to report user features */
+        dp_request.cmd = OVS_DP_CMD_SET;
     }
     dp_request.name = name;
+    dp_request.user_features |= OVS_DP_F_UNALIGNED;
     error = dpif_linux_dp_transact(&dp_request, &dp, &buf);
     if (error) {
         return error;
@@ -398,6 +405,16 @@ dpif_linux_destroy(struct dpif *dpif_)
     return dpif_linux_dp_transact(&dp, NULL, NULL);
 }
 
+static void
+dpif_linux_run(struct dpif *dpif_)
+{
+    struct dpif_linux *dpif = dpif_linux_cast(dpif_);
+    if (dpif->refresh_channels) {
+        dpif->refresh_channels = false;
+        dpif_linux_refresh_channels(dpif_);
+    }
+}
+
 static int
 dpif_linux_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
 {
@@ -411,6 +428,8 @@ dpif_linux_get_stats(const struct dpif *dpif_, struct dpif_dp_stats *stats)
         stats->n_missed = dp.stats.n_missed;
         stats->n_lost   = dp.stats.n_lost;
         stats->n_flows  = dp.stats.n_flows;
+        stats->n_masks  = dp.megaflow_stats.n_masks;
+        stats->n_mask_hit  = dp.megaflow_stats.n_mask_hit;
         ofpbuf_delete(buf);
     }
     return error;
@@ -422,8 +441,11 @@ get_vport_type(const struct dpif_linux_vport *vport)
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
 
     switch (vport->type) {
-    case OVS_VPORT_TYPE_NETDEV:
-        return "system";
+    case OVS_VPORT_TYPE_NETDEV: {
+        const char *type = netdev_get_type_from_name(vport->name);
+
+        return type ? type : "system";
+    }
 
     case OVS_VPORT_TYPE_INTERNAL:
         return "internal";
@@ -672,7 +694,8 @@ dpif_linux_port_get_pid(const struct dpif *dpif_, odp_port_t port_no)
         /* The ODPP_NONE "reserved" port number uses the "ovs-system"'s
          * channel, since it is not heavily loaded. */
         uint32_t idx = port_idx >= dpif->uc_array_size ? 0 : port_idx;
-        pid = nl_sock_pid(dpif->channels[idx].sock);
+        const struct nl_sock *sock = dpif->channels[idx].sock;
+        pid = sock ? nl_sock_pid(sock) : 0;
     }
     ovs_mutex_unlock(&dpif->upcall_lock);
 
@@ -695,26 +718,52 @@ struct dpif_linux_port_state {
     struct nl_dump dump;
 };
 
-static int
-dpif_linux_port_dump_start(const struct dpif *dpif_, void **statep)
+static void
+dpif_linux_port_dump_start__(const struct dpif *dpif_, struct nl_dump *dump)
 {
     const struct dpif_linux *dpif = dpif_linux_cast(dpif_);
-    struct dpif_linux_port_state *state;
     struct dpif_linux_vport request;
     struct ofpbuf *buf;
 
-    *statep = state = xmalloc(sizeof *state);
-
     dpif_linux_vport_init(&request);
-    request.cmd = OVS_DP_CMD_GET;
+    request.cmd = OVS_VPORT_CMD_GET;
     request.dp_ifindex = dpif->dp_ifindex;
 
     buf = ofpbuf_new(1024);
     dpif_linux_vport_to_ofpbuf(&request, buf);
-    nl_dump_start(&state->dump, NETLINK_GENERIC, buf);
+    nl_dump_start(dump, NETLINK_GENERIC, buf);
     ofpbuf_delete(buf);
+}
+
+static int
+dpif_linux_port_dump_start(const struct dpif *dpif, void **statep)
+{
+    struct dpif_linux_port_state *state;
+
+    *statep = state = xmalloc(sizeof *state);
+    dpif_linux_port_dump_start__(dpif, &state->dump);
 
     return 0;
+}
+
+static int
+dpif_linux_port_dump_next__(const struct dpif *dpif_, struct nl_dump *dump,
+                            struct dpif_linux_vport *vport)
+{
+    struct dpif_linux *dpif = dpif_linux_cast(dpif_);
+    struct ofpbuf buf;
+    int error;
+
+    if (!nl_dump_next(dump, &buf)) {
+        return EOF;
+    }
+
+    error = dpif_linux_vport_from_ofpbuf(vport, &buf);
+    if (error) {
+        VLOG_WARN_RL(&error_rl, "%s: failed to parse vport record (%s)",
+                     dpif_name(&dpif->dpif), ovs_strerror(error));
+    }
+    return error;
 }
 
 static int
@@ -723,18 +772,12 @@ dpif_linux_port_dump_next(const struct dpif *dpif OVS_UNUSED, void *state_,
 {
     struct dpif_linux_port_state *state = state_;
     struct dpif_linux_vport vport;
-    struct ofpbuf buf;
     int error;
 
-    if (!nl_dump_next(&state->dump, &buf)) {
-        return EOF;
-    }
-
-    error = dpif_linux_vport_from_ofpbuf(&vport, &buf);
+    error = dpif_linux_port_dump_next__(dpif, &state->dump, &vport);
     if (error) {
         return error;
     }
-
     dpif_port->name = CONST_CAST(char *, vport.name);
     dpif_port->type = CONST_CAST(char *, get_vport_type(&vport));
     dpif_port->port_no = vport.port_no;
@@ -797,6 +840,9 @@ dpif_linux_port_poll(const struct dpif *dpif_, char **devnamep)
                         || vport.cmd == OVS_VPORT_CMD_SET)) {
                     VLOG_DBG("port_changed: dpif:%s vport:%s cmd:%"PRIu8,
                              dpif->dpif.full_name, vport.name, vport.cmd);
+                    if (vport.cmd == OVS_VPORT_CMD_DEL) {
+                        dpif->refresh_channels = true;
+                    }
                     *devnamep = xstrdup(vport.name);
                     ofpbuf_uninit(&buf);
                     return 0;
@@ -963,7 +1009,7 @@ dpif_linux_flow_dump_start(const struct dpif *dpif_, void **statep)
     *statep = state = xmalloc(sizeof *state);
 
     dpif_linux_flow_init(&request);
-    request.cmd = OVS_DP_CMD_GET;
+    request.cmd = OVS_FLOW_CMD_GET;
     request.dp_ifindex = dpif->dp_ifindex;
 
     buf = ofpbuf_new(1024);
@@ -1153,7 +1199,7 @@ dpif_linux_operate__(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
             break;
 
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
     }
 
@@ -1214,7 +1260,7 @@ dpif_linux_operate__(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
             break;
 
         default:
-            NOT_REACHED();
+            OVS_NOT_REACHED();
         }
 
         ofpbuf_uninit(&aux->request);
@@ -1233,45 +1279,59 @@ dpif_linux_operate(struct dpif *dpif, struct dpif_op **ops, size_t n_ops)
     }
 }
 
+/* Synchronizes 'dpif->channels' with the set of vports currently in 'dpif' in
+ * the kernel, by adding a new channel for any kernel vport that lacks one and
+ * deleting any channels that have no backing kernel vports. */
 static int
-dpif_linux_recv_set__(struct dpif *dpif_, bool enable)
+dpif_linux_refresh_channels(struct dpif *dpif_)
 {
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
+    unsigned long int *keep_channels;
+    struct dpif_linux_vport vport;
+    size_t keep_channels_nbits;
+    struct nl_dump dump;
+    int retval = 0;
+    size_t i;
 
-    if ((dpif->epoll_fd >= 0) == enable) {
-        return 0;
+    /* To start with, we need an epoll fd. */
+    if (dpif->epoll_fd < 0) {
+        dpif->epoll_fd = epoll_create(10);
+        if (dpif->epoll_fd < 0) {
+            return errno;
+        }
     }
 
-    if (!enable) {
-        destroy_channels(dpif);
-    } else {
-        struct dpif_port_dump port_dump;
-        struct dpif_port port;
+    keep_channels_nbits = dpif->uc_array_size;
+    keep_channels = bitmap_allocate(keep_channels_nbits);
 
-        if (dpif->epoll_fd < 0) {
-            dpif->epoll_fd = epoll_create(10);
-            if (dpif->epoll_fd < 0) {
-                return errno;
+    dpif->n_events = dpif->event_offset = 0;
+
+    dpif_linux_port_dump_start__(dpif_, &dump);
+    while (!dpif_linux_port_dump_next__(dpif_, &dump, &vport)) {
+        uint32_t port_no = odp_to_u32(vport.port_no);
+        struct nl_sock *sock = (port_no < dpif->uc_array_size
+                                ? dpif->channels[port_no].sock
+                                : NULL);
+        bool new_sock = !sock;
+        int error;
+
+        if (new_sock) {
+            error = nl_sock_create(NETLINK_GENERIC, &sock);
+            if (error) {
+                retval = error;
+                goto error;
             }
         }
 
-        DPIF_PORT_FOR_EACH (&port, &port_dump, &dpif->dpif) {
+        /* Configure the vport to deliver misses to 'sock'. */
+        if (!vport.upcall_pid || *vport.upcall_pid != nl_sock_pid(sock)) {
+            uint32_t upcall_pid = nl_sock_pid(sock);
             struct dpif_linux_vport vport_request;
-            struct nl_sock *sock;
-            uint32_t upcall_pid;
-            int error;
-
-            error = nl_sock_create(NETLINK_GENERIC, &sock);
-            if (error) {
-                return error;
-            }
-
-            upcall_pid = nl_sock_pid(sock);
 
             dpif_linux_vport_init(&vport_request);
             vport_request.cmd = OVS_VPORT_CMD_SET;
             vport_request.dp_ifindex = dpif->dp_ifindex;
-            vport_request.port_no = port.port_no;
+            vport_request.port_no = vport.port_no;
             vport_request.upcall_pid = &upcall_pid;
             error = dpif_linux_vport_transact(&vport_request, NULL, NULL);
             if (!error) {
@@ -1282,27 +1342,63 @@ dpif_linux_recv_set__(struct dpif *dpif_, bool enable)
                 VLOG_WARN_RL(&error_rl,
                              "%s: failed to set upcall pid on port: %s",
                              dpif_name(&dpif->dpif), ovs_strerror(error));
-                nl_sock_destroy(sock);
 
-                if (error == ENODEV || error == ENOENT) {
-                    /* This device isn't there, but keep trying the others. */
-                    continue;
+                if (error != ENODEV && error != ENOENT) {
+                    retval = error;
                 } else {
-                    return error;
+                    /* The vport isn't really there, even though the dump says
+                     * it is.  Probably we just hit a race after a port
+                     * disappeared. */
                 }
-            }
-
-            error = add_channel(dpif, port.port_no, sock);
-            if (error) {
-                VLOG_INFO("%s: could not add channel for port %s",
-                          dpif_name(dpif_), port.name);
-                nl_sock_destroy(sock);
-                return error;
+                goto error;
             }
         }
-    }
 
-    return 0;
+        if (new_sock) {
+            error = add_channel(dpif, vport.port_no, sock);
+            if (error) {
+                VLOG_INFO("%s: could not add channel for port %s",
+                          dpif_name(dpif_), vport.name);
+                retval = error;
+                goto error;
+            }
+        }
+
+        if (port_no < keep_channels_nbits) {
+            bitmap_set1(keep_channels, port_no);
+        }
+        continue;
+
+    error:
+        nl_sock_destroy(sock);
+    }
+    nl_dump_done(&dump);
+
+    /* Discard any saved channels that we didn't reuse. */
+    for (i = 0; i < keep_channels_nbits; i++) {
+        if (!bitmap_is_set(keep_channels, i)) {
+            nl_sock_destroy(dpif->channels[i].sock);
+            dpif->channels[i].sock = NULL;
+        }
+    }
+    free(keep_channels);
+
+    return retval;
+}
+
+static int
+dpif_linux_recv_set__(struct dpif *dpif_, bool enable)
+{
+    struct dpif_linux *dpif = dpif_linux_cast(dpif_);
+
+    if ((dpif->epoll_fd >= 0) == enable) {
+        return 0;
+    } else if (!enable) {
+        destroy_channels(dpif);
+        return 0;
+    } else {
+        return dpif_linux_refresh_channels(dpif_);
+    }
 }
 
 static int
@@ -1370,16 +1466,22 @@ parse_odp_packet(struct ofpbuf *buf, struct dpif_upcall *upcall,
         return EINVAL;
     }
 
-    memset(upcall, 0, sizeof *upcall);
+    /* (Re)set ALL fields of '*upcall' on successful return. */
     upcall->type = type;
-    upcall->packet = buf;
-    upcall->packet->data = CONST_CAST(struct nlattr *,
-                                      nl_attr_get(a[OVS_PACKET_ATTR_PACKET]));
-    upcall->packet->size = nl_attr_get_size(a[OVS_PACKET_ATTR_PACKET]);
     upcall->key = CONST_CAST(struct nlattr *,
                              nl_attr_get(a[OVS_PACKET_ATTR_KEY]));
     upcall->key_len = nl_attr_get_size(a[OVS_PACKET_ATTR_KEY]);
     upcall->userdata = a[OVS_PACKET_ATTR_USERDATA];
+
+    /* Allow overwriting the netlink attribute header without reallocating. */
+    ofpbuf_use_stub(&upcall->packet,
+                    CONST_CAST(struct nlattr *,
+                               nl_attr_get(a[OVS_PACKET_ATTR_PACKET])) - 1,
+                    nl_attr_get_size(a[OVS_PACKET_ATTR_PACKET]) +
+                    sizeof(struct nlattr));
+    upcall->packet.data = (char *)upcall->packet.data + sizeof(struct nlattr);
+    upcall->packet.size = nl_attr_get_size(a[OVS_PACKET_ATTR_PACKET]);
+
     *dp_ifindex = ovs_header->dp_ifindex;
 
     return 0;
@@ -1509,7 +1611,7 @@ const struct dpif_class dpif_linux_class = {
     dpif_linux_open,
     dpif_linux_close,
     dpif_linux_destroy,
-    NULL,                       /* run */
+    dpif_linux_run,
     NULL,                       /* wait */
     dpif_linux_get_stats,
     dpif_linux_port_add,
@@ -1770,6 +1872,9 @@ dpif_linux_dp_from_ofpbuf(struct dpif_linux_dp *dp, const struct ofpbuf *buf)
         [OVS_DP_ATTR_NAME] = { .type = NL_A_STRING, .max_len = IFNAMSIZ },
         [OVS_DP_ATTR_STATS] = { NL_POLICY_FOR(struct ovs_dp_stats),
                                 .optional = true },
+        [OVS_DP_ATTR_MEGAFLOW_STATS] = {
+                        NL_POLICY_FOR(struct ovs_dp_megaflow_stats),
+                        .optional = true },
     };
 
     struct nlattr *a[ARRAY_SIZE(ovs_datapath_policy)];
@@ -1801,6 +1906,13 @@ dpif_linux_dp_from_ofpbuf(struct dpif_linux_dp *dp, const struct ofpbuf *buf)
                sizeof dp->stats);
     }
 
+    if (a[OVS_DP_ATTR_MEGAFLOW_STATS]) {
+        /* Can't use structure assignment because Netlink doesn't ensure
+         * sufficient alignment for 64-bit members. */
+        memcpy(&dp->megaflow_stats, nl_attr_get(a[OVS_DP_ATTR_MEGAFLOW_STATS]),
+               sizeof dp->megaflow_stats);
+    }
+
     return 0;
 }
 
@@ -1825,6 +1937,10 @@ dpif_linux_dp_to_ofpbuf(const struct dpif_linux_dp *dp, struct ofpbuf *buf)
         nl_msg_put_u32(buf, OVS_DP_ATTR_UPCALL_PID, *dp->upcall_pid);
     }
 
+    if (dp->user_features) {
+        nl_msg_put_u32(buf, OVS_DP_ATTR_USER_FEATURES, dp->user_features);
+    }
+
     /* Skip OVS_DP_ATTR_STATS since we never have a reason to serialize it. */
 }
 
@@ -1833,6 +1949,8 @@ static void
 dpif_linux_dp_init(struct dpif_linux_dp *dp)
 {
     memset(dp, 0, sizeof *dp);
+    dp->megaflow_stats.n_masks = UINT32_MAX;
+    dp->megaflow_stats.n_mask_hit = UINT64_MAX;
 }
 
 static void
@@ -1871,11 +1989,11 @@ dpif_linux_dp_transact(const struct dpif_linux_dp *request,
     ofpbuf_delete(request_buf);
 
     if (reply) {
+        dpif_linux_dp_init(reply);
         if (!error) {
             error = dpif_linux_dp_from_ofpbuf(reply, *bufp);
         }
         if (error) {
-            dpif_linux_dp_init(reply);
             ofpbuf_delete(*bufp);
             *bufp = NULL;
         }
@@ -2081,7 +2199,7 @@ report_loss(struct dpif *dpif_, struct dpif_channel *ch)
                       time_msec() - ch->last_poll);
     }
 
-    VLOG_WARN("%s: lost packet on channel %td%s",
+    VLOG_WARN("%s: lost packet on channel %"PRIdPTR"%s",
               dpif_name(dpif_), ch - dpif->channels, ds_cstr(&s));
     ds_destroy(&s);
 }

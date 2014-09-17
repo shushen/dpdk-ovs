@@ -1117,9 +1117,10 @@ create_action_set_datapath(struct ovdk_action *dpif_actions,
      case OVS_KEY_ATTR_TUNNEL:
      case OVS_KEY_ATTR_SCTP:
      case OVS_KEY_ATTR_MPLS:
+     case OVS_KEY_ATTR_TCP_FLAGS:
      case __OVS_KEY_ATTR_MAX:
      default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -1670,7 +1671,6 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
         }
 
         memset(upcall, 0, sizeof(*upcall));
-        upcall->packet = buf;
 
         switch (info.cmd) {
         case OVS_PACKET_CMD_MISS:
@@ -1699,6 +1699,8 @@ dpif_dpdk_recv(struct dpif *dpif_ OVS_UNUSED,
 
         buf->size -= userdata_len;
         upcall->userdata = ofpbuf_tail(buf);
+
+        upcall->packet = *buf;
 
         /* free memory allocated in ofpbuf key */
         ofpbuf_uninit(&key);

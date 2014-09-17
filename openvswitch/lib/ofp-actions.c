@@ -35,6 +35,54 @@ static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
 /* Converting OpenFlow 1.0 to ofpacts. */
 
+union ofp_action {
+    ovs_be16 type;
+    struct ofp_action_header header;
+    struct ofp_action_vendor_header vendor;
+    struct ofp10_action_output output10;
+    struct ofp_action_vlan_vid vlan_vid;
+    struct ofp_action_vlan_pcp vlan_pcp;
+    struct ofp_action_nw_addr nw_addr;
+    struct ofp_action_nw_tos nw_tos;
+    struct ofp11_action_nw_ecn nw_ecn;
+    struct ofp11_action_nw_ttl nw_ttl;
+    struct ofp_action_tp_port tp_port;
+    struct ofp_action_dl_addr dl_addr;
+    struct ofp10_action_enqueue enqueue;
+    struct ofp11_action_output ofp11_output;
+    struct ofp11_action_push push;
+    struct ofp11_action_pop_mpls ofp11_pop_mpls;
+    struct ofp11_action_set_queue ofp11_set_queue;
+    struct ofp11_action_mpls_label ofp11_mpls_label;
+    struct ofp11_action_mpls_tc ofp11_mpls_tc;
+    struct ofp11_action_mpls_ttl ofp11_mpls_ttl;
+    struct ofp11_action_group group;
+    struct ofp12_action_set_field set_field;
+    struct nx_action_header nxa_header;
+    struct nx_action_resubmit resubmit;
+    struct nx_action_set_tunnel set_tunnel;
+    struct nx_action_set_tunnel64 set_tunnel64;
+    struct nx_action_write_metadata write_metadata;
+    struct nx_action_set_queue set_queue;
+    struct nx_action_reg_move reg_move;
+    struct nx_action_reg_load reg_load;
+    struct nx_action_stack stack;
+    struct nx_action_note note;
+    struct nx_action_multipath multipath;
+    struct nx_action_bundle bundle;
+    struct nx_action_output_reg output_reg;
+    struct nx_action_cnt_ids cnt_ids;
+    struct nx_action_fin_timeout fin_timeout;
+    struct nx_action_controller controller;
+    struct nx_action_push_mpls push_mpls;
+    struct nx_action_mpls_ttl mpls_ttl;
+    struct nx_action_pop_mpls pop_mpls;
+    struct nx_action_sample sample;
+    struct nx_action_learn learn;
+    struct nx_action_mpls_label mpls_label;
+    struct nx_action_mpls_tc mpls_tc;
+};
+
 static enum ofperr
 output_from_openflow10(const struct ofp10_action_output *oao,
                        struct ofpbuf *out)
@@ -45,7 +93,7 @@ output_from_openflow10(const struct ofp10_action_output *oao,
     output->port = u16_to_ofp(ntohs(oao->port));
     output->max_len = ntohs(oao->max_len);
 
-    return ofputil_check_output_port(output->port, OFPP_MAX);
+    return ofpact_check_output_port(output->port, OFPP_MAX);
 }
 
 static enum ofperr
@@ -184,7 +232,7 @@ dec_ttl_from_openflow(struct ofpbuf *out, enum ofputil_action_code compat)
 
 static enum ofperr
 dec_ttl_cnt_ids_from_openflow(const struct nx_action_cnt_ids *nac_ids,
-                      struct ofpbuf *out)
+                              struct ofpbuf *out)
 {
     struct ofpact_cnt_ids *ids;
     size_t ids_size;
@@ -200,8 +248,8 @@ dec_ttl_cnt_ids_from_openflow(const struct nx_action_cnt_ids *nac_ids,
     }
 
     if (ids_size < ids->n_controllers * sizeof(ovs_be16)) {
-        VLOG_WARN_RL(&rl, "Nicira action dec_ttl_cnt_ids only has %zu bytes "
-                     "allocated for controller ids.  %zu bytes are required for "
+        VLOG_WARN_RL(&rl, "Nicira action dec_ttl_cnt_ids only has %"PRIuSIZE" bytes "
+                     "allocated for controller ids.  %"PRIuSIZE" bytes are required for "
                      "%"PRIu16" controllers.", ids_size,
                      ids->n_controllers * sizeof(ovs_be16), ids->n_controllers);
         return OFPERR_OFPBAC_BAD_LEN;
@@ -238,9 +286,25 @@ sample_from_openflow(const struct nx_action_sample *nas,
 }
 
 static enum ofperr
+push_mpls_from_openflow(ovs_be16 ethertype, enum ofpact_mpls_position position,
+                        struct ofpbuf *out)
+{
+    struct ofpact_push_mpls *oam;
+
+    if (!eth_type_mpls(ethertype)) {
+        return OFPERR_OFPBAC_BAD_ARGUMENT;
+    }
+    oam = ofpact_put_PUSH_MPLS(out);
+    oam->ethertype = ethertype;
+    oam->position = position;
+
+    return 0;
+}
+
+static enum ofperr
 decode_nxast_action(const union ofp_action *a, enum ofputil_action_code *code)
 {
-    const struct nx_action_header *nah = (const struct nx_action_header *) a;
+    const struct nx_action_header *nah = &a->nxa_header;
     uint16_t len = ntohs(a->header.len);
 
     if (len < sizeof(struct nx_action_header)) {
@@ -260,7 +324,7 @@ decode_nxast_action(const union ofp_action *a, enum ofputil_action_code *code)
             } else {                                    \
                 return OFPERR_OFPBAC_BAD_LEN;           \
             }                                           \
-            NOT_REACHED();
+            OVS_NOT_REACHED();
 #include "ofp-util.def"
 
     case CONSTANT_HTONS(NXAST_SNAT__OBSOLETE):
@@ -275,8 +339,8 @@ decode_nxast_action(const union ofp_action *a, enum ofputil_action_code *code)
  * '*code' is indeterminate.
  *
  * The caller must have already verified that 'a''s length is potentially
- * correct (that is, a->header.len is nonzero and a multiple of sizeof(union
- * ofp_action) and no longer than the amount of space allocated to 'a').
+ * correct (that is, a->header.len is nonzero and a multiple of
+ * OFP_ACTION_ALIGN and no longer than the amount of space allocated to 'a').
  *
  * This function verifies that 'a''s length is correct for the type of action
  * that it represents. */
@@ -308,12 +372,6 @@ static enum ofperr
 ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
                   struct ofpbuf *out)
 {
-    const struct nx_action_resubmit *nar;
-    const struct nx_action_set_tunnel *nast;
-    const struct nx_action_set_queue *nasq;
-    const struct nx_action_note *nan;
-    const struct nx_action_set_tunnel64 *nast64;
-    const struct nx_action_write_metadata *nawm;
     struct ofpact_tunnel *tunnel;
     enum ofperr error = 0;
 
@@ -322,27 +380,24 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
 #define OFPAT10_ACTION(ENUM, STRUCT, NAME) case OFPUTIL_##ENUM:
 #define OFPAT11_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME) case OFPUTIL_##ENUM:
 #include "ofp-util.def"
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case OFPUTIL_NXAST_RESUBMIT:
-        resubmit_from_openflow((const struct nx_action_resubmit *) a, out);
+        resubmit_from_openflow(&a->resubmit, out);
         break;
 
     case OFPUTIL_NXAST_SET_TUNNEL:
-        nast = (const struct nx_action_set_tunnel *) a;
         tunnel = ofpact_put_SET_TUNNEL(out);
         tunnel->ofpact.compat = code;
-        tunnel->tun_id = ntohl(nast->tun_id);
+        tunnel->tun_id = ntohl(a->set_tunnel.tun_id);
         break;
 
     case OFPUTIL_NXAST_WRITE_METADATA:
-        nawm = ALIGNED_CAST(const struct nx_action_write_metadata *, a);
-        error = metadata_from_nxast(nawm, out);
+        error = metadata_from_nxast(&a->write_metadata, out);
         break;
 
     case OFPUTIL_NXAST_SET_QUEUE:
-        nasq = (const struct nx_action_set_queue *) a;
-        ofpact_put_SET_QUEUE(out)->queue_id = ntohl(nasq->queue_id);
+        ofpact_put_SET_QUEUE(out)->queue_id = ntohl(a->set_queue.queue_id);
         break;
 
     case OFPUTIL_NXAST_POP_QUEUE:
@@ -350,60 +405,51 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
         break;
 
     case OFPUTIL_NXAST_REG_MOVE:
-        error = nxm_reg_move_from_openflow(
-            (const struct nx_action_reg_move *) a, out);
+        error = nxm_reg_move_from_openflow(&a->reg_move, out);
         break;
 
     case OFPUTIL_NXAST_REG_LOAD:
-        error = nxm_reg_load_from_openflow(
-            ALIGNED_CAST(const struct nx_action_reg_load *, a), out);
+        error = nxm_reg_load_from_openflow(&a->reg_load, out);
         break;
 
     case OFPUTIL_NXAST_STACK_PUSH:
-        error = nxm_stack_push_from_openflow(
-            (const struct nx_action_stack *) a, out);
+        error = nxm_stack_push_from_openflow(&a->stack, out);
         break;
 
     case OFPUTIL_NXAST_STACK_POP:
-        error = nxm_stack_pop_from_openflow(
-            (const struct nx_action_stack *) a, out);
+        error = nxm_stack_pop_from_openflow(&a->stack, out);
         break;
 
     case OFPUTIL_NXAST_NOTE:
-        nan = (const struct nx_action_note *) a;
-        note_from_openflow(nan, out);
+        note_from_openflow(&a->note, out);
         break;
 
     case OFPUTIL_NXAST_SET_TUNNEL64:
-        nast64 = ALIGNED_CAST(const struct nx_action_set_tunnel64 *, a);
         tunnel = ofpact_put_SET_TUNNEL(out);
         tunnel->ofpact.compat = code;
-        tunnel->tun_id = ntohll(nast64->tun_id);
+        tunnel->tun_id = ntohll(a->set_tunnel64.tun_id);
         break;
 
     case OFPUTIL_NXAST_MULTIPATH:
-        error = multipath_from_openflow((const struct nx_action_multipath *) a,
+        error = multipath_from_openflow(&a->multipath,
                                         ofpact_put_MULTIPATH(out));
         break;
 
     case OFPUTIL_NXAST_BUNDLE:
     case OFPUTIL_NXAST_BUNDLE_LOAD:
-        error = bundle_from_openflow((const struct nx_action_bundle *) a, out);
+        error = bundle_from_openflow(&a->bundle, out);
         break;
 
     case OFPUTIL_NXAST_OUTPUT_REG:
-        error = output_reg_from_openflow(
-            (const struct nx_action_output_reg *) a, out);
+        error = output_reg_from_openflow(&a->output_reg, out);
         break;
 
     case OFPUTIL_NXAST_RESUBMIT_TABLE:
-        nar = (const struct nx_action_resubmit *) a;
-        error = resubmit_table_from_openflow(nar, out);
+        error = resubmit_table_from_openflow(&a->resubmit, out);
         break;
 
     case OFPUTIL_NXAST_LEARN:
-        error = learn_from_openflow(
-            ALIGNED_CAST(const struct nx_action_learn *, a), out);
+        error = learn_from_openflow(&a->learn, out);
         break;
 
     case OFPUTIL_NXAST_EXIT:
@@ -415,50 +461,47 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
         break;
 
     case OFPUTIL_NXAST_DEC_TTL_CNT_IDS:
-        error = dec_ttl_cnt_ids_from_openflow(
-                    (const struct nx_action_cnt_ids *) a, out);
+        error = dec_ttl_cnt_ids_from_openflow(&a->cnt_ids, out);
         break;
 
     case OFPUTIL_NXAST_FIN_TIMEOUT:
-        fin_timeout_from_openflow(
-            (const struct nx_action_fin_timeout *) a, out);
+        fin_timeout_from_openflow(&a->fin_timeout, out);
         break;
 
     case OFPUTIL_NXAST_CONTROLLER:
-        controller_from_openflow((const struct nx_action_controller *) a, out);
+        controller_from_openflow(&a->controller, out);
         break;
 
-    case OFPUTIL_NXAST_PUSH_MPLS: {
-        struct nx_action_push_mpls *nxapm = (struct nx_action_push_mpls *)a;
-        if (!eth_type_mpls(nxapm->ethertype)) {
-            return OFPERR_OFPBAC_BAD_ARGUMENT;
-        }
-        ofpact_put_PUSH_MPLS(out)->ethertype = nxapm->ethertype;
+    case OFPUTIL_NXAST_PUSH_MPLS:
+        error = push_mpls_from_openflow(a->push_mpls.ethertype,
+                                        OFPACT_MPLS_AFTER_VLAN, out);
         break;
-    }
 
-    case OFPUTIL_NXAST_SET_MPLS_TTL: {
-        struct nx_action_mpls_ttl *nxamt = (struct nx_action_mpls_ttl *)a;
-        ofpact_put_SET_MPLS_TTL(out)->ttl = nxamt->ttl;
+    case OFPUTIL_NXAST_SET_MPLS_LABEL:
+        ofpact_put_SET_MPLS_LABEL(out)->label = a->mpls_label.label;
         break;
-    }
+
+    case OFPUTIL_NXAST_SET_MPLS_TC:
+        ofpact_put_SET_MPLS_TC(out)->tc = a->mpls_tc.tc;
+        break;
+
+    case OFPUTIL_NXAST_SET_MPLS_TTL:
+        ofpact_put_SET_MPLS_TTL(out)->ttl = a->mpls_ttl.ttl;
+        break;
 
     case OFPUTIL_NXAST_DEC_MPLS_TTL:
         ofpact_put_DEC_MPLS_TTL(out);
         break;
 
-    case OFPUTIL_NXAST_POP_MPLS: {
-        struct nx_action_pop_mpls *nxapm = (struct nx_action_pop_mpls *)a;
-        if (eth_type_mpls(nxapm->ethertype)) {
+    case OFPUTIL_NXAST_POP_MPLS:
+        if (eth_type_mpls(a->pop_mpls.ethertype)) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_POP_MPLS(out)->ethertype = nxapm->ethertype;
+        ofpact_put_POP_MPLS(out)->ethertype = a->pop_mpls.ethertype;
         break;
-    }
 
     case OFPUTIL_NXAST_SAMPLE:
-        error = sample_from_openflow(
-            (const struct nx_action_sample *) a, out);
+        error = sample_from_openflow(&a->sample, out);
         break;
     }
 
@@ -466,10 +509,14 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
 }
 
 static enum ofperr
-ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
+ofpact_from_openflow10(const union ofp_action *a,
+                       enum ofp_version version OVS_UNUSED,
+                       struct ofpbuf *out)
 {
     enum ofputil_action_code code;
     enum ofperr error;
+    struct ofpact_vlan_vid *vlan_vid;
+    struct ofpact_vlan_pcp *vlan_pcp;
 
     error = decode_openflow10_action(a, &code);
     if (error) {
@@ -480,7 +527,7 @@ ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
     case OFPUTIL_ACTION_INVALID:
 #define OFPAT11_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME) case OFPUTIL_##ENUM:
 #include "ofp-util.def"
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case OFPUTIL_OFPAT10_OUTPUT:
         return output_from_openflow10(&a->output10, out);
@@ -489,28 +536,34 @@ ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
         if (a->vlan_vid.vlan_vid & ~htons(0xfff)) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_VLAN_VID(out)->vlan_vid = ntohs(a->vlan_vid.vlan_vid);
+        vlan_vid = ofpact_put_SET_VLAN_VID(out);
+        vlan_vid->vlan_vid = ntohs(a->vlan_vid.vlan_vid);
+        vlan_vid->push_vlan_if_needed = true;
+        vlan_vid->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT10_SET_VLAN_PCP:
         if (a->vlan_pcp.vlan_pcp & ~7) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_VLAN_PCP(out)->vlan_pcp = a->vlan_pcp.vlan_pcp;
+        vlan_pcp = ofpact_put_SET_VLAN_PCP(out);
+        vlan_pcp->vlan_pcp = a->vlan_pcp.vlan_pcp;
+        vlan_pcp->push_vlan_if_needed = true;
+        vlan_pcp->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT10_STRIP_VLAN:
-        ofpact_put_STRIP_VLAN(out);
+        ofpact_put_STRIP_VLAN(out)->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT10_SET_DL_SRC:
-        memcpy(ofpact_put_SET_ETH_SRC(out)->mac,
-               ((const struct ofp_action_dl_addr *) a)->dl_addr, ETH_ADDR_LEN);
+        memcpy(ofpact_put_SET_ETH_SRC(out)->mac, a->dl_addr.dl_addr,
+               ETH_ADDR_LEN);
         break;
 
     case OFPUTIL_OFPAT10_SET_DL_DST:
-        memcpy(ofpact_put_SET_ETH_DST(out)->mac,
-               ((const struct ofp_action_dl_addr *) a)->dl_addr, ETH_ADDR_LEN);
+        memcpy(ofpact_put_SET_ETH_DST(out)->mac, a->dl_addr.dl_addr,
+               ETH_ADDR_LEN);
         break;
 
     case OFPUTIL_OFPAT10_SET_NW_SRC:
@@ -525,7 +578,7 @@ ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
         if (a->nw_tos.nw_tos & ~IP_DSCP_MASK) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_IPV4_DSCP(out)->dscp = a->nw_tos.nw_tos;
+        ofpact_put_SET_IP_DSCP(out)->dscp = a->nw_tos.nw_tos;
         break;
 
     case OFPUTIL_OFPAT10_SET_TP_SRC:
@@ -538,8 +591,7 @@ ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
         break;
 
     case OFPUTIL_OFPAT10_ENQUEUE:
-        error = enqueue_from_openflow10((const struct ofp10_action_enqueue *) a,
-                                        out);
+        error = enqueue_from_openflow10(&a->enqueue, out);
         break;
 
 #define NXAST_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME) case OFPUTIL_##ENUM:
@@ -550,6 +602,10 @@ ofpact_from_openflow10(const union ofp_action *a, struct ofpbuf *out)
     return error;
 }
 
+static enum ofperr ofpact_from_openflow11(const union ofp_action *,
+                                          enum ofp_version,
+                                          struct ofpbuf *out);
+
 static inline union ofp_action *
 action_next(const union ofp_action *a)
 {
@@ -558,55 +614,60 @@ action_next(const union ofp_action *a)
 }
 
 static inline bool
-action_is_valid(const union ofp_action *a, size_t n_actions)
+action_is_valid(const union ofp_action *a, size_t max_actions)
 {
     uint16_t len = ntohs(a->header.len);
     return (!(len % OFP_ACTION_ALIGN)
-            && len >= sizeof *a
-            && len / sizeof *a <= n_actions);
+            && len >= OFP_ACTION_ALIGN
+            && len / OFP_ACTION_ALIGN <= max_actions);
 }
 
 /* This macro is careful to check for actions with bad lengths. */
-#define ACTION_FOR_EACH(ITER, LEFT, ACTIONS, N_ACTIONS)                 \
-    for ((ITER) = (ACTIONS), (LEFT) = (N_ACTIONS);                      \
+#define ACTION_FOR_EACH(ITER, LEFT, ACTIONS, MAX_ACTIONS)                 \
+    for ((ITER) = (ACTIONS), (LEFT) = (MAX_ACTIONS);                      \
          (LEFT) > 0 && action_is_valid(ITER, LEFT);                     \
-         ((LEFT) -= ntohs((ITER)->header.len) / sizeof(union ofp_action), \
+         ((LEFT) -= ntohs((ITER)->header.len) / OFP_ACTION_ALIGN, \
           (ITER) = action_next(ITER)))
 
 static void
-log_bad_action(const union ofp_action *actions, size_t n_actions, size_t ofs,
-               enum ofperr error)
+log_bad_action(const union ofp_action *actions, size_t max_actions,
+               const union ofp_action *bad_action, enum ofperr error)
 {
     if (!VLOG_DROP_WARN(&rl)) {
         struct ds s;
 
         ds_init(&s);
-        ds_put_hex_dump(&s, actions, n_actions * sizeof *actions, 0, false);
-        VLOG_WARN("bad action at offset %#zx (%s):\n%s",
-                  ofs * sizeof *actions, ofperr_get_name(error), ds_cstr(&s));
+        ds_put_hex_dump(&s, actions, max_actions * OFP_ACTION_ALIGN, 0, false);
+        VLOG_WARN("bad action at offset %#"PRIxPTR" (%s):\n%s",
+                  (char *)bad_action - (char *)actions,
+                  ofperr_get_name(error), ds_cstr(&s));
         ds_destroy(&s);
     }
 }
 
 static enum ofperr
 ofpacts_from_openflow(const union ofp_action *in, size_t n_in,
-                      struct ofpbuf *out,
-                      enum ofperr (*ofpact_from_openflow)(
-                          const union ofp_action *a, struct ofpbuf *out))
+                      enum ofp_version version, struct ofpbuf *out)
 {
     const union ofp_action *a;
     size_t left;
 
+    enum ofperr (*ofpact_from_openflow)(const union ofp_action *a,
+                                        enum ofp_version,
+                                        struct ofpbuf *out) =
+        (version == OFP10_VERSION) ?
+        ofpact_from_openflow10 : ofpact_from_openflow11;
+
     ACTION_FOR_EACH (a, left, in, n_in) {
-        enum ofperr error = ofpact_from_openflow(a, out);
+        enum ofperr error = ofpact_from_openflow(a, version, out);
         if (error) {
-            log_bad_action(in, n_in, a - in, error);
+            log_bad_action(in, n_in, a, error);
             return error;
         }
     }
     if (left) {
         enum ofperr error = OFPERR_OFPBAC_BAD_LEN;
-        log_bad_action(in, n_in, n_in - left, error);
+        log_bad_action(in, n_in, a, error);
         return error;
     }
 
@@ -614,21 +675,28 @@ ofpacts_from_openflow(const union ofp_action *in, size_t n_in,
     return 0;
 }
 
-static enum ofperr
-ofpacts_from_openflow10(const union ofp_action *in, size_t n_in,
-                        struct ofpbuf *out)
-{
-    return ofpacts_from_openflow(in, n_in, out, ofpact_from_openflow10);
-}
-
-static enum ofperr
-ofpacts_pull_actions(struct ofpbuf *openflow, unsigned int actions_len,
-                     struct ofpbuf *ofpacts,
-                     enum ofperr (*translate)(const union ofp_action *actions,
-                                              size_t n_actions,
-                                              struct ofpbuf *ofpacts))
-{
-    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+/* Attempts to convert 'actions_len' bytes of OpenFlow actions from the
+ * front of 'openflow' into ofpacts.  On success, replaces any existing content
+ * in 'ofpacts' by the converted ofpacts; on failure, clears 'ofpacts'.
+ * Returns 0 if successful, otherwise an OpenFlow error.
+ *
+ * Actions are processed according to their OpenFlow version which
+ * is provided in the 'version' parameter.
+ *
+ * In most places in OpenFlow 1.1 and 1.2, actions appear encapsulated in
+ * instructions, so you should call ofpacts_pull_openflow_instructions()
+ * instead of this function.
+ *
+ * The parsed actions are valid generically, but they may not be valid in a
+ * specific context.  For example, port numbers up to OFPP_MAX are valid
+ * generically, but specific datapaths may only support port numbers in a
+ * smaller range.  Use ofpacts_check() to additional check whether actions are
+ * valid in a specific context. */
+enum ofperr
+ofpacts_pull_openflow_actions(struct ofpbuf *openflow,
+                              unsigned int actions_len,
+                              enum ofp_version version,
+                              struct ofpbuf *ofpacts) {
     const union ofp_action *actions;
     enum ofperr error;
 
@@ -643,12 +711,13 @@ ofpacts_pull_actions(struct ofpbuf *openflow, unsigned int actions_len,
     actions = ofpbuf_try_pull(openflow, actions_len);
     if (actions == NULL) {
         VLOG_WARN_RL(&rl, "OpenFlow message actions length %u exceeds "
-                     "remaining message length (%zu)",
+                     "remaining message length (%"PRIuSIZE")",
                      actions_len, openflow->size);
         return OFPERR_OFPBRC_BAD_LEN;
     }
 
-    error = translate(actions, actions_len / OFP_ACTION_ALIGN, ofpacts);
+    error = ofpacts_from_openflow(actions, actions_len / OFP_ACTION_ALIGN,
+                                  version, ofpacts);
     if (error) {
         ofpbuf_clear(ofpacts);
         return error;
@@ -661,23 +730,6 @@ ofpacts_pull_actions(struct ofpbuf *openflow, unsigned int actions_len,
     return error;
 }
 
-/* Attempts to convert 'actions_len' bytes of OpenFlow 1.0 actions from the
- * front of 'openflow' into ofpacts.  On success, replaces any existing content
- * in 'ofpacts' by the converted ofpacts; on failure, clears 'ofpacts'.
- * Returns 0 if successful, otherwise an OpenFlow error.
- *
- * The parsed actions are valid generically, but they may not be valid in a
- * specific context.  For example, port numbers up to OFPP_MAX are valid
- * generically, but specific datapaths may only support port numbers in a
- * smaller range.  Use ofpacts_check() to additional check whether actions are
- * valid in a specific context. */
-enum ofperr
-ofpacts_pull_openflow10(struct ofpbuf *openflow, unsigned int actions_len,
-                        struct ofpbuf *ofpacts)
-{
-    return ofpacts_pull_actions(openflow, actions_len, ofpacts,
-                                ofpacts_from_openflow10);
-}
 
 /* OpenFlow 1.1 actions. */
 
@@ -686,8 +738,8 @@ ofpacts_pull_openflow10(struct ofpbuf *openflow, unsigned int actions_len,
  * '*code' is indeterminate.
  *
  * The caller must have already verified that 'a''s length is potentially
- * correct (that is, a->header.len is nonzero and a multiple of sizeof(union
- * ofp_action) and no longer than the amount of space allocated to 'a').
+ * correct (that is, a->header.len is nonzero and a multiple of
+ * OFP_ACTION_ALIGN and no longer than the amount of space allocated to 'a').
  *
  * This function verifies that 'a''s length is correct for the type of action
  * that it represents. */
@@ -712,11 +764,330 @@ decode_openflow11_action(const union ofp_action *a,
             } else {                                    \
                 return OFPERR_OFPBAC_BAD_LEN;           \
             }                                           \
-            NOT_REACHED();
+            OVS_NOT_REACHED();
 #include "ofp-util.def"
 
     default:
         return OFPERR_OFPBAC_BAD_TYPE;
+    }
+}
+
+static enum ofperr
+set_field_from_openflow(const struct ofp12_action_set_field *oasf,
+                        struct ofpbuf *ofpacts)
+{
+    uint16_t oasf_len = ntohs(oasf->len);
+    uint32_t oxm_header = ntohl(oasf->dst);
+    uint8_t oxm_length = NXM_LENGTH(oxm_header);
+    struct ofpact_set_field *sf;
+    const struct mf_field *mf;
+
+    /* ofp12_action_set_field is padded to 64 bits by zero */
+    if (oasf_len != ROUND_UP(sizeof *oasf + oxm_length, 8)) {
+        return OFPERR_OFPBAC_BAD_SET_LEN;
+    }
+    if (!is_all_zeros((const uint8_t *)oasf + sizeof *oasf + oxm_length,
+                      oasf_len - oxm_length - sizeof *oasf)) {
+        return OFPERR_OFPBAC_BAD_SET_ARGUMENT;
+    }
+
+    if (NXM_HASMASK(oxm_header)) {
+        return OFPERR_OFPBAC_BAD_SET_TYPE;
+    }
+    mf = mf_from_nxm_header(oxm_header);
+    if (!mf) {
+        return OFPERR_OFPBAC_BAD_SET_TYPE;
+    }
+    ovs_assert(mf->n_bytes == oxm_length);
+    /* oxm_length is now validated to be compatible with mf_value. */
+    if (!mf->writable) {
+        VLOG_WARN_RL(&rl, "destination field %s is not writable", mf->name);
+        return OFPERR_OFPBAC_BAD_SET_ARGUMENT;
+    }
+    sf = ofpact_put_SET_FIELD(ofpacts);
+    sf->field = mf;
+    memcpy(&sf->value, oasf + 1, mf->n_bytes);
+
+    /* The value must be valid for match and must have the OFPVID_PRESENT bit
+     * on for OXM_OF_VLAN_VID. */
+    if (!mf_is_value_valid(mf, &sf->value)
+        || (mf->id == MFF_VLAN_VID
+            && !(sf->value.be16 & htons(OFPVID12_PRESENT)))) {
+        struct ds ds = DS_EMPTY_INITIALIZER;
+        mf_format(mf, &sf->value, NULL, &ds);
+        VLOG_WARN_RL(&rl, "Invalid value for set field %s: %s",
+                     mf->name, ds_cstr(&ds));
+        ds_destroy(&ds);
+
+        return OFPERR_OFPBAC_BAD_SET_ARGUMENT;
+    }
+    return 0;
+}
+
+static void
+set_field_to_openflow12(const struct ofpact_set_field *sf,
+                        struct ofpbuf *openflow)
+{
+    uint16_t padded_value_len = ROUND_UP(sf->field->n_bytes, 8);
+    struct ofp12_action_set_field *oasf;
+    char *value;
+
+    oasf = ofputil_put_OFPAT12_SET_FIELD(openflow);
+    oasf->dst = htonl(sf->field->oxm_header);
+    oasf->len = htons(sizeof *oasf + padded_value_len);
+
+    value = ofpbuf_put_zeros(openflow, padded_value_len);
+    memcpy(value, &sf->value, sf->field->n_bytes);
+}
+
+/* Convert 'sf' to one or two REG_LOADs. */
+static void
+set_field_to_nxast(const struct ofpact_set_field *sf, struct ofpbuf *openflow)
+{
+    const struct mf_field *mf = sf->field;
+    struct nx_action_reg_load *narl;
+
+    if (mf->n_bits > 64) {
+        ovs_assert(mf->n_bytes == 16); /* IPv6 addr. */
+        /* Split into 64bit chunks */
+        /* Lower bits first. */
+        narl = ofputil_put_NXAST_REG_LOAD(openflow);
+        narl->ofs_nbits = nxm_encode_ofs_nbits(0, 64);
+        narl->dst = htonl(mf->nxm_header);
+        memcpy(&narl->value, &sf->value.ipv6.s6_addr[8], sizeof narl->value);
+        /* Higher bits next. */
+        narl = ofputil_put_NXAST_REG_LOAD(openflow);
+        narl->ofs_nbits = nxm_encode_ofs_nbits(64, mf->n_bits - 64);
+        narl->dst = htonl(mf->nxm_header);
+        memcpy(&narl->value, &sf->value.ipv6.s6_addr[0], sizeof narl->value);
+    } else {
+        narl = ofputil_put_NXAST_REG_LOAD(openflow);
+        narl->ofs_nbits = nxm_encode_ofs_nbits(0, mf->n_bits);
+        narl->dst = htonl(mf->nxm_header);
+        memset(&narl->value, 0, 8 - mf->n_bytes);
+        memcpy((char*)&narl->value + (8 - mf->n_bytes),
+               &sf->value, mf->n_bytes);
+    }
+}
+
+/* Convert 'sf' to standard OpenFlow 1.1 actions, if we can, falling back
+ * to Nicira extensions if we must.
+ *
+ * We check only meta-flow types that can appear within set field actions and
+ * that have a mapping to compatible action types.  These struct mf_field
+ * definitions have a defined OXM or NXM header value and specify the field as
+ * writable. */
+static void
+set_field_to_openflow11(const struct ofpact_set_field *sf,
+                        struct ofpbuf *openflow)
+{
+    switch ((int) sf->field->id) {
+    case MFF_VLAN_TCI:
+        /* NXM_OF_VLAN_TCI to OpenFlow 1.1 mapping:
+         *
+         * If CFI=1, Add or modify VLAN VID & PCP.
+         *    OpenFlow 1.1 set actions only apply if the packet
+         *    already has VLAN tags.  To be sure that is the case
+         *    we have to push a VLAN header.  As we do not support
+         *    multiple layers of VLANs, this is a no-op, if a VLAN
+         *    header already exists.  This may backfire, however,
+         *    when we start supporting multiple layers of VLANs.
+         * If CFI=0, strip VLAN header, if any.
+         */
+        if (sf->value.be16 & htons(VLAN_CFI)) {
+            /* Push a VLAN tag, if one was not seen at action validation
+             * time. */
+            if (!sf->flow_has_vlan) {
+                ofputil_put_OFPAT11_PUSH_VLAN(openflow)->ethertype
+                    = htons(ETH_TYPE_VLAN_8021Q);
+            }
+            ofputil_put_OFPAT11_SET_VLAN_VID(openflow)->vlan_vid
+                = sf->value.be16 & htons(VLAN_VID_MASK);
+            ofputil_put_OFPAT11_SET_VLAN_PCP(openflow)->vlan_pcp
+                = vlan_tci_to_pcp(sf->value.be16);
+        } else {
+            /* If the flow did not match on vlan, we have no way of
+             * knowing if the vlan tag exists, so we must POP just to be
+             * sure. */
+            ofputil_put_OFPAT11_POP_VLAN(openflow);
+        }
+        break;
+
+    case MFF_VLAN_VID:
+        /* OXM VLAN_PCP to OpenFlow 1.1.
+         * Set field on OXM_OF_VLAN_VID onlyapplies to an existing vlan
+         * tag.  Clear the OFPVID_PRESENT bit.
+         */
+        ofputil_put_OFPAT11_SET_VLAN_VID(openflow)->vlan_vid
+            = sf->value.be16 & htons(VLAN_VID_MASK);
+        break;
+
+    case MFF_VLAN_PCP:
+        /* OXM VLAN_PCP to OpenFlow 1.1.
+         * OXM_OF_VLAN_PCP only applies to existing vlan tag. */
+        ofputil_put_OFPAT11_SET_VLAN_PCP(openflow)->vlan_pcp = sf->value.u8;
+        break;
+
+    case MFF_ETH_SRC:
+        memcpy(ofputil_put_OFPAT11_SET_DL_SRC(openflow)->dl_addr,
+               sf->value.mac, ETH_ADDR_LEN);
+        break;
+
+    case MFF_ETH_DST:
+        memcpy(ofputil_put_OFPAT11_SET_DL_DST(openflow)->dl_addr,
+               sf->value.mac, ETH_ADDR_LEN);
+        break;
+
+    case MFF_MPLS_LABEL:
+        ofputil_put_OFPAT11_SET_MPLS_LABEL(openflow)->mpls_label =
+            sf->value.be32;
+        break;
+
+    case MFF_MPLS_TC:
+        ofputil_put_OFPAT11_SET_MPLS_TC(openflow)->mpls_tc = sf->value.u8;
+        break;
+
+    case MFF_IPV4_SRC:
+        ofputil_put_OFPAT11_SET_NW_SRC(openflow)->nw_addr = sf->value.be32;
+        break;
+
+    case MFF_IPV4_DST:
+        ofputil_put_OFPAT11_SET_NW_DST(openflow)->nw_addr = sf->value.be32;
+        break;
+
+    case MFF_IP_DSCP:
+        ofputil_put_OFPAT11_SET_NW_TOS(openflow)->nw_tos = sf->value.u8;
+        break;
+
+    case MFF_IP_DSCP_SHIFTED:
+        ofputil_put_OFPAT11_SET_NW_TOS(openflow)->nw_tos = sf->value.u8 << 2;
+        break;
+
+    case MFF_IP_ECN:
+        ofputil_put_OFPAT11_SET_NW_ECN(openflow)->nw_ecn = sf->value.u8;
+        break;
+
+    case MFF_IP_TTL:
+        ofputil_put_OFPAT11_SET_NW_TTL(openflow)->nw_ttl = sf->value.u8;
+        break;
+
+    case MFF_TCP_SRC:
+    case MFF_UDP_SRC:
+    case MFF_SCTP_SRC:
+        ofputil_put_OFPAT11_SET_TP_SRC(openflow)->tp_port = sf->value.be16;
+        break;
+
+    case MFF_TCP_DST:
+    case MFF_UDP_DST:
+    case MFF_SCTP_DST:
+        ofputil_put_OFPAT11_SET_TP_DST(openflow)->tp_port = sf->value.be16;
+        break;
+
+    default:
+        set_field_to_nxast(sf, openflow);
+        break;
+    }
+}
+
+/* Convert 'sf' to standard OpenFlow 1.0 actions, if we can, falling back
+ * to Nicira extensions if we must.
+ *
+ * We check only meta-flow types that can appear within set field actions and
+ * that have a mapping to compatible action types.  These struct mf_field
+ * definitions have a defined OXM or NXM header value and specify the field as
+ * writable. */
+static void
+set_field_to_openflow10(const struct ofpact_set_field *sf,
+                        struct ofpbuf *openflow)
+{
+    switch ((int) sf->field->id) {
+    case MFF_VLAN_TCI:
+        /* NXM_OF_VLAN_TCI to OpenFlow 1.0 mapping:
+         *
+         * If CFI=1, Add or modify VLAN VID & PCP.
+         * If CFI=0, strip VLAN header, if any.
+         */
+        if (sf->value.be16 & htons(VLAN_CFI)) {
+            ofputil_put_OFPAT10_SET_VLAN_VID(openflow)->vlan_vid
+                = sf->value.be16 & htons(VLAN_VID_MASK);
+            ofputil_put_OFPAT10_SET_VLAN_PCP(openflow)->vlan_pcp
+                = vlan_tci_to_pcp(sf->value.be16);
+        } else {
+            ofputil_put_OFPAT10_STRIP_VLAN(openflow);
+        }
+        break;
+
+    case MFF_VLAN_VID:
+        /* OXM VLAN_VID to OpenFlow 1.0.
+         * Set field on OXM_OF_VLAN_VID onlyapplies to an existing vlan
+         * tag.  Clear the OFPVID_PRESENT bit.
+         */
+        ofputil_put_OFPAT10_SET_VLAN_VID(openflow)->vlan_vid
+            = sf->value.be16 & htons(VLAN_VID_MASK);
+        break;
+
+    case MFF_VLAN_PCP:
+        /* OXM VLAN_PCP to OpenFlow 1.0.
+         * OXM_OF_VLAN_PCP only applies to existing vlan tag. */
+        ofputil_put_OFPAT10_SET_VLAN_PCP(openflow)->vlan_pcp = sf->value.u8;
+        break;
+
+    case MFF_ETH_SRC:
+        memcpy(ofputil_put_OFPAT10_SET_DL_SRC(openflow)->dl_addr,
+               sf->value.mac, ETH_ADDR_LEN);
+        break;
+
+    case MFF_ETH_DST:
+        memcpy(ofputil_put_OFPAT10_SET_DL_DST(openflow)->dl_addr,
+               sf->value.mac, ETH_ADDR_LEN);
+        break;
+
+    case MFF_IPV4_SRC:
+        ofputil_put_OFPAT10_SET_NW_SRC(openflow)->nw_addr = sf->value.be32;
+        break;
+
+    case MFF_IPV4_DST:
+        ofputil_put_OFPAT10_SET_NW_DST(openflow)->nw_addr = sf->value.be32;
+        break;
+
+    case MFF_IP_DSCP:
+        ofputil_put_OFPAT10_SET_NW_TOS(openflow)->nw_tos = sf->value.u8;
+        break;
+
+    case MFF_IP_DSCP_SHIFTED:
+        ofputil_put_OFPAT10_SET_NW_TOS(openflow)->nw_tos = sf->value.u8 << 2;
+        break;
+
+    case MFF_TCP_SRC:
+    case MFF_UDP_SRC:
+        ofputil_put_OFPAT10_SET_TP_SRC(openflow)->tp_port = sf->value.be16;
+        break;
+
+    case MFF_TCP_DST:
+    case MFF_UDP_DST:
+        ofputil_put_OFPAT10_SET_TP_DST(openflow)->tp_port = sf->value.be16;
+        break;
+
+    default:
+        set_field_to_nxast(sf, openflow);
+        break;
+    }
+}
+
+static void
+set_field_to_openflow(const struct ofpact_set_field *sf,
+                      struct ofpbuf *openflow)
+{
+    struct ofp_header *oh = (struct ofp_header *)openflow->l2;
+
+    if (oh->version >= OFP12_VERSION) {
+        set_field_to_openflow12(sf, openflow);
+    } else if (oh->version == OFP11_VERSION) {
+        set_field_to_openflow11(sf, openflow);
+    } else if (oh->version == OFP10_VERSION) {
+        set_field_to_openflow10(sf, openflow);
+    } else {
+        OVS_NOT_REACHED();
     }
 }
 
@@ -735,47 +1106,72 @@ output_from_openflow11(const struct ofp11_action_output *oao,
         return error;
     }
 
-    return ofputil_check_output_port(output->port, OFPP_MAX);
+    return ofpact_check_output_port(output->port, OFPP_MAX);
 }
 
 static enum ofperr
-ofpact_from_openflow11(const union ofp_action *a, struct ofpbuf *out)
+ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
+                       struct ofpbuf *out)
 {
     enum ofputil_action_code code;
     enum ofperr error;
+    struct ofpact_vlan_vid *vlan_vid;
+    struct ofpact_vlan_pcp *vlan_pcp;
 
     error = decode_openflow11_action(a, &code);
     if (error) {
         return error;
     }
 
+    if (version >= OFP12_VERSION) {
+        switch ((int)code) {
+        case OFPUTIL_OFPAT11_SET_VLAN_VID:
+        case OFPUTIL_OFPAT11_SET_VLAN_PCP:
+        case OFPUTIL_OFPAT11_SET_DL_SRC:
+        case OFPUTIL_OFPAT11_SET_DL_DST:
+        case OFPUTIL_OFPAT11_SET_NW_SRC:
+        case OFPUTIL_OFPAT11_SET_NW_DST:
+        case OFPUTIL_OFPAT11_SET_NW_TOS:
+        case OFPUTIL_OFPAT11_SET_NW_ECN:
+        case OFPUTIL_OFPAT11_SET_TP_SRC:
+        case OFPUTIL_OFPAT11_SET_TP_DST:
+            VLOG_WARN_RL(&rl, "Deprecated action %s received over %s",
+                         ofputil_action_name_from_code(code),
+                         ofputil_version_to_string(version));
+        }
+    }
+
     switch (code) {
     case OFPUTIL_ACTION_INVALID:
 #define OFPAT10_ACTION(ENUM, STRUCT, NAME) case OFPUTIL_##ENUM:
 #include "ofp-util.def"
-        NOT_REACHED();
+        OVS_NOT_REACHED();
 
     case OFPUTIL_OFPAT11_OUTPUT:
-        return output_from_openflow11((const struct ofp11_action_output *) a,
-                                      out);
+        return output_from_openflow11(&a->ofp11_output, out);
 
     case OFPUTIL_OFPAT11_SET_VLAN_VID:
         if (a->vlan_vid.vlan_vid & ~htons(0xfff)) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_VLAN_VID(out)->vlan_vid = ntohs(a->vlan_vid.vlan_vid);
+        vlan_vid = ofpact_put_SET_VLAN_VID(out);
+        vlan_vid->vlan_vid = ntohs(a->vlan_vid.vlan_vid);
+        vlan_vid->push_vlan_if_needed = false;
+        vlan_vid->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT11_SET_VLAN_PCP:
         if (a->vlan_pcp.vlan_pcp & ~7) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_VLAN_PCP(out)->vlan_pcp = a->vlan_pcp.vlan_pcp;
+        vlan_pcp = ofpact_put_SET_VLAN_PCP(out);
+        vlan_pcp->vlan_pcp = a->vlan_pcp.vlan_pcp;
+        vlan_pcp->push_vlan_if_needed = false;
+        vlan_pcp->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT11_PUSH_VLAN:
-        if (((const struct ofp11_action_push *)a)->ethertype !=
-            htons(ETH_TYPE_VLAN_8021Q)) {
+        if (a->push.ethertype != htons(ETH_TYPE_VLAN_8021Q)) {
             /* XXX 802.1AD(QinQ) isn't supported at the moment */
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
@@ -783,22 +1179,22 @@ ofpact_from_openflow11(const union ofp_action *a, struct ofpbuf *out)
         break;
 
     case OFPUTIL_OFPAT11_POP_VLAN:
-        ofpact_put_STRIP_VLAN(out);
+        ofpact_put_STRIP_VLAN(out)->ofpact.compat = code;
         break;
 
     case OFPUTIL_OFPAT11_SET_QUEUE:
         ofpact_put_SET_QUEUE(out)->queue_id =
-            ntohl(((const struct ofp11_action_set_queue *)a)->queue_id);
+            ntohl(a->ofp11_set_queue.queue_id);
         break;
 
     case OFPUTIL_OFPAT11_SET_DL_SRC:
-        memcpy(ofpact_put_SET_ETH_SRC(out)->mac,
-               ((const struct ofp_action_dl_addr *) a)->dl_addr, ETH_ADDR_LEN);
+        memcpy(ofpact_put_SET_ETH_SRC(out)->mac, a->dl_addr.dl_addr,
+               ETH_ADDR_LEN);
         break;
 
     case OFPUTIL_OFPAT11_SET_DL_DST:
-        memcpy(ofpact_put_SET_ETH_DST(out)->mac,
-               ((const struct ofp_action_dl_addr *) a)->dl_addr, ETH_ADDR_LEN);
+        memcpy(ofpact_put_SET_ETH_DST(out)->mac, a->dl_addr.dl_addr,
+               ETH_ADDR_LEN);
         break;
 
     case OFPUTIL_OFPAT11_DEC_NW_TTL:
@@ -817,7 +1213,18 @@ ofpact_from_openflow11(const union ofp_action *a, struct ofpbuf *out)
         if (a->nw_tos.nw_tos & ~IP_DSCP_MASK) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_SET_IPV4_DSCP(out)->dscp = a->nw_tos.nw_tos;
+        ofpact_put_SET_IP_DSCP(out)->dscp = a->nw_tos.nw_tos;
+        break;
+
+    case OFPUTIL_OFPAT11_SET_NW_ECN:
+        if (a->nw_ecn.nw_ecn & ~IP_ECN_MASK) {
+            return OFPERR_OFPBAC_BAD_ARGUMENT;
+        }
+        ofpact_put_SET_IP_ECN(out)->ecn = a->nw_ecn.nw_ecn;
+        break;
+
+    case OFPUTIL_OFPAT11_SET_NW_TTL:
+        ofpact_put_SET_IP_TTL(out)->ttl = a->nw_ttl.nw_ttl;
         break;
 
     case OFPUTIL_OFPAT11_SET_TP_SRC:
@@ -829,36 +1236,42 @@ ofpact_from_openflow11(const union ofp_action *a, struct ofpbuf *out)
         break;
 
     case OFPUTIL_OFPAT12_SET_FIELD:
-        return nxm_reg_load_from_openflow12_set_field(
-            (const struct ofp12_action_set_field *)a, out);
+        return set_field_from_openflow(&a->set_field, out);
 
-    case OFPUTIL_OFPAT11_SET_MPLS_TTL: {
-        struct ofp11_action_mpls_ttl *oamt = (struct ofp11_action_mpls_ttl *)a;
-        ofpact_put_SET_MPLS_TTL(out)->ttl = oamt->mpls_ttl;
+    case OFPUTIL_OFPAT11_SET_MPLS_LABEL:
+        ofpact_put_SET_MPLS_LABEL(out)->label = a->ofp11_mpls_label.mpls_label;
         break;
-    }
+
+    case OFPUTIL_OFPAT11_SET_MPLS_TC:
+        ofpact_put_SET_MPLS_TC(out)->tc = a->ofp11_mpls_tc.mpls_tc;
+        break;
+
+    case OFPUTIL_OFPAT11_SET_MPLS_TTL:
+        ofpact_put_SET_MPLS_TTL(out)->ttl = a->ofp11_mpls_ttl.mpls_ttl;
+        break;
 
     case OFPUTIL_OFPAT11_DEC_MPLS_TTL:
         ofpact_put_DEC_MPLS_TTL(out);
         break;
 
-    case OFPUTIL_OFPAT11_PUSH_MPLS: {
-        struct ofp11_action_push *oap = (struct ofp11_action_push *)a;
-        if (!eth_type_mpls(oap->ethertype)) {
-            return OFPERR_OFPBAC_BAD_ARGUMENT;
-        }
-        ofpact_put_PUSH_MPLS(out)->ethertype = oap->ethertype;
+    case OFPUTIL_OFPAT11_PUSH_MPLS:
+        /* OpenFlow 1.3 has different semantics. */
+        error = push_mpls_from_openflow(a->push.ethertype,
+                                        version >= OFP13_VERSION ?
+                                        OFPACT_MPLS_BEFORE_VLAN :
+                                        OFPACT_MPLS_AFTER_VLAN, out);
         break;
-    }
 
-    case OFPUTIL_OFPAT11_POP_MPLS: {
-        struct ofp11_action_pop_mpls *oapm = (struct ofp11_action_pop_mpls *)a;
-        if (eth_type_mpls(oapm->ethertype)) {
+    case OFPUTIL_OFPAT11_POP_MPLS:
+        if (eth_type_mpls(a->ofp11_pop_mpls.ethertype)) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
         }
-        ofpact_put_POP_MPLS(out)->ethertype = oapm->ethertype;
+        ofpact_put_POP_MPLS(out)->ethertype = a->ofp11_pop_mpls.ethertype;
         break;
-    }
+
+    case OFPUTIL_OFPAT11_GROUP:
+        ofpact_put_GROUP(out)->group_id = ntohl(a->group.group_id);
+        break;
 
 #define NXAST_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME) case OFPUTIL_##ENUM:
 #include "ofp-util.def"
@@ -868,24 +1281,256 @@ ofpact_from_openflow11(const union ofp_action *a, struct ofpbuf *out)
     return error;
 }
 
-static enum ofperr
-ofpacts_from_openflow11(const union ofp_action *in, size_t n_in,
-                        struct ofpbuf *out)
+/* True if an action sets the value of a field
+ * in a way that is compatibile with the action set.
+ * False otherwise. */
+static bool
+ofpact_is_set_action(const struct ofpact *a)
 {
-    return ofpacts_from_openflow(in, n_in, out, ofpact_from_openflow11);
+    switch (a->type) {
+    case OFPACT_SET_FIELD:
+    case OFPACT_REG_LOAD:
+    case OFPACT_SET_ETH_DST:
+    case OFPACT_SET_ETH_SRC:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
+    case OFPACT_SET_IPV4_DST:
+    case OFPACT_SET_IPV4_SRC:
+    case OFPACT_SET_L4_DST_PORT:
+    case OFPACT_SET_L4_SRC_PORT:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
+    case OFPACT_SET_MPLS_TTL:
+    case OFPACT_SET_QUEUE:
+    case OFPACT_SET_TUNNEL:
+    case OFPACT_SET_VLAN_PCP:
+    case OFPACT_SET_VLAN_VID:
+        return true;
+    case OFPACT_BUNDLE:
+    case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_CONTROLLER:
+    case OFPACT_DEC_MPLS_TTL:
+    case OFPACT_DEC_TTL:
+    case OFPACT_ENQUEUE:
+    case OFPACT_EXIT:
+    case OFPACT_FIN_TIMEOUT:
+    case OFPACT_GOTO_TABLE:
+    case OFPACT_GROUP:
+    case OFPACT_LEARN:
+    case OFPACT_METER:
+    case OFPACT_MULTIPATH:
+    case OFPACT_NOTE:
+    case OFPACT_OUTPUT:
+    case OFPACT_OUTPUT_REG:
+    case OFPACT_POP_MPLS:
+    case OFPACT_POP_QUEUE:
+    case OFPACT_PUSH_MPLS:
+    case OFPACT_PUSH_VLAN:
+    case OFPACT_REG_MOVE:
+    case OFPACT_RESUBMIT:
+    case OFPACT_SAMPLE:
+    case OFPACT_STACK_POP:
+    case OFPACT_STACK_PUSH:
+    case OFPACT_STRIP_VLAN:
+    case OFPACT_WRITE_ACTIONS:
+    case OFPACT_WRITE_METADATA:
+        return false;
+    default:
+        OVS_NOT_REACHED();
+    }
 }
+
+/* True if an action is allowed in the action set.
+ * False otherwise. */
+static bool
+ofpact_is_allowed_in_actions_set(const struct ofpact *a)
+{
+    switch (a->type) {
+    case OFPACT_DEC_MPLS_TTL:
+    case OFPACT_DEC_TTL:
+    case OFPACT_GROUP:
+    case OFPACT_OUTPUT:
+    case OFPACT_POP_MPLS:
+    case OFPACT_PUSH_MPLS:
+    case OFPACT_PUSH_VLAN:
+    case OFPACT_REG_LOAD:
+    case OFPACT_SET_FIELD:
+    case OFPACT_SET_ETH_DST:
+    case OFPACT_SET_ETH_SRC:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
+    case OFPACT_SET_IPV4_DST:
+    case OFPACT_SET_IPV4_SRC:
+    case OFPACT_SET_L4_DST_PORT:
+    case OFPACT_SET_L4_SRC_PORT:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
+    case OFPACT_SET_MPLS_TTL:
+    case OFPACT_SET_QUEUE:
+    case OFPACT_SET_TUNNEL:
+    case OFPACT_SET_VLAN_PCP:
+    case OFPACT_SET_VLAN_VID:
+    case OFPACT_STRIP_VLAN:
+        return true;
+
+    /* In general these actions are excluded because they are not part of
+     * the OpenFlow specification nor map to actions that are defined in
+     * the specification.  Thus the order in which they should be applied
+     * in the action set is undefined. */
+    case OFPACT_BUNDLE:
+    case OFPACT_CONTROLLER:
+    case OFPACT_ENQUEUE:
+    case OFPACT_EXIT:
+    case OFPACT_FIN_TIMEOUT:
+    case OFPACT_LEARN:
+    case OFPACT_MULTIPATH:
+    case OFPACT_NOTE:
+    case OFPACT_OUTPUT_REG:
+    case OFPACT_POP_QUEUE:
+    case OFPACT_REG_MOVE:
+    case OFPACT_RESUBMIT:
+    case OFPACT_SAMPLE:
+    case OFPACT_STACK_POP:
+    case OFPACT_STACK_PUSH:
+
+    /* The action set may only include actions and thus
+     * may not include any instructions */
+    case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_GOTO_TABLE:
+    case OFPACT_METER:
+    case OFPACT_WRITE_ACTIONS:
+    case OFPACT_WRITE_METADATA:
+        return false;
+    default:
+        OVS_NOT_REACHED();
+    }
+}
+
+/* Append ofpact 'a' onto the tail of 'out' */
+static void
+ofpact_copy(struct ofpbuf *out, const struct ofpact *a)
+{
+    ofpbuf_put(out, a, OFPACT_ALIGN(a->len));
+}
+
+/* Copies the last ofpact whose type is 'filter' from 'in' to 'out'. */
+static bool
+ofpacts_copy_last(struct ofpbuf *out, const struct ofpbuf *in,
+                  enum ofpact_type filter)
+{
+    const struct ofpact *target;
+    const struct ofpact *a;
+
+    target = NULL;
+    OFPACT_FOR_EACH (a, in->data, in->size) {
+        if (a->type == filter) {
+            target = a;
+        }
+    }
+    if (target) {
+        ofpact_copy(out, target);
+    }
+    return target != NULL;
+}
+
+/* Append all ofpacts, for which 'filter' returns true, from 'in' to 'out'.
+ * The order of appended ofpacts is preserved between 'in' and 'out' */
+static void
+ofpacts_copy_all(struct ofpbuf *out, const struct ofpbuf *in,
+                 bool (*filter)(const struct ofpact *))
+{
+    const struct ofpact *a;
+
+    OFPACT_FOR_EACH (a, in->data, in->size) {
+        if (filter(a)) {
+            ofpact_copy(out, a);
+        }
+    }
+}
+
+/* Reads 'action_set', which contains ofpacts accumulated by
+ * OFPACT_WRITE_ACTIONS instructions, and writes equivalent actions to be
+ * executed directly into 'action_list'.  (These names correspond to the
+ * "Action Set" and "Action List" terms used in OpenFlow 1.1+.)
+ *
+ * In general this involves appending the last instance of each action that is
+ * adimissible in the action set in the order described in the OpenFlow
+ * specification.
+ *
+ * Exceptions:
+ * + output action is only appended if no group action was present in 'in'.
+ * + As a simplification all set actions are copied in the order the are
+ *   provided in 'in' as many set actions applied to a field has the same
+ *   affect as only applying the last action that sets a field and
+ *   duplicates are removed by do_xlate_actions().
+ *   This has an unwanted side-effect of compsoting multiple
+ *   LOAD_REG actions that touch different regions of the same field. */
+void
+ofpacts_execute_action_set(struct ofpbuf *action_list,
+                           const struct ofpbuf *action_set)
+{
+    /* The OpenFlow spec "Action Set" section specifies this order. */
+    ofpacts_copy_last(action_list, action_set, OFPACT_STRIP_VLAN);
+    ofpacts_copy_last(action_list, action_set, OFPACT_POP_MPLS);
+    ofpacts_copy_last(action_list, action_set, OFPACT_PUSH_MPLS);
+    ofpacts_copy_last(action_list, action_set, OFPACT_PUSH_VLAN);
+    ofpacts_copy_last(action_list, action_set, OFPACT_DEC_TTL);
+    ofpacts_copy_last(action_list, action_set, OFPACT_DEC_MPLS_TTL);
+    ofpacts_copy_all(action_list, action_set, ofpact_is_set_action);
+    ofpacts_copy_last(action_list, action_set, OFPACT_SET_QUEUE);
+
+    /* If both OFPACT_GROUP and OFPACT_OUTPUT are present, OpenFlow says that
+     * we should execute only OFPACT_GROUP.
+     *
+     * If neither OFPACT_GROUP nor OFPACT_OUTPUT is present, then we can drop
+     * all the actions because there's no point in modifying a packet that will
+     * not be sent anywhere. */
+    if (!ofpacts_copy_last(action_list, action_set, OFPACT_GROUP) &&
+        !ofpacts_copy_last(action_list, action_set, OFPACT_OUTPUT)) {
+        ofpbuf_clear(action_list);
+    }
+}
+
+
+static enum ofperr
+ofpacts_from_openflow11_for_action_set(const union ofp_action *in,
+                                       size_t n_in, enum ofp_version version,
+                                       struct ofpbuf *out)
+{
+    enum ofperr error;
+    struct ofpact *a;
+    size_t start = out->size;
+
+    error = ofpacts_from_openflow(in, n_in, version, out);
+
+    if (error) {
+        return error;
+    }
+
+    OFPACT_FOR_EACH (a, ofpact_end(out->data, start), out->size - start) {
+        if (!ofpact_is_allowed_in_actions_set(a)) {
+            VLOG_WARN_RL(&rl, "disallowed action in action set");
+            return OFPERR_OFPBAC_BAD_TYPE;
+        }
+    }
+
+    return 0;
+}
+
 
 /* OpenFlow 1.1 instructions. */
 
 #define DEFINE_INST(ENUM, STRUCT, EXTENSIBLE, NAME)             \
-    static inline const struct STRUCT *                         \
+    static inline const struct STRUCT * OVS_UNUSED              \
     instruction_get_##ENUM(const struct ofp11_instruction *inst)\
     {                                                           \
         ovs_assert(inst->type == htons(ENUM));                  \
         return ALIGNED_CAST(struct STRUCT *, inst);             \
     }                                                           \
                                                                 \
-    static inline void                                          \
+    static inline void OVS_UNUSED                               \
     instruction_init_##ENUM(struct STRUCT *s)                   \
     {                                                           \
         memset(s, 0, sizeof *s);                                \
@@ -893,7 +1538,7 @@ ofpacts_from_openflow11(const union ofp_action *in, size_t n_in,
         s->len = htons(sizeof *s);                              \
     }                                                           \
                                                                 \
-    static inline struct STRUCT *                               \
+    static inline struct STRUCT * OVS_UNUSED                    \
     instruction_put_##ENUM(struct ofpbuf *buf)                  \
     {                                                           \
         struct STRUCT *s = ofpbuf_put_uninit(buf, sizeof *s);   \
@@ -940,11 +1585,14 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
         return OVSINST_OFPIT13_METER;
     case OFPACT_CLEAR_ACTIONS:
         return OVSINST_OFPIT11_CLEAR_ACTIONS;
+    case OFPACT_WRITE_ACTIONS:
+        return OVSINST_OFPIT11_WRITE_ACTIONS;
     case OFPACT_WRITE_METADATA:
         return OVSINST_OFPIT11_WRITE_METADATA;
     case OFPACT_GOTO_TABLE:
         return OVSINST_OFPIT11_GOTO_TABLE;
     case OFPACT_OUTPUT:
+    case OFPACT_GROUP:
     case OFPACT_CONTROLLER:
     case OFPACT_ENQUEUE:
     case OFPACT_OUTPUT_REG:
@@ -957,14 +1605,19 @@ ovs_instruction_type_from_ofpact_type(enum ofpact_type type)
     case OFPACT_SET_ETH_DST:
     case OFPACT_SET_IPV4_SRC:
     case OFPACT_SET_IPV4_DST:
-    case OFPACT_SET_IPV4_DSCP:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
     case OFPACT_SET_L4_SRC_PORT:
     case OFPACT_SET_L4_DST_PORT:
     case OFPACT_REG_MOVE:
     case OFPACT_REG_LOAD:
+    case OFPACT_SET_FIELD:
     case OFPACT_STACK_PUSH:
     case OFPACT_STACK_POP:
     case OFPACT_DEC_TTL:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
     case OFPACT_SET_MPLS_TTL:
     case OFPACT_DEC_MPLS_TTL:
     case OFPACT_PUSH_MPLS:
@@ -1062,7 +1715,7 @@ decode_openflow11_instructions(const struct ofp11_instruction insts[],
     }
 
     if (left) {
-        VLOG_WARN_RL(&rl, "bad instruction format at offset %zu",
+        VLOG_WARN_RL(&rl, "bad instruction format at offset %"PRIuSIZE,
                      (n_insts - left) * sizeof *inst);
         return OFPERR_OFPBIC_BAD_LEN;
     }
@@ -1072,41 +1725,18 @@ decode_openflow11_instructions(const struct ofp11_instruction insts[],
 static void
 get_actions_from_instruction(const struct ofp11_instruction *inst,
                              const union ofp_action **actions,
-                             size_t *n_actions)
+                             size_t *max_actions)
 {
     *actions = ALIGNED_CAST(const union ofp_action *, inst + 1);
-    *n_actions = (ntohs(inst->len) - sizeof *inst) / OFP11_INSTRUCTION_ALIGN;
-}
-
-/* Attempts to convert 'actions_len' bytes of OpenFlow 1.1 actions from the
- * front of 'openflow' into ofpacts.  On success, replaces any existing content
- * in 'ofpacts' by the converted ofpacts; on failure, clears 'ofpacts'.
- * Returns 0 if successful, otherwise an OpenFlow error.
- *
- * In most places in OpenFlow 1.1 and 1.2, actions appear encapsulated in
- * instructions, so you should call ofpacts_pull_openflow11_instructions()
- * instead of this function.
- *
- * The parsed actions are valid generically, but they may not be valid in a
- * specific context.  For example, port numbers up to OFPP_MAX are valid
- * generically, but specific datapaths may only support port numbers in a
- * smaller range.  Use ofpacts_check() to additional check whether actions are
- * valid in a specific context. */
-enum ofperr
-ofpacts_pull_openflow11_actions(struct ofpbuf *openflow,
-                                unsigned int actions_len,
-                                struct ofpbuf *ofpacts)
-{
-    return ofpacts_pull_actions(openflow, actions_len, ofpacts,
-                                ofpacts_from_openflow11);
+    *max_actions = (ntohs(inst->len) - sizeof *inst) / OFP11_INSTRUCTION_ALIGN;
 }
 
 enum ofperr
-ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
-                                     unsigned int instructions_len,
-                                     struct ofpbuf *ofpacts)
+ofpacts_pull_openflow_instructions(struct ofpbuf *openflow,
+                                   unsigned int instructions_len,
+                                   enum ofp_version version,
+                                   struct ofpbuf *ofpacts)
 {
-    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
     const struct ofp11_instruction *instructions;
     const struct ofp11_instruction *insts[N_OVS_INSTRUCTIONS];
     enum ofperr error;
@@ -1124,7 +1754,7 @@ ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
     instructions = ofpbuf_try_pull(openflow, instructions_len);
     if (instructions == NULL) {
         VLOG_WARN_RL(&rl, "OpenFlow message instructions length %u exceeds "
-                     "remaining message length (%zu)",
+                     "remaining message length (%"PRIuSIZE")",
                      instructions_len, openflow->size);
         error = OFPERR_OFPBIC_BAD_LEN;
         goto exit;
@@ -1149,11 +1779,11 @@ ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
     }
     if (insts[OVSINST_OFPIT11_APPLY_ACTIONS]) {
         const union ofp_action *actions;
-        size_t n_actions;
+        size_t max_actions;
 
         get_actions_from_instruction(insts[OVSINST_OFPIT11_APPLY_ACTIONS],
-                                     &actions, &n_actions);
-        error = ofpacts_from_openflow11(actions, n_actions, ofpacts);
+                                     &actions, &max_actions);
+        error = ofpacts_from_openflow(actions, max_actions, version, ofpacts);
         if (error) {
             goto exit;
         }
@@ -1163,7 +1793,26 @@ ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
             insts[OVSINST_OFPIT11_CLEAR_ACTIONS]);
         ofpact_put_CLEAR_ACTIONS(ofpacts);
     }
-    /* XXX Write-Actions */
+    if (insts[OVSINST_OFPIT11_WRITE_ACTIONS]) {
+        struct ofpact_nest *on;
+        const union ofp_action *actions;
+        size_t max_actions;
+        size_t start;
+
+        ofpact_pad(ofpacts);
+        start = ofpacts->size;
+        on = ofpact_put(ofpacts, OFPACT_WRITE_ACTIONS,
+                        offsetof(struct ofpact_nest, actions));
+        get_actions_from_instruction(insts[OVSINST_OFPIT11_WRITE_ACTIONS],
+                                     &actions, &max_actions);
+        error = ofpacts_from_openflow11_for_action_set(actions, max_actions,
+                                                       version, ofpacts);
+        if (error) {
+            goto exit;
+        }
+        on = ofpbuf_at_assert(ofpacts, start, sizeof *on);
+        on->ofpact.len = ofpacts->size - start;
+    }
     if (insts[OVSINST_OFPIT11_WRITE_METADATA]) {
         const struct ofp11_instruction_write_metadata *oiwm;
         struct ofpact_metadata *om;
@@ -1185,11 +1834,6 @@ ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
         ogt->table_id = oigt->table_id;
     }
 
-    if (insts[OVSINST_OFPIT11_WRITE_ACTIONS]) {
-        error = OFPERR_OFPBIC_UNSUP_INST;
-        goto exit;
-    }
-
     error = ofpacts_verify(ofpacts->data, ofpacts->size);
 exit:
     if (error) {
@@ -1198,17 +1842,60 @@ exit:
     return error;
 }
 
-/* May modify flow->dl_type, caller must restore it. */
+/* Checks that 'port' is a valid output port for OFPACT_OUTPUT, given that the
+ * switch will never have more than 'max_ports' ports.  Returns 0 if 'port' is
+ * valid, otherwise an OpenFlow error code. */
+enum ofperr
+ofpact_check_output_port(ofp_port_t port, ofp_port_t max_ports)
+{
+    switch (port) {
+    case OFPP_IN_PORT:
+    case OFPP_TABLE:
+    case OFPP_NORMAL:
+    case OFPP_FLOOD:
+    case OFPP_ALL:
+    case OFPP_CONTROLLER:
+    case OFPP_NONE:
+    case OFPP_LOCAL:
+        return 0;
+
+    default:
+        if (ofp_to_u16(port) < ofp_to_u16(max_ports)) {
+            return 0;
+        }
+        return OFPERR_OFPBAC_BAD_OUT_PORT;
+    }
+}
+
+/* Removes the protocols that require consistency between match and actions
+ * (that's everything but OpenFlow 1.0) from '*usable_protocols'.
+ *
+ * (An example of an inconsistency between match and actions is a flow that
+ * does not match on an MPLS Ethertype but has an action that pops an MPLS
+ * label.) */
+static void
+inconsistent_match(enum ofputil_protocol *usable_protocols)
+{
+    *usable_protocols &= OFPUTIL_P_OF10_ANY;
+}
+
+/* May modify flow->dl_type, flow->nw_proto and flow->vlan_tci,
+ * caller must restore them.
+ *
+ * Modifies some actions, filling in fields that could not be properly set
+ * without context. */
 static enum ofperr
-ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
-               uint8_t table_id)
+ofpact_check__(enum ofputil_protocol *usable_protocols, struct ofpact *a,
+               struct flow *flow, ofp_port_t max_ports,
+               uint8_t table_id, uint8_t n_tables)
 {
     const struct ofpact_enqueue *enqueue;
+    const struct mf_field *mf;
 
     switch (a->type) {
     case OFPACT_OUTPUT:
-        return ofputil_check_output_port(ofpact_get_OUTPUT(a)->port,
-                                         max_ports);
+        return ofpact_check_output_port(ofpact_get_OUTPUT(a)->port,
+                                        max_ports);
 
     case OFPACT_CONTROLLER:
         return 0;
@@ -1229,16 +1916,90 @@ ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
         return bundle_check(ofpact_get_BUNDLE(a), max_ports, flow);
 
     case OFPACT_SET_VLAN_VID:
+        /* Remember if we saw a vlan tag in the flow to aid translating to
+         * OpenFlow 1.1+ if need be. */
+        ofpact_get_SET_VLAN_VID(a)->flow_has_vlan =
+            (flow->vlan_tci & htons(VLAN_CFI)) == htons(VLAN_CFI);
+        if (!(flow->vlan_tci & htons(VLAN_CFI)) &&
+            !ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
+            inconsistent_match(usable_protocols);
+        }
+        /* Temporary mark that we have a vlan tag. */
+        flow->vlan_tci |= htons(VLAN_CFI);
+        return 0;
+
     case OFPACT_SET_VLAN_PCP:
+        /* Remember if we saw a vlan tag in the flow to aid translating to
+         * OpenFlow 1.1+ if need be. */
+        ofpact_get_SET_VLAN_PCP(a)->flow_has_vlan =
+            (flow->vlan_tci & htons(VLAN_CFI)) == htons(VLAN_CFI);
+        if (!(flow->vlan_tci & htons(VLAN_CFI)) &&
+            !ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
+            inconsistent_match(usable_protocols);
+        }
+        /* Temporary mark that we have a vlan tag. */
+        flow->vlan_tci |= htons(VLAN_CFI);
+        return 0;
+
     case OFPACT_STRIP_VLAN:
+        if (!(flow->vlan_tci & htons(VLAN_CFI))) {
+            inconsistent_match(usable_protocols);
+        }
+        /* Temporary mark that we have no vlan tag. */
+        flow->vlan_tci = htons(0);
+        return 0;
+
     case OFPACT_PUSH_VLAN:
+        if (flow->vlan_tci & htons(VLAN_CFI)) {
+            /* Multiple VLAN headers not supported. */
+            return OFPERR_OFPBAC_BAD_TAG;
+        }
+        /* Temporary mark that we have a vlan tag. */
+        flow->vlan_tci |= htons(VLAN_CFI);
+        return 0;
+
     case OFPACT_SET_ETH_SRC:
     case OFPACT_SET_ETH_DST:
+        return 0;
+
     case OFPACT_SET_IPV4_SRC:
     case OFPACT_SET_IPV4_DST:
-    case OFPACT_SET_IPV4_DSCP:
+        if (flow->dl_type != htons(ETH_TYPE_IP)) {
+            inconsistent_match(usable_protocols);
+        }
+        return 0;
+
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
+    case OFPACT_DEC_TTL:
+        if (!is_ip_any(flow)) {
+            inconsistent_match(usable_protocols);
+        }
+        return 0;
+
     case OFPACT_SET_L4_SRC_PORT:
+        if (!is_ip_any(flow) ||
+            (flow->nw_proto != IPPROTO_TCP && flow->nw_proto != IPPROTO_UDP
+             && flow->nw_proto != IPPROTO_SCTP)) {
+            inconsistent_match(usable_protocols);
+        }
+        /* Note on which transport protocol the port numbers are set.
+         * This allows this set action to be converted to an OF1.2 set field
+         * action. */
+        ofpact_get_SET_L4_SRC_PORT(a)->flow_ip_proto = flow->nw_proto;
+        return 0;
+
     case OFPACT_SET_L4_DST_PORT:
+        if (!is_ip_any(flow) ||
+            (flow->nw_proto != IPPROTO_TCP && flow->nw_proto != IPPROTO_UDP
+             && flow->nw_proto != IPPROTO_SCTP)) {
+            inconsistent_match(usable_protocols);
+        }
+        /* Note on which transport protocol the port numbers are set.
+         * This allows this set action to be converted to an OF1.2 set field
+         * action. */
+        ofpact_get_SET_L4_DST_PORT(a)->flow_ip_proto = flow->nw_proto;
         return 0;
 
     case OFPACT_REG_MOVE:
@@ -1247,20 +2008,51 @@ ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
     case OFPACT_REG_LOAD:
         return nxm_reg_load_check(ofpact_get_REG_LOAD(a), flow);
 
+    case OFPACT_SET_FIELD:
+        mf = ofpact_get_SET_FIELD(a)->field;
+        /* Require OXM_OF_VLAN_VID to have an existing VLAN header. */
+        if (!mf_are_prereqs_ok(mf, flow) ||
+            (mf->id == MFF_VLAN_VID && !(flow->vlan_tci & htons(VLAN_CFI)))) {
+            VLOG_WARN_RL(&rl, "set_field %s lacks correct prerequisities",
+                         mf->name);
+            return OFPERR_OFPBAC_MATCH_INCONSISTENT;
+        }
+        /* Remember if we saw a vlan tag in the flow to aid translating to
+         * OpenFlow 1.1 if need be. */
+        ofpact_get_SET_FIELD(a)->flow_has_vlan =
+            (flow->vlan_tci & htons(VLAN_CFI)) == htons(VLAN_CFI);
+        if (mf->id == MFF_VLAN_TCI) {
+            /* The set field may add or remove the vlan tag,
+             * Mark the status temporarily. */
+            flow->vlan_tci = ofpact_get_SET_FIELD(a)->value.be16;
+        }
+        return 0;
+
     case OFPACT_STACK_PUSH:
         return nxm_stack_push_check(ofpact_get_STACK_PUSH(a), flow);
 
     case OFPACT_STACK_POP:
         return nxm_stack_pop_check(ofpact_get_STACK_POP(a), flow);
 
-    case OFPACT_DEC_TTL:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
     case OFPACT_SET_MPLS_TTL:
     case OFPACT_DEC_MPLS_TTL:
+        if (!eth_type_mpls(flow->dl_type)) {
+            inconsistent_match(usable_protocols);
+        }
+        return 0;
+
     case OFPACT_SET_TUNNEL:
     case OFPACT_SET_QUEUE:
     case OFPACT_POP_QUEUE:
-    case OFPACT_FIN_TIMEOUT:
     case OFPACT_RESUBMIT:
+        return 0;
+
+    case OFPACT_FIN_TIMEOUT:
+        if (flow->nw_proto != IPPROTO_TCP) {
+            inconsistent_match(usable_protocols);
+        }
         return 0;
 
     case OFPACT_LEARN:
@@ -1275,16 +2067,34 @@ ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
 
     case OFPACT_PUSH_MPLS:
         flow->dl_type = ofpact_get_PUSH_MPLS(a)->ethertype;
+        /* The packet is now MPLS and the MPLS payload is opaque.
+         * Thus nothing can be assumed about the network protocol.
+         * Temporarily mark that we have no nw_proto. */
+        flow->nw_proto = 0;
         return 0;
 
     case OFPACT_POP_MPLS:
         flow->dl_type = ofpact_get_POP_MPLS(a)->ethertype;
+        if (!eth_type_mpls(flow->dl_type)) {
+            inconsistent_match(usable_protocols);
+        }
         return 0;
 
     case OFPACT_SAMPLE:
         return 0;
 
     case OFPACT_CLEAR_ACTIONS:
+        return 0;
+
+    case OFPACT_WRITE_ACTIONS: {
+        /* Use a temporary copy of 'usable_protocols' because we can't check
+         * consistency of an action set. */
+        struct ofpact_nest *on = ofpact_get_WRITE_ACTIONS(a);
+        enum ofputil_protocol p = *usable_protocols;
+        return ofpacts_check(on->actions, ofpact_nest_get_action_len(on),
+                             flow, max_ports, table_id, n_tables, &p);
+    }
+
     case OFPACT_WRITE_METADATA:
         return 0;
 
@@ -1296,14 +2106,20 @@ ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
         return 0;
     }
 
-    case OFPACT_GOTO_TABLE:
-        if (ofpact_get_GOTO_TABLE(a)->table_id <= table_id) {
+    case OFPACT_GOTO_TABLE: {
+        uint8_t goto_table = ofpact_get_GOTO_TABLE(a)->table_id;
+        if ((table_id != 255 && goto_table <= table_id)
+            || (n_tables != 255 && goto_table >= n_tables)) {
             return OFPERR_OFPBRC_BAD_TABLE_ID;
         }
         return 0;
+    }
+
+    case OFPACT_GROUP:
+        return 0;
 
     default:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
     }
 }
 
@@ -1311,23 +2127,56 @@ ofpact_check__(const struct ofpact *a, struct flow *flow, ofp_port_t max_ports,
  * appropriate for a packet with the prerequisites satisfied by 'flow' in a
  * switch with no more than 'max_ports' ports.
  *
+ * If 'ofpacts' and 'flow' are inconsistent with one another, un-sets in
+ * '*usable_protocols' the protocols that forbid the inconsistency.  (An
+ * example of an inconsistency between match and actions is a flow that does
+ * not match on an MPLS Ethertype but has an action that pops an MPLS label.)
+ *
+ * May annotate ofpacts with information gathered from the 'flow'.
+ *
  * May temporarily modify 'flow', but restores the changes before returning. */
 enum ofperr
-ofpacts_check(const struct ofpact ofpacts[], size_t ofpacts_len,
-              struct flow *flow, ofp_port_t max_ports, uint8_t table_id)
+ofpacts_check(struct ofpact ofpacts[], size_t ofpacts_len,
+              struct flow *flow, ofp_port_t max_ports,
+              uint8_t table_id, uint8_t n_tables,
+              enum ofputil_protocol *usable_protocols)
 {
-    const struct ofpact *a;
+    struct ofpact *a;
     ovs_be16 dl_type = flow->dl_type;
+    ovs_be16 vlan_tci = flow->vlan_tci;
+    uint8_t nw_proto = flow->nw_proto;
     enum ofperr error = 0;
 
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
-        error = ofpact_check__(a, flow, max_ports, table_id);
+        error = ofpact_check__(usable_protocols, a, flow,
+                               max_ports, table_id, n_tables);
         if (error) {
             break;
         }
     }
-    flow->dl_type = dl_type; /* Restore. */
+    /* Restore fields that may have been modified. */
+    flow->dl_type = dl_type;
+    flow->vlan_tci = vlan_tci;
+    flow->nw_proto = nw_proto;
     return error;
+}
+
+/* Like ofpacts_check(), but reports inconsistencies as
+ * OFPERR_OFPBAC_MATCH_INCONSISTENT rather than clearing bits. */
+enum ofperr
+ofpacts_check_consistency(struct ofpact ofpacts[], size_t ofpacts_len,
+                          struct flow *flow, ofp_port_t max_ports,
+                          uint8_t table_id, uint8_t n_tables,
+                          enum ofputil_protocol usable_protocols)
+{
+    enum ofputil_protocol p = usable_protocols;
+    enum ofperr error;
+
+    error = ofpacts_check(ofpacts, ofpacts_len, flow, max_ports,
+                          table_id, n_tables, &p);
+    return (error ? error
+            : p != usable_protocols ? OFPERR_OFPBAC_MATCH_INCONSISTENT
+            : 0);
 }
 
 /* Verifies that the 'ofpacts_len' bytes of actions in 'ofpacts' are
@@ -1338,12 +2187,15 @@ ofpacts_verify(const struct ofpact ofpacts[], size_t ofpacts_len)
     const struct ofpact *a;
     enum ovs_instruction_type inst;
 
-    inst = OVSINST_OFPIT11_APPLY_ACTIONS;
+    inst = OVSINST_OFPIT13_METER;
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         enum ovs_instruction_type next;
 
         next = ovs_instruction_type_from_ofpact_type(a->type);
-        if (inst != OVSINST_OFPIT11_APPLY_ACTIONS && next <= inst) {
+        if (a > ofpacts
+            && (inst == OVSINST_OFPIT11_APPLY_ACTIONS
+                ? next < inst
+                : next <= inst)) {
             const char *name = ovs_instruction_name_from_type(inst);
             const char *next_name = ovs_instruction_name_from_type(next);
 
@@ -1534,6 +2386,16 @@ ofpact_to_nxast(const struct ofpact *a, struct ofpbuf *out)
         ofpact_dec_ttl_to_nxast(ofpact_get_DEC_TTL(a), out);
         break;
 
+    case OFPACT_SET_MPLS_LABEL:
+        ofputil_put_NXAST_SET_MPLS_LABEL(out)->label
+            = ofpact_get_SET_MPLS_LABEL(a)->label;
+        break;
+
+    case OFPACT_SET_MPLS_TC:
+        ofputil_put_NXAST_SET_MPLS_TC(out)->tc
+            = ofpact_get_SET_MPLS_TC(a)->tc;
+        break;
+
     case OFPACT_SET_MPLS_TTL:
         ofputil_put_NXAST_SET_MPLS_TTL(out)->ttl
             = ofpact_get_SET_MPLS_TTL(a)->ttl;
@@ -1598,6 +2460,7 @@ ofpact_to_nxast(const struct ofpact *a, struct ofpbuf *out)
         ofpact_sample_to_nxast(ofpact_get_SAMPLE(a), out);
         break;
 
+    case OFPACT_GROUP:
     case OFPACT_OUTPUT:
     case OFPACT_ENQUEUE:
     case OFPACT_SET_VLAN_VID:
@@ -1608,13 +2471,17 @@ ofpact_to_nxast(const struct ofpact *a, struct ofpbuf *out)
     case OFPACT_SET_ETH_DST:
     case OFPACT_SET_IPV4_SRC:
     case OFPACT_SET_IPV4_DST:
-    case OFPACT_SET_IPV4_DSCP:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
     case OFPACT_SET_L4_SRC_PORT:
     case OFPACT_SET_L4_DST_PORT:
+    case OFPACT_WRITE_ACTIONS:
     case OFPACT_CLEAR_ACTIONS:
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
-        NOT_REACHED();
+    case OFPACT_SET_FIELD:
+        OVS_NOT_REACHED();
     }
 }
 
@@ -1688,9 +2555,9 @@ ofpact_to_openflow10(const struct ofpact *a, struct ofpbuf *out)
             = ofpact_get_SET_IPV4_DST(a)->ipv4;
         break;
 
-    case OFPACT_SET_IPV4_DSCP:
+    case OFPACT_SET_IP_DSCP:
         ofputil_put_OFPAT10_SET_NW_TOS(out)->nw_tos
-            = ofpact_get_SET_IPV4_DSCP(a)->dscp;
+            = ofpact_get_SET_IP_DSCP(a)->dscp;
         break;
 
     case OFPACT_SET_L4_SRC_PORT:
@@ -1704,10 +2571,24 @@ ofpact_to_openflow10(const struct ofpact *a, struct ofpbuf *out)
         break;
 
     case OFPACT_PUSH_VLAN:
+        /* PUSH is a side effect of a SET_VLAN_VID/PCP, which should
+         * follow this action. */
+        break;
+
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
     case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_WRITE_ACTIONS:
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
         /* XXX */
+        break;
+
+    case OFPACT_GROUP:
+        break;
+
+    case OFPACT_SET_FIELD:
+        set_field_to_openflow(ofpact_get_SET_FIELD(a), out);
         break;
 
     case OFPACT_CONTROLLER:
@@ -1718,6 +2599,8 @@ ofpact_to_openflow10(const struct ofpact *a, struct ofpbuf *out)
     case OFPACT_STACK_PUSH:
     case OFPACT_STACK_POP:
     case OFPACT_DEC_TTL:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
     case OFPACT_SET_MPLS_TTL:
     case OFPACT_DEC_MPLS_TTL:
     case OFPACT_SET_TUNNEL:
@@ -1735,20 +2618,6 @@ ofpact_to_openflow10(const struct ofpact *a, struct ofpbuf *out)
     case OFPACT_SAMPLE:
         ofpact_to_nxast(a, out);
         break;
-    }
-}
-
-/* Converts the 'ofpacts_len' bytes of ofpacts in 'ofpacts' into OpenFlow 1.0
- * actions in 'openflow', appending the actions to any existing data in
- * 'openflow'. */
-void
-ofpacts_put_openflow10(const struct ofpact ofpacts[], size_t ofpacts_len,
-                       struct ofpbuf *openflow)
-{
-    const struct ofpact *a;
-
-    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
-        ofpact_to_openflow10(a, openflow);
     }
 }
 
@@ -1790,11 +2659,23 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         break;
 
     case OFPACT_SET_VLAN_VID:
+        /* Push a VLAN tag, if one was not seen at action validation time. */
+        if (!ofpact_get_SET_VLAN_VID(a)->flow_has_vlan
+            && ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
+            ofputil_put_OFPAT11_PUSH_VLAN(out)->ethertype
+                = htons(ETH_TYPE_VLAN_8021Q);
+        }
         ofputil_put_OFPAT11_SET_VLAN_VID(out)->vlan_vid
             = htons(ofpact_get_SET_VLAN_VID(a)->vlan_vid);
         break;
 
     case OFPACT_SET_VLAN_PCP:
+        /* Push a VLAN tag, if one was not seen at action validation time. */
+        if (!ofpact_get_SET_VLAN_PCP(a)->flow_has_vlan
+            && ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
+            ofputil_put_OFPAT11_PUSH_VLAN(out)->ethertype
+                = htons(ETH_TYPE_VLAN_8021Q);
+        }
         ofputil_put_OFPAT11_SET_VLAN_PCP(out)->vlan_pcp
             = ofpact_get_SET_VLAN_PCP(a)->vlan_pcp;
         break;
@@ -1834,9 +2715,19 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
             = ofpact_get_SET_IPV4_DST(a)->ipv4;
         break;
 
-    case OFPACT_SET_IPV4_DSCP:
+    case OFPACT_SET_IP_DSCP:
         ofputil_put_OFPAT11_SET_NW_TOS(out)->nw_tos
-            = ofpact_get_SET_IPV4_DSCP(a)->dscp;
+            = ofpact_get_SET_IP_DSCP(a)->dscp;
+        break;
+
+    case OFPACT_SET_IP_ECN:
+        ofputil_put_OFPAT11_SET_NW_ECN(out)->nw_ecn
+            = ofpact_get_SET_IP_ECN(a)->ecn;
+        break;
+
+    case OFPACT_SET_IP_TTL:
+        ofputil_put_OFPAT11_SET_NW_TTL(out)->nw_ttl
+            = ofpact_get_SET_IP_TTL(a)->ttl;
         break;
 
     case OFPACT_SET_L4_SRC_PORT:
@@ -1851,6 +2742,16 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
 
     case OFPACT_DEC_TTL:
         ofpact_dec_ttl_to_openflow11(ofpact_get_DEC_TTL(a), out);
+        break;
+
+    case OFPACT_SET_MPLS_LABEL:
+        ofputil_put_OFPAT11_SET_MPLS_LABEL(out)->mpls_label
+            = ofpact_get_SET_MPLS_LABEL(a)->label;
+        break;
+
+    case OFPACT_SET_MPLS_TC:
+        ofputil_put_OFPAT11_SET_MPLS_TC(out)->mpls_tc
+            = ofpact_get_SET_MPLS_TC(a)->tc;
         break;
 
     case OFPACT_SET_MPLS_TTL:
@@ -1878,9 +2779,19 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         break;
 
     case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_WRITE_ACTIONS:
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
-        NOT_REACHED();
+        OVS_NOT_REACHED();
+
+    case OFPACT_GROUP:
+        ofputil_put_OFPAT11_GROUP(out)->group_id =
+            htonl(ofpact_get_GROUP(a)->group_id);
+        break;
+
+    case OFPACT_SET_FIELD:
+        set_field_to_openflow(ofpact_get_SET_FIELD(a), out);
+        break;
 
     case OFPACT_CONTROLLER:
     case OFPACT_OUTPUT_REG:
@@ -1903,20 +2814,169 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
     }
 }
 
-/* Converts the ofpacts in 'ofpacts' (terminated by OFPACT_END) into OpenFlow
- * 1.1 actions in 'openflow', appending the actions to any existing data in
+/* Output deprecated set actions as set_field actions. */
+static void
+ofpact_to_openflow12(const struct ofpact *a, struct ofpbuf *out)
+{
+    enum mf_field_id field;
+    union mf_value value;
+    struct ofpact_l4_port *l4port;
+    uint8_t proto;
+
+    /*
+     * Convert actions deprecated in OpenFlow 1.2 to Set Field actions,
+     * if possible.
+     */
+    switch ((int)a->type) {
+    case OFPACT_SET_VLAN_VID:
+    case OFPACT_SET_VLAN_PCP:
+    case OFPACT_SET_ETH_SRC:
+    case OFPACT_SET_ETH_DST:
+    case OFPACT_SET_IPV4_SRC:
+    case OFPACT_SET_IPV4_DST:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_L4_SRC_PORT:
+    case OFPACT_SET_L4_DST_PORT:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
+    case OFPACT_SET_TUNNEL:  /* Convert to a set_field, too. */
+
+        switch ((int)a->type) {
+
+        case OFPACT_SET_VLAN_VID:
+            if (!ofpact_get_SET_VLAN_VID(a)->flow_has_vlan &&
+                ofpact_get_SET_VLAN_VID(a)->push_vlan_if_needed) {
+                ofputil_put_OFPAT11_PUSH_VLAN(out)->ethertype
+                    = htons(ETH_TYPE_VLAN_8021Q);
+            }
+            field = MFF_VLAN_VID;
+            /* Set-Field on OXM_OF_VLAN_VID must have OFPVID_PRESENT set. */
+            value.be16 = htons(ofpact_get_SET_VLAN_VID(a)->vlan_vid
+                               | OFPVID12_PRESENT);
+            break;
+
+        case OFPACT_SET_VLAN_PCP:
+            if (!ofpact_get_SET_VLAN_PCP(a)->flow_has_vlan &&
+                ofpact_get_SET_VLAN_PCP(a)->push_vlan_if_needed) {
+                ofputil_put_OFPAT11_PUSH_VLAN(out)->ethertype
+                    = htons(ETH_TYPE_VLAN_8021Q);
+            }
+            field = MFF_VLAN_PCP;
+            value.u8 = ofpact_get_SET_VLAN_PCP(a)->vlan_pcp;
+            break;
+
+        case OFPACT_SET_ETH_SRC:
+            field = MFF_ETH_SRC;
+            memcpy(value.mac, ofpact_get_SET_ETH_SRC(a)->mac, ETH_ADDR_LEN);
+            break;
+
+        case OFPACT_SET_ETH_DST:
+            field = MFF_ETH_DST;
+            memcpy(value.mac, ofpact_get_SET_ETH_DST(a)->mac, ETH_ADDR_LEN);
+            break;
+
+        case OFPACT_SET_IPV4_SRC:
+            field = MFF_IPV4_SRC;
+            value.be32 = ofpact_get_SET_IPV4_SRC(a)->ipv4;
+            break;
+
+        case OFPACT_SET_IPV4_DST:
+            field = MFF_IPV4_DST;
+            value.be32 = ofpact_get_SET_IPV4_DST(a)->ipv4;
+            break;
+
+        case OFPACT_SET_IP_DSCP:
+            field = MFF_IP_DSCP_SHIFTED; /* OXM_OF_IP_DSCP */
+            value.u8 = ofpact_get_SET_IP_DSCP(a)->dscp >> 2;
+            break;
+
+        case OFPACT_SET_IP_ECN:
+            field = MFF_IP_ECN;
+            value.u8 = ofpact_get_SET_IP_ECN(a)->ecn;
+            break;
+
+        case OFPACT_SET_L4_SRC_PORT:
+            /* We keep track of IP protocol while translating actions to be
+             * able to translate to the proper OXM type.
+             * If the IP protocol type is unknown, the translation cannot
+             * be performed and we will send the action using the original
+             * action type. */
+            l4port = ofpact_get_SET_L4_SRC_PORT(a);
+            proto = l4port->flow_ip_proto;
+            field = proto == IPPROTO_TCP ? MFF_TCP_SRC
+                : proto == IPPROTO_UDP ? MFF_UDP_SRC
+                : proto == IPPROTO_SCTP ? MFF_SCTP_SRC
+                : MFF_N_IDS; /* RFC: Unknown IP proto, do not translate. */
+            value.be16 = htons(l4port->port);
+            break;
+
+        case OFPACT_SET_L4_DST_PORT:
+            l4port = ofpact_get_SET_L4_DST_PORT(a);
+            proto = l4port->flow_ip_proto;
+            field = proto == IPPROTO_TCP ? MFF_TCP_DST
+                : proto == IPPROTO_UDP ? MFF_UDP_DST
+                : proto == IPPROTO_SCTP ? MFF_SCTP_DST
+                : MFF_N_IDS; /* RFC: Unknown IP proto, do not translate. */
+            value.be16 = htons(l4port->port);
+            break;
+
+        case OFPACT_SET_MPLS_LABEL:
+            field = MFF_MPLS_LABEL;
+            value.be32 = ofpact_get_SET_MPLS_LABEL(a)->label;
+            break;
+
+        case OFPACT_SET_MPLS_TC:
+            field = MFF_MPLS_TC;
+            value.u8 = ofpact_get_SET_MPLS_TC(a)->tc;
+            break;
+
+        case OFPACT_SET_TUNNEL:
+            field = MFF_TUN_ID;
+            value.be64 = htonll(ofpact_get_SET_TUNNEL(a)->tun_id);
+            break;
+
+        default:
+            field = MFF_N_IDS;
+        }
+
+        /* Put the action out as a set field action, if possible. */
+        if (field < MFF_N_IDS) {
+            uint64_t ofpacts_stub[128 / 8];
+            struct ofpbuf sf_act;
+            struct ofpact_set_field *sf;
+
+            ofpbuf_use_stub(&sf_act, ofpacts_stub, sizeof ofpacts_stub);
+            sf = ofpact_put_SET_FIELD(&sf_act);
+            sf->field = mf_from_id(field);
+            memcpy(&sf->value, &value, sf->field->n_bytes);
+            set_field_to_openflow(sf, out);
+            return;
+        }
+    }
+
+    ofpact_to_openflow11(a, out);
+}
+
+/* Converts the 'ofpacts_len' bytes of ofpacts in 'ofpacts' into OpenFlow
+ * actions in 'openflow', appending the actions to any existing data in
  * 'openflow'. */
 size_t
-ofpacts_put_openflow11_actions(const struct ofpact ofpacts[],
-                               size_t ofpacts_len, struct ofpbuf *openflow)
+ofpacts_put_openflow_actions(const struct ofpact ofpacts[], size_t ofpacts_len,
+                             struct ofpbuf *openflow,
+                             enum ofp_version ofp_version)
 {
     const struct ofpact *a;
     size_t start_size = openflow->size;
 
-    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
-        ofpact_to_openflow11(a, openflow);
-    }
+    void (*translate)(const struct ofpact *a, struct ofpbuf *out) =
+        (ofp_version == OFP10_VERSION) ? ofpact_to_openflow10 :
+        (ofp_version == OFP11_VERSION) ? ofpact_to_openflow11 :
+        ofpact_to_openflow12;
 
+    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
+        translate(a, openflow);
+    }
     return openflow->size - start_size;
 }
 
@@ -1935,11 +2995,14 @@ ofpacts_update_instruction_actions(struct ofpbuf *openflow, size_t ofs)
 }
 
 void
-ofpacts_put_openflow11_instructions(const struct ofpact ofpacts[],
-                                    size_t ofpacts_len,
-                                    struct ofpbuf *openflow)
+ofpacts_put_openflow_instructions(const struct ofpact ofpacts[],
+                                  size_t ofpacts_len,
+                                  struct ofpbuf *openflow,
+                                  enum ofp_version ofp_version)
 {
     const struct ofpact *a;
+
+    ovs_assert(ofp_version >= OFP11_VERSION);
 
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         switch (ovs_instruction_type_from_ofpact_type(a->type)) {
@@ -1966,15 +3029,16 @@ ofpacts_put_openflow11_instructions(const struct ofpact ofpacts[],
             break;
         }
 
-        case OVSINST_OFPIT13_METER: {
-            const struct ofpact_meter *om;
-            struct ofp13_instruction_meter *oim;
+        case OVSINST_OFPIT13_METER:
+            if (ofp_version >= OFP13_VERSION) {
+                const struct ofpact_meter *om;
+                struct ofp13_instruction_meter *oim;
 
-            om = ofpact_get_METER(a);
-            oim = instruction_put_OFPIT13_METER(openflow);
-            oim->meter_id = htonl(om->meter_id);
+                om = ofpact_get_METER(a);
+                oim = instruction_put_OFPIT13_METER(openflow);
+                oim->meter_id = htonl(om->meter_id);
+            }
             break;
-        }
 
         case OVSINST_OFPIT11_APPLY_ACTIONS: {
             const size_t ofs = openflow->size;
@@ -1989,7 +3053,11 @@ ofpacts_put_openflow11_instructions(const struct ofpact ofpacts[],
                     != OVSINST_OFPIT11_APPLY_ACTIONS) {
                     break;
                 }
-                ofpact_to_openflow11(action, openflow);
+                if (ofp_version == OFP11_VERSION) {
+                    ofpact_to_openflow11(action, openflow);
+                } else {
+                    ofpact_to_openflow12(action, openflow);
+                }
                 processed = action;
             }
             ofpacts_update_instruction_actions(openflow, ofs);
@@ -1997,8 +3065,19 @@ ofpacts_put_openflow11_instructions(const struct ofpact ofpacts[],
             break;
         }
 
-        case OVSINST_OFPIT11_WRITE_ACTIONS:
-            NOT_REACHED();
+        case OVSINST_OFPIT11_WRITE_ACTIONS: {
+            const size_t ofs = openflow->size;
+            const struct ofpact_nest *on;
+
+            on = ofpact_get_WRITE_ACTIONS(a);
+            instruction_put_OFPIT11_WRITE_ACTIONS(openflow);
+            ofpacts_put_openflow_actions(on->actions,
+                                         ofpact_nest_get_action_len(on),
+                                         openflow, ofp_version);
+            ofpacts_update_instruction_actions(openflow, ofs);
+
+            break;
+        }
         }
     }
 }
@@ -2025,14 +3104,19 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_SET_ETH_DST:
     case OFPACT_SET_IPV4_SRC:
     case OFPACT_SET_IPV4_DST:
-    case OFPACT_SET_IPV4_DSCP:
+    case OFPACT_SET_IP_DSCP:
+    case OFPACT_SET_IP_ECN:
+    case OFPACT_SET_IP_TTL:
     case OFPACT_SET_L4_SRC_PORT:
     case OFPACT_SET_L4_DST_PORT:
     case OFPACT_REG_MOVE:
     case OFPACT_REG_LOAD:
+    case OFPACT_SET_FIELD:
     case OFPACT_STACK_PUSH:
     case OFPACT_STACK_POP:
     case OFPACT_DEC_TTL:
+    case OFPACT_SET_MPLS_LABEL:
+    case OFPACT_SET_MPLS_TC:
     case OFPACT_SET_MPLS_TTL:
     case OFPACT_DEC_MPLS_TTL:
     case OFPACT_SET_TUNNEL:
@@ -2049,8 +3133,10 @@ ofpact_outputs_to_port(const struct ofpact *ofpact, ofp_port_t port)
     case OFPACT_POP_MPLS:
     case OFPACT_SAMPLE:
     case OFPACT_CLEAR_ACTIONS:
+    case OFPACT_WRITE_ACTIONS:
     case OFPACT_GOTO_TABLE:
     case OFPACT_METER:
+    case OFPACT_GROUP:
     default:
         return false;
     }
@@ -2066,6 +3152,24 @@ ofpacts_output_to_port(const struct ofpact *ofpacts, size_t ofpacts_len,
 
     OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
         if (ofpact_outputs_to_port(a, port)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Returns true if any action in the 'ofpacts_len' bytes of 'ofpacts' outputs
+ * to 'group', false otherwise. */
+bool
+ofpacts_output_to_group(const struct ofpact *ofpacts, size_t ofpacts_len,
+                        uint32_t group_id)
+{
+    const struct ofpact *a;
+
+    OFPACT_FOR_EACH (a, ofpacts, ofpacts_len) {
+        if (a->type == OFPACT_GROUP
+            && ofpact_get_GROUP(a)->group_id == group_id) {
             return true;
         }
     }
@@ -2165,6 +3269,8 @@ ofpact_format(const struct ofpact *a, struct ds *s)
     const struct ofpact_metadata *metadata;
     const struct ofpact_tunnel *tunnel;
     const struct ofpact_sample *sample;
+    const struct ofpact_set_field *set_field;
+    const struct mf_field *mf;
     ofp_port_t port;
 
     switch (a->type) {
@@ -2212,7 +3318,7 @@ ofpact_format(const struct ofpact *a, struct ds *s)
         enqueue = ofpact_get_ENQUEUE(a);
         ds_put_format(s, "enqueue:");
         ofputil_format_port(enqueue->port, s);
-        ds_put_format(s, "q%"PRIu32, enqueue->queue);
+        ds_put_format(s, ":%"PRIu32, enqueue->queue);
         break;
 
     case OFPACT_OUTPUT_REG:
@@ -2225,17 +3331,24 @@ ofpact_format(const struct ofpact *a, struct ds *s)
         break;
 
     case OFPACT_SET_VLAN_VID:
-        ds_put_format(s, "mod_vlan_vid:%"PRIu16,
+        ds_put_format(s, "%s:%"PRIu16,
+                      (a->compat == OFPUTIL_OFPAT11_SET_VLAN_VID
+                       ? "set_vlan_vid"
+                       : "mod_vlan_vid"),
                       ofpact_get_SET_VLAN_VID(a)->vlan_vid);
         break;
 
     case OFPACT_SET_VLAN_PCP:
-        ds_put_format(s, "mod_vlan_pcp:%"PRIu8,
+        ds_put_format(s, "%s:%"PRIu8,
+                      (a->compat == OFPUTIL_OFPAT11_SET_VLAN_PCP
+                       ? "set_vlan_pcp"
+                       : "mod_vlan_pcp"),
                       ofpact_get_SET_VLAN_PCP(a)->vlan_pcp);
         break;
 
     case OFPACT_STRIP_VLAN:
-        ds_put_cstr(s, "strip_vlan");
+        ds_put_cstr(s, a->compat == OFPUTIL_OFPAT11_POP_VLAN
+                    ? "pop_vlan" : "strip_vlan");
         break;
 
     case OFPACT_PUSH_VLAN:
@@ -2263,8 +3376,16 @@ ofpact_format(const struct ofpact *a, struct ds *s)
                       IP_ARGS(ofpact_get_SET_IPV4_DST(a)->ipv4));
         break;
 
-    case OFPACT_SET_IPV4_DSCP:
-        ds_put_format(s, "mod_nw_tos:%d", ofpact_get_SET_IPV4_DSCP(a)->dscp);
+    case OFPACT_SET_IP_DSCP:
+        ds_put_format(s, "mod_nw_tos:%d", ofpact_get_SET_IP_DSCP(a)->dscp);
+        break;
+
+    case OFPACT_SET_IP_ECN:
+        ds_put_format(s, "mod_nw_ecn:%d", ofpact_get_SET_IP_ECN(a)->ecn);
+        break;
+
+    case OFPACT_SET_IP_TTL:
+        ds_put_format(s, "mod_nw_ttl:%d", ofpact_get_SET_IP_TTL(a)->ttl);
         break;
 
     case OFPACT_SET_L4_SRC_PORT:
@@ -2283,6 +3404,14 @@ ofpact_format(const struct ofpact *a, struct ds *s)
         nxm_format_reg_load(ofpact_get_REG_LOAD(a), s);
         break;
 
+    case OFPACT_SET_FIELD:
+        set_field = ofpact_get_SET_FIELD(a);
+        mf = set_field->field;
+        ds_put_format(s, "set_field:");
+        mf_format(mf, &set_field->value, NULL, s);
+        ds_put_format(s, "->%s", mf->name);
+        break;
+
     case OFPACT_STACK_PUSH:
         nxm_format_stack_push(ofpact_get_STACK_PUSH(a), s);
         break;
@@ -2293,6 +3422,16 @@ ofpact_format(const struct ofpact *a, struct ds *s)
 
     case OFPACT_DEC_TTL:
         print_dec_ttl(ofpact_get_DEC_TTL(a), s);
+        break;
+
+    case OFPACT_SET_MPLS_LABEL:
+        ds_put_format(s, "set_mpls_label(%"PRIu32")",
+                      ntohl(ofpact_get_SET_MPLS_LABEL(a)->label));
+        break;
+
+    case OFPACT_SET_MPLS_TC:
+        ds_put_format(s, "set_mpls_ttl(%"PRIu8")",
+                      ofpact_get_SET_MPLS_TC(a)->tc);
         break;
 
     case OFPACT_SET_MPLS_TTL:
@@ -2378,6 +3517,16 @@ ofpact_format(const struct ofpact *a, struct ds *s)
             sample->obs_domain_id, sample->obs_point_id);
         break;
 
+    case OFPACT_WRITE_ACTIONS: {
+        struct ofpact_nest *on = ofpact_get_WRITE_ACTIONS(a);
+        ds_put_format(s, "%s(",
+                      ovs_instruction_name_from_type(
+                          OVSINST_OFPIT11_WRITE_ACTIONS));
+        ofpacts_format(on->actions, ofpact_nest_get_action_len(on), s);
+        ds_put_char(s, ')');
+        break;
+    }
+
     case OFPACT_CLEAR_ACTIONS:
         ds_put_format(s, "%s",
                       ovs_instruction_name_from_type(
@@ -2390,7 +3539,7 @@ ofpact_format(const struct ofpact *a, struct ds *s)
                       ovs_instruction_name_from_type(
                           OVSINST_OFPIT11_WRITE_METADATA),
                       ntohll(metadata->metadata));
-        if (metadata->mask != htonll(UINT64_MAX)) {
+        if (metadata->mask != OVS_BE64_MAX) {
             ds_put_format(s, "/%#"PRIx64, ntohll(metadata->mask));
         }
         break;
@@ -2407,6 +3556,11 @@ ofpact_format(const struct ofpact *a, struct ds *s)
                       ovs_instruction_name_from_type(OVSINST_OFPIT13_METER),
                       ofpact_get_METER(a)->meter_id);
         break;
+
+    case OFPACT_GROUP:
+        ds_put_format(s, "group:%"PRIu32,
+                      ofpact_get_GROUP(a)->group_id);
+        break;
     }
 }
 
@@ -2416,7 +3570,6 @@ void
 ofpacts_format(const struct ofpact *ofpacts, size_t ofpacts_len,
                struct ds *string)
 {
-    ds_put_cstr(string, "actions=");
     if (!ofpacts_len) {
         ds_put_cstr(string, "drop");
     } else {
@@ -2485,16 +3638,4 @@ ofpact_pad(struct ofpbuf *ofpacts)
     if (rem) {
         ofpbuf_put_zeros(ofpacts, OFPACT_ALIGNTO - rem);
     }
-}
-
-void
-ofpact_set_field_init(struct ofpact_reg_load *load, const struct mf_field *mf,
-                      const void *src)
-{
-    load->ofpact.compat = OFPUTIL_OFPAT12_SET_FIELD;
-    load->dst.field = mf;
-    load->dst.ofs = 0;
-    load->dst.n_bits = mf->n_bits;
-    bitwise_copy(src, mf->n_bytes, load->dst.ofs,
-                 &load->subvalue, sizeof load->subvalue, 0, mf->n_bits);
 }

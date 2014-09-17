@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "byte-order.h"
+#include "connectivity.h"
 #include "dynamic-string.h"
 #include "flow.h"
 #include "hash.h"
@@ -31,6 +32,7 @@
 #include "packets.h"
 #include "poll-loop.h"
 #include "random.h"
+#include "seq.h"
 #include "timer.h"
 #include "timeval.h"
 #include "unixctl.h"
@@ -129,6 +131,8 @@ struct cfm {
     atomic_bool check_tnl_key; /* Verify the tunnel key of inbound packets? */
     atomic_bool extended;      /* Extended mode. */
     atomic_int ref_cnt;
+
+    uint64_t flap_count;       /* Count the flaps since boot. */
 };
 
 /* Remote MPs represent foreign network entities that are configured to have
@@ -232,7 +236,7 @@ static int
 ccm_interval_to_ms(uint8_t interval)
 {
     switch (interval) {
-    case 0:  NOT_REACHED(); /* Explicitly not supported by 802.1ag. */
+    case 0:  OVS_NOT_REACHED(); /* Explicitly not supported by 802.1ag. */
     case 1:  return 3;      /* Not recommended due to timer resolution. */
     case 2:  return 10;     /* Not recommended due to timer resolution. */
     case 3:  return 100;
@@ -240,10 +244,10 @@ ccm_interval_to_ms(uint8_t interval)
     case 5:  return 10000;
     case 6:  return 60000;
     case 7:  return 600000;
-    default: NOT_REACHED(); /* Explicitly not supported by 802.1ag. */
+    default: OVS_NOT_REACHED(); /* Explicitly not supported by 802.1ag. */
     }
 
-    NOT_REACHED();
+    OVS_NOT_REACHED();
 }
 
 static long long int
@@ -330,6 +334,7 @@ cfm_create(const struct netdev *netdev) OVS_EXCLUDED(mutex)
     cfm->fault_override = -1;
     cfm->health = -1;
     cfm->last_tx = 0;
+    cfm->flap_count = 0;
     atomic_init(&cfm->extended, false);
     atomic_init(&cfm->check_tnl_key, false);
     atomic_init(&cfm->ref_cnt, 1);
@@ -392,7 +397,12 @@ cfm_run(struct cfm *cfm) OVS_EXCLUDED(mutex)
     if (timer_expired(&cfm->fault_timer)) {
         long long int interval = cfm_fault_interval(cfm);
         struct remote_mp *rmp, *rmp_next;
-        bool old_cfm_fault = cfm->fault;
+        enum cfm_fault_reason old_cfm_fault = cfm->fault;
+        uint64_t old_flap_count = cfm->flap_count;
+        int old_health = cfm->health;
+        size_t old_rmps_array_len = cfm->rmps_array_len;
+        bool old_rmps_deleted = false;
+        bool old_rmp_opup = cfm->remote_opup;
         bool demand_override;
         bool rmp_set_opup = false;
         bool rmp_set_opdown = false;
@@ -450,6 +460,7 @@ cfm_run(struct cfm *cfm) OVS_EXCLUDED(mutex)
                           " %lldms", cfm->name, rmp->mpid,
                           time_msec() - rmp->last_rx);
                 if (!demand_override) {
+                    old_rmps_deleted = true;
                     hmap_remove(&cfm->remote_mps, &rmp->node);
                     free(rmp);
                 }
@@ -477,16 +488,33 @@ cfm_run(struct cfm *cfm) OVS_EXCLUDED(mutex)
             cfm->fault |= CFM_FAULT_RECV;
         }
 
-        if (old_cfm_fault != cfm->fault && !VLOG_DROP_INFO(&rl)) {
-            struct ds ds = DS_EMPTY_INITIALIZER;
+        if (old_cfm_fault != cfm->fault) {
+            if (!VLOG_DROP_INFO(&rl)) {
+                struct ds ds = DS_EMPTY_INITIALIZER;
 
-            ds_put_cstr(&ds, "from [");
-            ds_put_cfm_fault(&ds, old_cfm_fault);
-            ds_put_cstr(&ds, "] to [");
-            ds_put_cfm_fault(&ds, cfm->fault);
-            ds_put_char(&ds, ']');
-            VLOG_INFO("%s: CFM faults changed %s.", cfm->name, ds_cstr(&ds));
-            ds_destroy(&ds);
+                ds_put_cstr(&ds, "from [");
+                ds_put_cfm_fault(&ds, old_cfm_fault);
+                ds_put_cstr(&ds, "] to [");
+                ds_put_cfm_fault(&ds, cfm->fault);
+                ds_put_char(&ds, ']');
+                VLOG_INFO("%s: CFM faults changed %s.", cfm->name, ds_cstr(&ds));
+                ds_destroy(&ds);
+            }
+
+            /* If there is a flap, increments the counter. */
+            if (old_cfm_fault == 0 || cfm->fault == 0) {
+                cfm->flap_count++;
+            }
+        }
+
+        /* These variables represent the cfm session status, it is desirable
+         * to update them to database immediately after change. */
+        if (old_health != cfm->health
+            || old_rmp_opup != cfm->remote_opup
+            || (old_rmps_array_len != cfm->rmps_array_len || old_rmps_deleted)
+            || old_cfm_fault != cfm->fault
+            || old_flap_count != cfm->flap_count) {
+            seq_change(connectivity_seq_get());
         }
 
         cfm->booted = true;
@@ -580,11 +608,26 @@ cfm_compose_ccm(struct cfm *cfm, struct ofpbuf *packet,
 void
 cfm_wait(struct cfm *cfm) OVS_EXCLUDED(mutex)
 {
-    ovs_mutex_lock(&mutex);
-    timer_wait(&cfm->tx_timer);
-    timer_wait(&cfm->fault_timer);
-    ovs_mutex_unlock(&mutex);
+    poll_timer_wait_until(cfm_wake_time(cfm));
 }
+
+
+/* Returns the next cfm wakeup time. */
+long long int
+cfm_wake_time(struct cfm *cfm) OVS_EXCLUDED(mutex)
+{
+    long long int retval;
+
+    if (!cfm) {
+        return LLONG_MAX;
+    }
+
+    ovs_mutex_lock(&mutex);
+    retval = MIN(cfm->tx_timer.t, cfm->fault_timer.t);
+    ovs_mutex_unlock(&mutex);
+    return retval;
+}
+
 
 /* Configures 'cfm' with settings from 's'. */
 bool
@@ -819,6 +862,17 @@ cfm_get_fault(const struct cfm *cfm) OVS_EXCLUDED(mutex)
     return fault;
 }
 
+/* Gets the number of cfm fault flapping since start. */
+uint64_t
+cfm_get_flap_count(const struct cfm *cfm) OVS_EXCLUDED(mutex)
+{
+    uint64_t flap_count;
+    ovs_mutex_lock(&mutex);
+    flap_count = cfm->flap_count;
+    ovs_mutex_unlock(&mutex);
+    return flap_count;
+}
+
 /* Gets the health of 'cfm'.  Returns an integer between 0 and 100 indicating
  * the health of the link as a percentage of ccm frames received in
  * CFM_HEALTH_INTERVAL * 'fault_interval' if there is only 1 remote_mpid,
@@ -984,6 +1038,7 @@ cfm_unixctl_set_fault(struct unixctl_conn *conn, int argc, const char *argv[],
         }
     }
 
+    seq_change(connectivity_seq_get());
     unixctl_command_reply(conn, "OK");
 
 out:
