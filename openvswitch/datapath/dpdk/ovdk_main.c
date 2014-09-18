@@ -216,7 +216,7 @@ configure_lcores_all(void)
 
 	rte_eal_mp_wait_lcore();
 
-	RTE_LOG(INFO, APP, "Successfully initialized lcores\n");
+	RTE_LOG(NOTICE, APP, "Successfully initialized lcores\n");
 
 	RTE_LCORE_FOREACH(lcore_id) {
 		configure_lcore(lcore_id);
@@ -279,7 +279,7 @@ configure_signal_handlers(void)
 static void
 handle_signal(__rte_unused int sig)
 {
-	RTE_LOG(INFO, APP, "Shutting down application...\n");
+	RTE_LOG(NOTICE, APP, "Shutting down application...\n");
 
 	continue_lcore = false;
 }

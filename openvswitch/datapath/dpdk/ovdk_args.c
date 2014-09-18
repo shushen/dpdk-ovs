@@ -56,8 +56,13 @@ static const char *progname;
 static uint64_t port_mask = 0;
 static int stats_interval = 0;
 static int stats_core = -1;
-/* Default log level - used if '-v' parameter not supplied */
-static unsigned log_level = RTE_LOG_ERR;
+/*
+ * Default log level - used if '-v' parameter not supplied. 'NOTICE' is used as
+ * this provides a good balance between verbosity and the determinism required
+ * by applications like OpenStack (which parse output for indications of when
+ * the application is started/shutting down).
+ */
+static unsigned log_level = RTE_LOG_NOTICE;
 
 static uint32_t max_frame_size = OVDK_DEFAULT_MAX_FRAME_SIZE;
 
@@ -81,11 +86,9 @@ ovdk_args_usage(const char *name)
 	    "Optional Arguments:\n"
 	    "  -v LOG_LEVEL                verbosity of ovs-dpdk logging "
 	                                   "(default: 4)\n"
-	    "                              1=EMERGENCY,	2=ALERT,"
-	                                   "	3=CRITICAL,\n"
-	    "                              4=ERROR		5=WARNING,	"
-	                                   "6=NOTICE,\n"
-	    "                              7=INFORMATION,	8=DEBUG)\n"
+	    "                              1=EMERGENCY, 2=ALERT, 3=CRITICAL,\n"
+	    "                              4=ERROR, 5=WARNING, 6=NOTICE,\n"
+	    "                              7=INFORMATION, 8=DEBUG)\n"
 	    "                              ** Higher log levels print all "
 	                                   "lower level logs **\n"
 	    "  --stats_int INT             print stats every INT (default: 0)\n"
