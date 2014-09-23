@@ -74,14 +74,16 @@ extern int rte_eal_init(int argc, char **argv);
 int
 main(int argc, char *argv[])
 {
+#ifdef HAVE_DPDK
     int retval = 0;
 
     if ((retval = rte_eal_init(argc, argv)) < 0) {
         return EXIT_FAILURE;
     }
-
     argc -= retval;
     argv += retval;
+#endif /* HAVE_DPDK */
+
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);

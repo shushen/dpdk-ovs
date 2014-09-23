@@ -93,8 +93,11 @@ static unixctl_cb_func ovs_vswitchd_exit;
 static char *parse_options(int argc, char *argv[], char **unixctl_path);
 static void usage(void) NO_RETURN;
 
+#ifdef HAVE_DPDK
 extern int
 rte_eal_init(int argc, char **argv);
+#endif /* HAVE_DPDK */
+
 int
 main(int argc, char *argv[])
 {
@@ -105,10 +108,14 @@ main(int argc, char *argv[])
     bool exiting;
     int retval;
 
-    if ((retval = rte_eal_init(argc, argv)) < 0)
+#ifdef HAVE_DPDK
+    if ((retval = rte_eal_init(argc, argv)) < 0) {
         return -1;
+    }
     argc -= retval;
     argv += retval;
+#endif /* HAVE_DPDK */
+
     proctitle_init(argc, argv);
     set_program_name(argv[0]);
     remote = parse_options(argc, argv, &unixctl_path);
