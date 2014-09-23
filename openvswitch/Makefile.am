@@ -8,9 +8,10 @@
 
 AUTOMAKE_OPTIONS = foreign subdir-objects
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = datapath datapath/dpdk/fd_link
-
+SUBDIRS = datapath
 if HAVE_DPDK
+SUBDIRS += datapath/dpdk/fd_link
+
 OVS_DIR = $(abs_top_srcdir)
 export OVS_DIR
 export RTE_SDK
