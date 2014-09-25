@@ -1735,20 +1735,20 @@ dpif_dpdk_recv_purge(struct dpif *dpif_ OVS_UNUSED)
 const struct dpif_class dpif_dpdk_class =
 {
     "dpdk",
-    NULL,
-    NULL,
+    NULL,                       /* enumerate */
+    NULL,                       /* port open type */
     dpif_dpdk_open,
     dpif_dpdk_close,
     dpif_dpdk_destroy,
-    NULL,
-    NULL,
+    NULL,                       /* run */
+    NULL,                       /* wait */
     dpif_dpdk_get_stats,
     dpif_dpdk_port_add,
     dpif_dpdk_port_del,
     dpif_dpdk_port_query_by_number,
     dpif_dpdk_port_query_by_name,
     dpif_dpdk_get_max_ports,
-    NULL,
+    NULL,                       /* port_get_pid */
     dpif_dpdk_port_dump_start,
     dpif_dpdk_port_dump_next,
     dpif_dpdk_port_dump_done,
@@ -1762,7 +1762,7 @@ const struct dpif_class dpif_dpdk_class =
     dpif_dpdk_flow_dump_next,
     dpif_dpdk_flow_dump_done,
     dpif_dpdk_execute,
-    NULL,
+    NULL,                       /* operate */
     dpif_dpdk_recv_set,
     dpif_dpdk_queue_to_priority,
     dpif_dpdk_recv,
