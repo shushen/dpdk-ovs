@@ -498,7 +498,9 @@ ovdk_pipeline_port_in_add(uint32_t vportid, char *vport_name)
 	 * Check if the vport_state is never used or failed. If so then create
 	 * the required port_in params, create port_in, set the vport_id and
 	 * connect the port to the table. This is only required if a port has
-	 * never been used before or is in the failed state.
+	 * never been used before or is in the failed state. Else, if a port is
+	 * in the disabled state we need to get the existing port_in_id for that 
+	 * in port.
 	 */
 	if ((prev_state == OVDK_VPORT_STATE_NEVER_USED) ||
 	    (prev_state == OVDK_VPORT_STATE_FAILED)) {
@@ -531,6 +533,14 @@ ovdk_pipeline_port_in_add(uint32_t vportid, char *vport_name)
 			RTE_LOG(WARNING, APP, "Unable to connect in-port '%u'"
 			        " [pipeline '%s']\n", vportid,
 			        ovdk_pipeline[lcore_id].params.name);
+			return ret;
+		}
+	}
+	else {
+		if ((ret = ovdk_vport_get_in_portid(vportid, &port_in_id))) {
+			RTE_LOG(WARNING, APP, "Unable to get vportid for"
+				" in-port '%u' [pipeline '%s']\n", vportid,
+				ovdk_pipeline[lcore_id].params.name);
 			return ret;
 		}
 	}
