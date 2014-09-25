@@ -1010,6 +1010,7 @@ dpif_dpdk_flow_get(const struct dpif *dpif_,
             dpif_dpdk_flow_get_stats(&reply, stats);
         }
         if (actionsp) {
+            *actionsp = ofpbuf_new(1024);
             dpif_dpdk_flow_actions_to_actions(reply.actions,
                                               *actionsp,
                                               reply.num_actions);
