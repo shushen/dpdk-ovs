@@ -235,9 +235,9 @@ static int
 del_port(odp_port_t port_no, unsigned max_pipeline)
 {
     struct ovdk_vport_message request;
-    int i = 0;
     int error = 0;
     int initial_error = 0;
+    unsigned i = 0;
     unsigned lcore_id = 0;
 
     dpif_dpdk_vport_msg_init(&request);
@@ -248,13 +248,14 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
     request.flags = VPORT_FLAG_IN_PORT;
     error = dpif_dpdk_vport_table_entry_get_lcore_id(port_no, &lcore_id);
     if (error) {
-        VLOG_ERR("IN port %d is not associated with a datapath core", port_no);
+        VLOG_ERR("IN port '%"PRIu32"' is not associated with a datapath core",
+                 port_no);
         initial_error = error;
     }
     error = dpif_dpdk_vport_transact(&request, lcore_id, NULL);
     if (error) {
         /* Flag the error, but don't return the error code yet */
-        VLOG_ERR("Failed to remove IN port %"PRIu32" from pipeline %u.",
+        VLOG_ERR("Failed to remove IN port '%"PRIu32"' from pipeline %u.",
                   port_no, lcore_id);
         TEST_AND_SET(&initial_error, error);
     }
@@ -266,8 +267,8 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
             error = dpif_dpdk_vport_transact(&request, i, NULL);
             if (error) {
                 /* Flag the error, but don't return the error code yet */
-                VLOG_ERR("Failed to remove OUT port %"PRIu32" from pipeline %d,"
-                         "error '%d'", port_no, i, error);
+                VLOG_ERR("Failed to remove OUT port '%"PRIu32"' from pipeline "
+                         "'%u', error '%d'", port_no, i, error);
                 TEST_AND_SET(&initial_error, error);
             }
         }
@@ -282,8 +283,8 @@ del_port(odp_port_t port_no, unsigned max_pipeline)
      */
     error = dpif_dpdk_vport_table_entry_reset(port_no);
     if (error) {
-        VLOG_ERR("Failed to remove port %"PRIu32" from vport table, error '%d'",
-                 port_no, error);
+        VLOG_ERR("Failed to remove port '%"PRIu32"' from vport table, error "
+                 "'%d'", port_no, error);
     }
 
     return initial_error || error;
@@ -541,7 +542,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     unsigned pipeline_id = 0;
     unsigned max_out_port = 0;
     int error = 0;
-    int i = 0;
+    unsigned i = 0;
 
     dpif_assert_class(dpif_, &dpif_dpdk_class);
 
@@ -601,8 +602,8 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
                                             netdev_get_name(netdev),
                                             &vportid);
     if (error) {
-    	VLOG_ERR("Unable to add port to vport table, error '%d'", error);
-    	if (error == -EBUSY) {
+        VLOG_ERR("Unable to add port to vport table, error '%d'", error);
+        if (error == -EBUSY) {
             return -error;
         }
         return ENODEV;
@@ -630,13 +631,13 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
     if (error) {
         /* Reset table entry here if datapath fails to add port */
         dpif_dpdk_vport_table_entry_reset(vportid);
-        VLOG_ERR("Unable to successfully add in/out port to datapath, "
-        		  "error '%d'", error);
+        VLOG_ERR("Unable to successfully add IN/OUT port to datapath, "
+                 "error '%d'", error);
         return error;
     }
 
-    VLOG_DBG("Added vportid %d as in port (or bridge port, if applicable)"
-             "to pipeline %d", vportid, pipeline_id);
+    VLOG_DBG("Added vportid '%d' as IN port (or bridge port, if applicable) "
+             "to pipeline '%d'", vportid, pipeline_id);
 
     if (request.type != OVDK_VPORT_TYPE_BRIDGE) {
         /* Modify message and add output ports to available datapath pipelines */
@@ -671,7 +672,7 @@ dpif_dpdk_port_add(struct dpif *dpif_, struct netdev *netdev,
         VLOG_ERR("Unable to add port '%u' to "
                  "in port pipeline '%u', error '%d'", vportid, pipeline_id, error);
     } else {
-        VLOG_DBG("Added port '%u', '%s'. in port pipeline '%u'",
+        VLOG_DBG("Added port '%u', '%s', in port pipeline '%u'",
                   vportid, request.port_name, pipeline_id);
     }
 
@@ -932,8 +933,8 @@ dpif_dpdk_port_get_stats(const char *name, struct ovdk_port_stats *stats)
 
     error = dpif_dpdk_vport_transact(&request, pipeline_id, &reply);
     if (error) {
-        VLOG_ERR("Failed to retrieve stats for port %"PRIu32
-                " from pipeline %u, error '%d'", vportid, pipeline_id, error);
+        VLOG_ERR("Failed to retrieve stats for port '%"PRIu32"' from pipeline"
+                 " '%u', error '%d'", vportid, pipeline_id, error);
         return error;
     }
 
@@ -1198,14 +1199,18 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
      * We can only put a flow for a port that is inuse
      */
     error = dpif_dpdk_vport_table_entry_get_inuse(key.in_port, &in_use);
-    if (error || !in_use) {
-        VLOG_ERR("Invalid port");
+    if (error) {
+        VLOG_ERR("Unable to get port in-use status for flow, error '%d'",
+                 error);
+        return EINVAL;
+    } else if (!in_use) {
+        VLOG_ERR("Invalid port - port is not in use.");
         return EINVAL;
     }
 
     error = dpif_dpdk_vport_table_entry_get_lcore_id(key.in_port, &pipeline_id);
     if (error) {
-        VLOG_ERR("Unable to get flow pipeline, error '%d'", error);
+        VLOG_ERR("Unable to get port lcore id for flow, error '%d'", error);
         return EINVAL;
     }
 
@@ -1238,8 +1243,8 @@ dpif_dpdk_flow_put(struct dpif *dpif_, const struct dpif_flow_put *put)
                  * The flag indicates that we should not create the flow if
                  * the one it is intended to replace is not found
                  */
-                VLOG_ERR("Unable to find existing flow in flow table, "
-                		 "error '%d'", error);
+                VLOG_ERR("Unable to find existing flow in flow table, error "
+                         "'%d'", error);
                 return error;
             }
         }
@@ -1318,7 +1323,7 @@ dpif_dpdk_flow_del(struct dpif *dpif_ ,
     dpif_dpdk_flow_key_from_flow(&key, &flow);
     error = dpif_dpdk_vport_table_entry_get_lcore_id(key.in_port, &pipeline_id);
     if (error) {
-        VLOG_ERR("Unable to get flow pipeline, error '%d'", error);
+        VLOG_ERR("Unable to get port lcore id for flow, error '%d'", error);
         return EINVAL;
     }
 
@@ -1404,7 +1409,7 @@ dpif_dpdk_flow_flush(struct dpif *dpif_)
         error = dpif_dpdk_flow_table_entry_del(&flow);
         if (error) {
             VLOG_ERR("Unable to delete flow from flow table, "
-            		 "error '%d'", error);
+                     "error '%d'", error);
             return -error;
         } else {
             VLOG_DBG("Deleted flow from pipeline '%d'", pipeline_id);
