@@ -52,24 +52,6 @@
 #define ETHER_TYPE_VLAN_BS      0x81
 #define PREFETCH_OFFSET         3
 
-struct icmp_hdr {
-	uint8_t icmp_type;
-	uint8_t icmp_code;
-	uint16_t icmp_csum;
-	union {
-		struct {
-			uint16_t id;
-			uint16_t seq;
-		} echo;
-		struct {
-			uint16_t empty;
-			uint16_t mtu;
-		} frag;
-		uint32_t gateway;
-	} icmp_fields;
-	uint8_t icmp_data[0];
-};
-
 static void flow_key_extract(uint32_t in_port, struct rte_mbuf *pkt);
 
 int

@@ -1,0 +1,26 @@
+#
+# Wrapper macro for groups of ovdk-flow tests
+#
+# Accepts two parameters: a test group name ($1) and a list of test names to
+# run against the executable ($2).
+#
+m4_define([TEST_OVDK_FLOW],
+  [AT_BANNER([ovdk-flow -- ovdk-flow -- $1])
+  m4_foreach(
+    [testname],
+    [$2],
+    [AT_SETUP([m4_bpatsubst(testname, [-], [ ])])
+     AT_KEYWORDS(dpdk ovdk-flow)
+     AT_SKIP_IF([test "$HAVE_DPDK" = no])
+     AT_CHECK([sudo -E $srcdir/test-ovdk-flow -c 1 -n 4 --no-huge -- testname], [0], [ignore], [ignore])
+     AT_CLEANUP])])
+#
+# Tests
+#
+
+TEST_OVDK_FLOW([key extract tests], [
+    key-extract-vlan,
+    key-extract-ipv4,
+    key-extract-icmp,
+    key-extract-tcp,
+    key-extract-noproto])

@@ -52,6 +52,24 @@
                sizeof(struct ether_hdr) + \
                IPV4_HEADER_SIZE(rte_pktmbuf_mtod(pkt, struct ipv4_hdr*)))
 
+struct icmp_hdr {
+	uint8_t icmp_type;
+	uint8_t icmp_code;
+	uint16_t icmp_csum;
+	union {
+		struct {
+			uint16_t id;
+			uint16_t seq;
+		} echo;
+		struct {
+			uint16_t empty;
+			uint16_t mtu;
+		} frag;
+		uint32_t gateway;
+	} icmp_fields;
+	uint8_t icmp_data[0];
+};
+
 int flow_keys_extract(struct rte_mbuf **pkts, uint32_t num_pkts,
                       uint64_t *pkts_mask, __attribute__((unused)) void *arg);
 

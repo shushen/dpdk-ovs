@@ -74,6 +74,7 @@ TESTSUITE_AT += \
 	tests/dpif-dpdk.at \
 	tests/multicore-dpif-dpdk.at
 	tests/ovdk-jobs.at
+	tests/ovdk-flow.at
 endif
 
 TESTSUITE = $(srcdir)/tests/testsuite
@@ -435,6 +436,30 @@ tests_test_ovdk_jobs_SOURCES += datapath/dpdk/ovdk_jobs.c
 tests_test_ovdk_jobs_CFLAGS = -iquote ./datapath/dpdk
 tests_test_ovdk_jobs_LDADD = $(dpdk_libs)
 tests_test_ovdk_jobs_LDADD += lib/libopenvswitch.la
+
+noinst_PROGRAMS += tests/test-ovdk-flow
+tests_test_ovdk_flow_SOURCES = tests/test-ovdk-flow.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_stats.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_mempools.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_flow.c
+tests_test_ovdk_flow_SOURCES += tests/ovdk-vport-phy-stub.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovs-vport.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_args.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vport.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_hash.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vport_client.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vport_bridge.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vport_veth.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vport_vhost.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_virtio-net.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vhost-net-cdev.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_vhost.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_ivshm.c
+tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_veth.c
+tests_test_ovdk_flow_CFLAGS = $(AM_CFLAGS) -O0 -g
+tests_test_ovdk_flow_CFLAGS += -D_FILE_OFFSET_BITS=64
+tests_test_ovdk_flow_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+tests_test_ovdk_flow_LDADD += -lfuse
 
 # used for ivshm-mngr integration tests
 noinst_PROGRAMS += tests/dummy-vports-info-mock
