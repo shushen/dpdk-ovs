@@ -41,7 +41,6 @@
 #include "ovdk_stats_types.h"
 
 void ovdk_stats_init(void);
-void ovdk_stats_fini(void);
 void ovdk_stats_clear(void);
 void ovdk_stats_vport_clear_all(void);
 void ovdk_stats_vport_clear(unsigned vportid);
@@ -51,8 +50,6 @@ int ovdk_stats_port_out_update(struct rte_mbuf *pkts, uint64_t *pkts_mask,
                                void *arg);
 int ovdk_stats_port_out_update_bulk(struct rte_mbuf **pkts, uint64_t *pkts_mask,
                                void *arg);
-int ovdk_stats_port_in_update(struct rte_mbuf **pkts, uint32_t n,
-                              uint64_t *pkts_mask, void *arg);
 
 /*
  * Vport statistics
@@ -74,7 +71,6 @@ int ovdk_stats_vport_get(unsigned vportid, struct ovdk_port_stats *stats);
 /*
  * Vswitch control message statistics
  */
-void ovdk_stats_vswitch_control_clear(void);
 void ovdk_stats_vswitch_control_rx_increment(unsigned inc);
 void ovdk_stats_vswitch_control_rx_drop_increment(unsigned inc);
 void ovdk_stats_vswitch_control_tx_increment(unsigned inc);
@@ -89,7 +85,6 @@ uint64_t ovdk_stats_vswitch_control_overrun_get(void);
 /*
  * Vswitch data message statistics
  */
-void ovdk_stats_vswitch_data_clear(void);
 void ovdk_stats_vswitch_data_rx_increment(unsigned inc);
 void ovdk_stats_vswitch_data_rx_drop_increment(unsigned inc);
 void ovdk_stats_vswitch_data_tx_increment(unsigned inc);

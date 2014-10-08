@@ -72,9 +72,10 @@ TESTSUITE_AT += \
 	tests/ovdk-datapath-flow-actions.at \
 	tests/ovdk-vport.at \
 	tests/dpif-dpdk.at \
-	tests/multicore-dpif-dpdk.at
-	tests/ovdk-jobs.at
-	tests/ovdk-flow.at
+	tests/multicore-dpif-dpdk.at \
+	tests/ovdk-jobs.at \
+	tests/ovdk-flow.at \
+	tests/ovdk-stats.at
 endif
 
 TESTSUITE = $(srcdir)/tests/testsuite
@@ -456,10 +457,32 @@ tests_test_ovdk_flow_SOURCES += datapath/dpdk/ovdk_vhost-net-cdev.c
 tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_vhost.c
 tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_ivshm.c
 tests_test_ovdk_flow_SOURCES += datapath/dpdk/rte_port_veth.c
-tests_test_ovdk_flow_CFLAGS = $(AM_CFLAGS) -O0 -g
+tests_test_ovdk_flow_CFLAGS = $(AM_CFLAGS)
 tests_test_ovdk_flow_CFLAGS += -D_FILE_OFFSET_BITS=64
-tests_test_ovdk_flow_LDADD = lib/libopenvswitch.a $(dpdk_libs) $(SSL_LIBS)
+tests_test_ovdk_flow_LDADD = lib/libopenvswitch.la $(dpdk_libs) $(SSL_LIBS)
 tests_test_ovdk_flow_LDADD += -lfuse
+
+noinst_PROGRAMS += tests/test-ovdk-stats
+tests_test_ovdk_stats_SOURCES = tests/test-ovdk-stats.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_stats.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_flow.c
+tests_test_ovdk_stats_SOURCES += tests/ovdk-vport-phy-stub.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_args.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vport.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_hash.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vport_client.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vport_bridge.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vport_veth.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vport_vhost.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_virtio-net.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/ovdk_vhost-net-cdev.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/rte_port_vhost.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/rte_port_ivshm.c
+tests_test_ovdk_stats_SOURCES += datapath/dpdk/rte_port_veth.c
+tests_test_ovdk_stats_CFLAGS = $(AM_CFLAGS)
+tests_test_ovdk_stats_CFLAGS += -D_FILE_OFFSET_BITS=64
+tests_test_ovdk_stats_LDADD = lib/libopenvswitch.la $(dpdk_libs) $(SSL_LIBS)
+tests_test_ovdk_stats_LDADD += -lfuse
 
 # used for ivshm-mngr integration tests
 noinst_PROGRAMS += tests/dummy-vports-info-mock
