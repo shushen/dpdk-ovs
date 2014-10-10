@@ -1,6 +1,0 @@
-AT_BANNER([netdev-dpdk])
-AT_SETUP([netdev dpdk change seq])
-AT_KEYWORDS(dpdk netdev-dpdk)
-AT_SKIP_IF([test "$HAVE_DPDK" = no])
-AT_CHECK([sudo -E $srcdir/test-netdev-dpdk change-seq], [0], [ignore], [])
-AT_CLEANUP
