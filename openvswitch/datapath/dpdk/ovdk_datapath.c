@@ -601,10 +601,11 @@ ovdk_datapath_send_reply(struct ovdk_message *reply)
 	rslt = rte_ring_mp_enqueue(vswitchd_reply_ring, (void *)mbuf);
 	if (rslt < 0) {
 		if (rslt == -ENOBUFS) {
-			RTE_LOG(WARNING, APP,
-			       "%s: Unable to send buffer to vswitchd ring %s: "
-			       "freeing mbuf\n", __FUNCTION__,
-			       vswitchd_reply_ring->name);
+			RTE_LOG(INFO, APP,
+			        "%s: Unable to send buffer to vswitchd ring"
+			        " %s: freeing mbuf\n",
+			        __FUNCTION__,
+			        vswitchd_reply_ring->name);
 			rte_ctrlmbuf_free(mbuf);
 			ovdk_stats_vswitch_control_tx_drop_increment(1);
 		} else {

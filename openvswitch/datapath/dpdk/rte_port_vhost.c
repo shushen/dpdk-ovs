@@ -542,7 +542,7 @@ send_burst(struct rte_port_vhost_writer *p)
 		 * Nonetheless, this log is introduced as a sanity check.
 		 */
 		if (unlikely(num_enqueued < p->tx_buf_count))
-			RTE_LOG(WARNING, APP, "%s: Attempted to enqueue %"
+			RTE_LOG(INFO, APP, "%s: Attempted to enqueue %"
 			        PRIu32" mbufs to vhost port %s, but only %"PRIu32
 			        " succeeded\n", __FUNCTION__, p->tx_buf_count,
 			        enq_dev->port_name, num_enqueued);

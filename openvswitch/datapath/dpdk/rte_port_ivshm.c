@@ -380,14 +380,18 @@ send_burst_tx(struct rte_port_ivshm_writer *p)
 	}
 
 	if (unlikely(retry > 0 && retry == p->tx_burst_retry_num))
-	    RTE_LOG(WARNING, PORT,
-		   "%s: max number of retries exceeded (%"PRIu32"), but still "
-		   "insufficient free entries in IVSHM port Tx ring %s \n "
-		   "to accomodate %"PRIu32" outbound Tx buffers.\n"
-	           "Attempting to enqueue buffers anyway\n", __FUNCTION__,
-	           p->tx_burst_retry_num, p->tx_ring->name, p->tx_buf_count);
+		RTE_LOG(INFO, PORT,
+		        "%s: max number of retries exceeded (%"PRIu32"), but"
+		        " still insufficient free entries in IVSHM port Tx ring"
+		        " %s\nto accomodate %"PRIu32" outbound Tx buffers.\n"
+		        "Attempting to enqueue buffers anyway\n",
+		        __FUNCTION__,
+		        p->tx_burst_retry_num,
+		        p->tx_ring->name,
+		        p->tx_buf_count);
+
 	nb_tx = rte_ring_sp_enqueue_burst(p->tx_ring,
-	                                 (void **)p->tx_buf,
+	                                  (void **)p->tx_buf,
 	                                  p->tx_buf_count);
 
 	if (unlikely(p->tx_buf_count > nb_tx))
