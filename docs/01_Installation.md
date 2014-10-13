@@ -111,7 +111,7 @@ Refer to the [Intel® DPDK Getting Started Guide][dpdkorg-dpdkgsg] for a relevan
 cd DPDK                     # DPDK sub-directory
 export RTE_SDK=$(pwd)
 export RTE_TARGET="x86_64-ivshmem-linuxapp-gcc"
-make install T="$RTE_TARGET"
+make CONFIG_RTE_BUILD_COMBINE_LIBS=y CONFIG_RTE_BUILD_SHARED_LIB=y install T="$RTE_TARGET"
 cd -
 ```
 
